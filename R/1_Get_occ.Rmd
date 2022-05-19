@@ -89,6 +89,12 @@ retry <- function(expr, isError=function(x) "try-error" %in% class(x), maxErrors
 
 ```
 
+# GBIF credentials
+```{r}
+myGbif <- read.table("MyGbifCredentials.txt", sep = "\t", header = TRUE)
+```
+
+
 # Load raw bioshifts
 ```{r}
 
@@ -773,9 +779,9 @@ for(i in 1:length(reqs)){
             pred("hasGeospatialIssue", FALSE),
             pred("occurrenceStatus", "PRESENT"),
             format = "SIMPLE_CSV",
-            user = "brunno.oliveira", 
-            pwd = "ecology1984",
-            email = "brunno.oliveira@me.com")
+            user = myGbif$user, 
+            pwd = myGbif$pwd,
+            email = myGbif$email)
         
         tmp <- inforequest[[k]]
         
@@ -828,9 +834,9 @@ inforequest <- occ_download(pred_in("taxonKey", my_keys),
                             pred("hasGeospatialIssue", FALSE),
                             pred("occurrenceStatus", "PRESENT"),
                             format = "SIMPLE_CSV",
-                            user = "brunno.oliveira", 
-                            pwd = "ecology1984",
-                            email = "brunno.oliveira@me.com")
+                            user = myGbif$user, 
+                            pwd = myGbif$pwd,
+                            email = myGbif$email)
 
 inforequest
 
