@@ -1,0 +1,1038 @@
+---
+title: "Run SDMs"
+author: "Brunno F Oliveira & Bioshifts group"
+date: "Last compiled on `r Sys.Date()`"
+output:
+    html_document:
+        toc: true
+        toc_float: true
+        number_sections: true
+---
+
+# Setup
+
+```{r setup, message = FALSE, warning = FALSE}
+
+library(stringr)
+library(crul)
+library(rgbif)
+library(parallel)
+library(pbapply)
+library(raster)
+library(dplyr)
+library(here)
+library(CoordinateCleaner)
+library(futile.logger)
+library(utils)
+library(data.table)
+library(ggplot2)
+library(readxl)
+library(here)
+
+```
+
+# setwd
+```{r}
+
+knitr::opts_knit$set(root.dir = "..")
+getwd()
+
+```
+# Functions
+```{r}
+
+retry <- function(expr, isError=function(x) "try-error" %in% class(x), maxErrors=5, sleep=0) {
+    
+    require(futile.logger)
+    require(utils)
+    
+    attempts = 0
+    retval = try(eval(expr))
+    while (isError(retval)) {
+        attempts = attempts + 1
+        if (attempts >= maxErrors) {
+            msg = sprintf("retry: too many retries [[%s]]", capture.output(str(retval)))
+            flog.fatal(msg)
+            stop(msg)
+        } else {
+            msg = sprintf("retry: error in attempt %i/%i [[%s]]", attempts, maxErrors, 
+                          utils::capture.output(str(retval)))
+            futile.logger::flog.error(msg)
+            warning(msg)
+        }
+        if (sleep > 0) Sys.sleep(sleep)
+        retval = try(eval(expr))
+    }
+    return(retval)
+}
+
+```
+
+
+# Create an empty map
+```{r empty}
+
+# # create an empty raster
+# empty.r <- raster(xmn=-180, xmx=180, ymn=-60, ymx=90)
+# # res(empty.r) <- 0.08333 # 10 km
+# # res(empty.r) <- 0.041665 # 5 km
+# res(empty.r) <- 0.008333 # 1 km
+# crs(empty.r) <- crs("+proj=longlat +datum=WGS84 +no_defs")
+
+```
+
+# Load raw bioshifts
+```{r}
+
+# Load v1
+biov1_raw <- read.table("Data/Shifts2018_checkedtaxo.txt",header = T)
+unique(biov1_raw$ECO)
+# "T" "M"
+unique(biov1_raw$group)
+# "vertebrate"         "vascular.plant"     "other.animal"  
+# "fungi"              "algae"              "virus" 
+# "bacteria"           "non.vascular.plant"
+
+# Fishes are those from Class Actinopterygii
+# Class Actinopterygii + ECO T = freshwater fish
+# Class Actinopterygii + ECO M = marine fish
+# Sharks are those from Class Chondrichthyes
+
+
+# Load v2 
+biov2_raw <- read_excel("Data/Bioshifts.v2.final.corrected.xlsx", sheet = 2) # new file sent by Sarah with start/end dates for shifts
+biov2_raw$`Scientific Name` <- gsub(" ","_",biov2_raw$`Scientific Name`)
+
+unique(biov2_raw$`Ecosystem Type`)
+# "terrestrial" "marine"      "aquatic"
+unique(biov2_raw$`Habitat Type`)
+# Many
+unique(biov2_raw$`Taxonomic Group`)
+# "Bird"                                "Insect"                             
+# "Amphibian"                           "Mammal"                             
+# "Spider"                              "Plant"                              
+# "Sea anemones and corals"             "Polychaetes"                        
+# "Molluscs"                            "NA"                                 
+# "Crustacean"                          "Starfish"                           
+# "Ascidians tunicates and sea squirts" "Fish"                               
+# "Sea urchin"                          "Crinoid"                            
+# "Sea cucumber"                        "Reptile"                            
+# "Brittle stars"                       "Centipedes"                         
+# "Millipedes"                          "Hydrozoa" 
+
+
+```
+
+
+
+# Load species list
+
+```{r}
+
+splist <- read.csv("Data/splist.csv")
+
+```
+
+# Fix species names
+## sp list
+
+```{r}
+
+sp.tmp <- splist$species
+
+# Use genus and species
+# remove species with only genus
+# remove species with sp
+# remove special characters
+
+sp.tmp <- sapply(sp.tmp, function(x){
+    
+    tmp = strsplit(x, "_")[[1]]
+    if(length(tmp) == 1){
+        tmp = 0
+    } else {
+        tmp = sapply(tmp, function(i) str_replace_all(i, "[^[:alnum:]]", ""))
+        if(any(
+            sapply(tmp, function(i) any(is.na(i) | grepl("NA", i))) | tmp[2] == "sp")){
+            tmp = 0
+        } else {
+            tmp[2] <- tolower(tmp[2])
+            tmp = paste(c(tmp[1],tmp[2]),collapse = "_")
+        }
+    }
+    tmp
+})
+
+splist$species <- sp.tmp
+
+if(any(splist$species==0)){
+    splist <- splist[-which(splist$species==0),]
+}
+
+# Fix duplicates
+mydups <- splist$species[which(duplicated(splist$species))]
+
+for(i in 1:length(mydups)){
+    myrows <- which(splist$species == mydups[i])
+    tmp <- splist[myrows,2:3]
+    tmp <- colSums(tmp)
+    tmp <- ifelse(tmp > 0 , 1, 0) 
+    splist$v1[myrows] <- tmp[1]
+    splist$v2[myrows] <- tmp[2]
+}
+
+
+splist <- splist[-which(duplicated(splist$species)),]
+
+```
+
+## v1 raw
+```{r}
+
+sp.tmp <- biov1_raw$New_name
+
+# Use genus and species
+# remove species with only genus
+# remove species with sp
+# remove special characters
+
+sp.tmp <- sapply(sp.tmp, function(x){
+    
+    tmp = strsplit(x, "_")[[1]]
+    if(length(tmp) == 1){
+        tmp = 0
+    } else {
+        tmp = sapply(tmp, function(i) str_replace_all(i, "[^[:alnum:]]", ""))
+        if(any(
+            sapply(tmp, function(i) any(is.na(i) | grepl("NA", i))) | 
+            tmp[2] == "sp")){
+            tmp = 0
+        } else {
+            tmp = paste(c(tmp[1],tmp[2]),collapse = "_")
+        }
+    }
+    tmp
+})
+
+biov1_raw$New_name <- sp.tmp
+
+if(any(biov1_raw$New_name==0)){
+    biov1_raw <- biov1_raw[-which(biov1_raw$New_name==0),]
+}
+
+```
+
+## v2 raw
+```{r}
+
+sp.tmp <- biov2_raw$`Scientific Name`
+
+# Use genus and species
+# remove species with only genus
+# remove species with sp
+# remove special characters
+
+sp.tmp <- sapply(sp.tmp, function(x){
+    
+    tmp = strsplit(x, "_")[[1]]
+    if(length(tmp) == 1){
+        tmp = 0
+    } else {
+        tmp = sapply(tmp, function(i) str_replace_all(i, "[^[:alnum:]]", ""))
+        if(any(
+            sapply(tmp, function(i) any(is.na(i) | grepl("NA", i))) | 
+            tmp[2] == "sp")){
+            tmp = 0
+        } else {
+            tmp = paste(c(tmp[1],tmp[2]),collapse = "_")
+        }
+    }
+    tmp
+})
+
+biov2_raw$`Scientific Name` <- sp.tmp
+
+if(any(biov2_raw$`Scientific Name`==0)){
+    biov2_raw <- biov2_raw[-which(biov2_raw$`Scientific Name`==0),]
+}
+
+
+```
+
+
+## Classify species
+```{r}
+# Class species as Terrestrial, Marine or Freshwater
+
+Terv1 <- unique(biov1_raw$New_name[which(biov1_raw$ECO == "T")])
+Terv2 <- unique(biov2_raw$`Scientific Name`[which(biov2_raw$`Ecosystem Type` == "terrestrial")])
+Terrestrials = unique(c(Terv1,Terv2))
+
+Mar1 <- unique(biov1_raw$New_name[which(biov1_raw$ECO == "M")])
+Mar2 <- unique(biov2_raw$`Scientific Name`[which(biov2_raw$`Ecosystem Type` == "marine")])
+Marine = unique(c(Mar1,Mar2))
+
+Aquatic = unique(biov2_raw$`Scientific Name`[which(biov2_raw$`Ecosystem Type` == "aquatic")])
+
+# Freshwater fish
+FFishv1 <- unique(biov1_raw$New_name[biov1_raw$Class == "Actinopterygii" & biov1_raw$ECO == "T"])
+FFishv2 <- unique(biov2_raw$`Scientific Name`[biov2_raw$`speciesomic Group` == "Fish" & biov2_raw$`Ecosystem Type` == "terrestrial"])
+FFish = unique(c(FFishv1,FFishv2))
+# Marine fish
+MFishv1 <- unique(biov1_raw$New_name[biov1_raw$Class == "Actinopterygii" & biov1_raw$ECO == "M"])
+MFishv2 <- unique(biov2_raw$`Scientific Name`[biov2_raw$`speciesomic Group` == "Fish" & biov2_raw$`Ecosystem Type` == "marine"])
+MFish = unique(c(MFishv1,MFishv2))
+
+splist$ECO = NA
+splist$ECO[which(splist$species %in% Terrestrials)] <- "T"
+splist$ECO[which(splist$species %in% Marine)] <- "M"
+splist$ECO[which(splist$species %in% Aquatic)] <- "A"
+
+splist$Group = NA
+splist$Group[which(splist$class == "Holothuroidea")] <- "Sea cucumber"
+splist$Group[which(splist$class == "Aves")] <- "Bird"
+splist$Group[which(splist$class == "Insecta")] <- "Insect"
+splist$Group[which(splist$class == "Mammalia")] <- "Mammal"
+splist$Group[which(splist$class == "Arachnida")] <- "Spider"
+splist$kingdom[which(splist$kingdom == "Viridiplantae")] <- "Plantae"
+splist$kingdom[which(splist$phylum == "Tracheophyta")] <- "Plantae"
+splist$Group[which(splist$kingdom == "Plantae")] <- "Plant"
+splist$Group[which(splist$class == "Hydrozoa")] <- "Hydrozoa"
+splist$Group[which(splist$class == "Anthozoa")] <- "Sea anemones and corals"
+splist$Group[which(splist$class == "Polychaeta")] <- "Polychaetes"
+splist$Group[which(splist$phylum == "Mollusca")] <- "Molluscs"
+splist$Group[which(splist$class == "Malacostraca")] <- "Crustacean"
+splist$Group[which(splist$class == "Hexanauplia")] <- "Crustacean"
+splist$Group[which(splist$class == "Maxillopoda")] <- "Crustacean"
+splist$Group[which(splist$class == "Ostracoda")] <- "Crustacean"
+splist$Group[which(splist$class == "Branchiopoda")] <- "Crustacean"
+splist$Group[which(splist$class == "Asteroidea")] <- "Starfish"
+splist$Group[which(splist$class == "Ascidiacea")] <- "Ascidians tunicates and sea squirts"
+splist$class[which(splist$class == "Actinopteri")] <- "Actinopterygii"
+splist$Group[which(splist$class == "Actinopterygii")] <- "Fish"
+splist$Group[which(splist$class == "Elasmobranchii")] <- "Fish"
+splist$Group[which(splist$order == "Perciformes")] <- "Fish"
+splist$Group[which(splist$class == "Chondrichthyes")] <- "Fish"
+splist$Group[which(splist$class == "Holocephali")] <- "Fish"
+splist$Group[which(splist$class == "Cephalaspidomorphi")] <- "Fish"
+splist$Group[which(splist$class == "Echinoidea")] <- "Sea urchin"
+splist$Group[which(splist$class == "Crinoidea")] <- "Crinoid"
+splist$Group[which(splist$class == "Holothuroidea")] <- "Sea cucumber"
+splist$Group[which(splist$class == "Reptilia")] <- "Reptile"
+splist$Group[which(splist$order == "Squamata")] <- "Reptile"
+splist$Group[which(splist$class == "Ophiuroidea")] <- "Brittle stars"
+splist$Group[which(splist$class == "Chilopoda")] <- "Centipedes"
+splist$Group[which(splist$class == "Diplopoda")] <- "Millipedes"
+splist$Group[which(splist$class == "Amphibia")] <- "Amphibian"
+splist$Group[which(splist$kingdom == "Fungi")] <- "Fungi"
+splist$Group[which(splist$order == "Balanomorpha")] <- "Barnacles"
+splist$Group[which(splist$phylum == "Nematoda")] <- "Nematodes"
+splist$Group[which(splist$class == "Myxini")] <- "Hagfish"
+splist$Group[which(splist$kingdom == "Bacteria")] <- "Bacteria"
+splist$Group[which(splist$kingdom == "Bacteria")] <- "Bacteria"
+
+```
+
+# N occurrences GBIF
+
+Retrieve a summary table with N occurrence per species.
+We only retrieve N occurrences for records based:
+1) "HUMAN_OBSERVATION", "LITERATURE", "LIVING_SPECIMEN" or "OBSERVATION"
+2) from which there was coordinates recorded
+3) from which there were no identifiable Geospatial Issue
+4) Registered after 1900 (limit is 2022)
+
+```{r}
+
+taxodat <- c("kingdom", "phylum", "class", "order", "family")
+
+cl <- makeCluster(detectCores())
+clusterExport(cl, c("splist","taxodat"))
+
+N_OCC <- pblapply(1:length(splist$species), function(i) {
+    # N_OCC <- list()
+    # for(i in 1:length(splist)) {
+    # cat("Processing species", i, "on", length(splist), "\r")
+    
+    ## Retrieve GBIF species key ----
+    
+    tryCatch (
+        {
+            
+            # i = which(splist$species == "Anaphalis_margaritacea")
+            spgoing <- gsub("_"," ",splist$species[i])
+            response   <- rgbif::name_suggest(q = spgoing, rank = "species")
+            taxon_keys <- na.omit(response$data)$key
+            
+            if(!all(is.null(taxon_keys))){
+                ## Select GBIF species key only for accepted name ----
+                
+                status <- data.frame()
+                
+                for (j in 1:length(taxon_keys)){
+                    
+                    spdata <- rgbif::name_usage(taxon_keys[j])
+                    spdata <- spdata$"data"
+                    
+                    taxono <- data.frame(sapply(taxodat, function(x) 
+                        ifelse(x %in% names(spdata), spdata[x], NA)))
+                    
+                    if(!any(names(spdata) == "species")){
+                        spdata$species = spdata$canonicalName
+                    }
+                    
+                    status = rbind(status, 
+                                   cbind(data.frame(spdata[ , c('species', "taxonomicStatus")], 
+                                                    taxon_key = taxon_keys[j]),
+                                         taxono))
+                    
+                }
+                
+                status <- status[which(status$taxonomicStatus == "ACCEPTED"), ]
+                
+                # If multiple species returned select the one with the exact same name
+                if(nrow(status)>1){
+                    if(any(status$species == spgoing)){
+                        status <- status[which(status$species == spgoing),]
+                    }
+                }
+                
+                ## If multiple species returned select the phylogenetically closest one (same family or same order)
+                if(nrow(status)>1){
+                    if(any(na.omit(status$family) == splist$family[which(splist$species == splist$species[i])])){
+                        status <- status[which(status$family == splist$family[which(splist$species == splist$species[i])]),]
+                    } else {
+                        if(any(na.omit(status$order) == splist$order[which(splist$species == splist$species[i])])){
+                            status <- status[which(status$order == splist$order[which(splist$species == splist$species[i])]),]
+                        } else {
+                            status <- data.frame()
+                        }
+                    }
+                }
+                
+                
+                ## If species present in the GBIF system ----
+                
+                if (nrow(status) > 0) {
+                    
+                    n_occ <- list()
+                    
+                    for (j in 1:nrow(status)) {
+                        
+                        ## Get total number of records ----
+                        
+                        records <- rgbif::occ_search(taxonKey = status[j, 'taxon_key'],
+                                                     hasCoordinate = TRUE, 
+                                                     hasGeospatialIssue=FALSE,
+                                                     basisOfRecord = c("HUMAN_OBSERVATION", "LITERATURE",
+                                                                       "LIVING_SPECIMEN", "OBSERVATION"),
+                                                     fields = c("acceptedTaxonKey", "decimalLatitude",
+                                                                "decimalLongitude", "year", "occurrenceStatus"),
+                                                     limit = 0,
+                                                     return = "meta")
+                        
+                        tmp. <- which(sapply(records, function(x){
+                            x$meta$count > 0
+                        }))
+                        
+                        if(any(tmp.)){
+                            occs <- records[tmp.]
+                            occs <- sapply(occs, function(x) as.data.frame(x$meta$count))
+                            occs <- sum(unlist(occs))
+                            
+                            n_occ[[j]] <- data.frame(n_occ = occs,
+                                                     taxon_key = as.numeric(status[j, 'taxon_key']),
+                                                     taxon = spgoing,
+                                                     gbif_name = status[j, 'species'],
+                                                     Kingdom = status[j, 'kingdom'],
+                                                     Phylum = status[j, 'phylum'],
+                                                     Class = status[j, 'class'],
+                                                     Order = status[j, 'order'],
+                                                     Family = status[j, 'family'])
+                            
+                        } else {
+                            n_occ[[j]] <- data.frame(n_occ = NA,
+                                                     taxon_key = NA,
+                                                     taxon = spgoing,
+                                                     gbif_name = NA,
+                                                     Kingdom = NA,
+                                                     Phylum = NA,
+                                                     Class = NA,
+                                                     Order = NA,
+                                                     Family = NA)
+                        }
+                        
+                    }
+                    
+                    n_occ <- do.call("rbind",n_occ)
+                    
+                } else {
+                    n_occ <- data.frame(n_occ = NA,
+                                        taxon_key = NA,
+                                        taxon = spgoing,
+                                        gbif_name = NA,
+                                        Kingdom = NA,
+                                        Phylum = NA,
+                                        Class = NA,
+                                        Order = NA,
+                                        Family = NA)
+                }
+            } else {
+                n_occ <- data.frame(n_occ = NA,
+                                    taxon_key = NA,
+                                    taxon = spgoing,
+                                    gbif_name = NA,
+                                    Kingdom = NA,
+                                    Phylum = NA,
+                                    Class = NA,
+                                    Order = NA,
+                                    Family = NA)
+            }
+            
+            return(n_occ)
+            # N_OCC[[i]] <- n_occ
+            
+        },
+        
+        error = function(e){
+            tmp = data.frame(species = splist$species[i])
+            write.csv(tmp, paste0("errors/",splist$species[i],".csv"))
+            
+        }
+    )
+}
+,
+cl = cl)
+
+stopCluster(cl)
+
+# Took 30min FRB
+
+N_OCC = do.call("rbind", N_OCC)
+
+length(unique(N_OCC$taxon)) == length(splist$species)
+
+N_OCC = N_OCC[-which(is.na(N_OCC$taxon_key)),]
+
+mydups <- N_OCC$taxon[which(duplicated(N_OCC$taxon))]
+View(N_OCC[which(N_OCC$taxon %in% mydups),])
+
+write.csv(N_OCC, "Data/n_occ.csv", row.names = F)
+
+
+```
+
+
+## Read and filter occurrences by N
+```{r}
+N_OCC <- read.csv("Data/n_occ.csv")
+length(unique(N_OCC$gbif_name))
+
+# Keep species with more then 30 occurrences
+obs_sps <- N_OCC %>%
+    group_by(gbif_name) %>%
+    summarise(n_occ = sum(n_occ))
+
+obs_sps <- obs_sps[which(obs_sps$n_occ >= 30),]
+length(unique(obs_sps$gbif_name))
+
+sp2go <- unique(obs_sps$gbif_name)
+
+N_OCC <- N_OCC[which(N_OCC$gbif_name %in% sp2go),]
+# remove taxa key with zero occ
+if(any(N_OCC$n_occ==0)) {
+    N_OCC <- N_OCC[-which(N_OCC$n_occ == 0),]
+}
+# remove taxa not found
+if(any(is.na(N_OCC$taxon_key))) {
+    N_OCC <- N_OCC[-which(is.na(N_OCC$taxon_key)),]
+}
+length(unique(N_OCC$gbif_name))
+
+length(unique(N_OCC$taxon_key))
+
+```
+
+
+
+# Stats
+```{r}
+
+# N occ
+ggplot(N_OCC[which(N_OCC$n_occ>30),], aes(x = Class, y = n_occ))+
+    geom_col()+
+    coord_flip()+
+    theme_classic()+
+    facet_wrap(.~ Kingdom, scales = "free")
+
+# % bioshift with occ
+bio <- read.csv("Data/n_occ.csv")
+bio <- data.frame(table(bio$Class))
+names(bio) <- c("Class","Bioshifts_Freq")
+
+gbifocc <- data.frame(table(N_OCC$Class))
+names(gbifocc) <- c("Class","GBIF_Freq")
+
+bio <- merge(bio, gbifocc)
+melted <- reshape::melt(bio, id="Class")
+mylevels = melted[which(melted$variable == "Bioshifts_Freq"),]$Class[order(melted$value)]
+melted$Class <- factor(melted$Class, levels = mylevels)
+
+keep <- unique(melted$Class[which(melted$value > 50)])
+
+ggplot(melted[which(melted$Class %in% keep),], 
+       aes(x = Class, y = value, fill = variable))+
+    geom_bar(stat="identity",position = "identity", alpha = .5) +
+    coord_flip()+
+    ylab("N species")+
+    theme_classic()
+
+# 
+```
+
+# Collect occurrences for all taxa keys
+
+# Option 1
+
+##1
+Create requests for all taxa keys. The request is processed by GBIF. The processing of each request takes a while (GBIF website says it can take up to 15min). Once the request is processed, the file is ready for download under my user page at the GBIF website.
+The advantage of this method is reproducibility. It generates a DOI that can be cited and link for download that can be shared.
+Creating a single request can generate a very large file (File size was 300Gbs zipped == 600Gbs unziped). Thus, better submitting multiple requests 
+GBIF allows 3 requests at a time, so the loop bellow can take a while.
+
+```{r}
+
+my_keys <- unique(N_OCC$taxon_key)
+
+# create 20 requests
+nR <- 20
+reqs <- list()
+for(i in 1:nR){ 
+    reqs[[i]] <- data.frame()
+}
+
+k = 1
+for(i in 1:length(my_keys)){ cat(i, "from", length(my_keys), "\r")
+    
+    if(k > 20) { k = 1 }
+    
+    reqs[[k]] <- rbind(reqs[[k]], my_keys[i])
+    k = k + 1
+}
+
+# from data.frame to vector
+reqs <- lapply(reqs, function(x) x[,1])
+
+# N keys per request chunk
+sapply(reqs, length)
+
+sum(sapply(reqs, length)) == length(my_keys)
+
+# n occs per chunk
+sapply(reqs, function(x) sum(N_OCC$n_occ[which(N_OCC$taxon_key %in% x)]))
+
+# Loop through chunks
+
+requests <- data.frame()
+k = 1
+inforequest <- list()
+
+for(i in 1:length(reqs)){ 
+    
+    cat("\r", "Requesting chunk", i, "from", length(reqs))
+    
+    if(k <= 3){ # GBIF allow 3 requests at a time
+        inforequest[[k]] <- occ_download(pred("taxonKey", 5201569), 
+                                         # pred_in("taxonKey", reqs[[1]][i]), 
+                                         pred_in("basisOfRecord",
+                                                 c("HUMAN_OBSERVATION",
+                                                   "LITERATURE",
+                                                   "LIVING_SPECIMEN",
+                                                   "OBSERVATION")),
+                                         pred_gte("year", 1900),
+                                         pred_lte("year", 2020),
+                                         pred("hasCoordinate", TRUE),
+                                         pred("hasGeospatialIssue", FALSE),
+                                         pred("occurrenceStatus", "PRESENT"),
+                                         format = "SIMPLE_CSV",
+                                         user = "brunno.oliveira", 
+                                         pwd = "ecology1984",
+                                         email = "brunno.oliveira@me.com")
+        
+        tmp <- inforequest[[k]]
+        
+        # save information about request
+        tmp.save <- attributes(tmp)
+        tmp.save <- data.frame(download_key = tmp[1],
+                               created = tmp.save$created,
+                               download_link = tmp.save$downloadLink,
+                               doi = tmp.save$doi,
+                               citation = tmp.save$citation,
+                               format = tmp.save$format,
+                               user = tmp.save$user,
+                               email = tmp.save$email)
+        requests <- rbind(requests,tmp.save)
+        
+        k = k + 1 
+        
+    }
+    
+    if(k > 3){ # GBIF allow 3 requests at a time
+        occ_download_wait(inforequest[[1]])
+        occ_download_wait(inforequest[[2]])
+        occ_download_wait(inforequest[[3]])
+        
+        k = 1
+        inforequest <- list()
+    }
+    
+}
+
+write.csv(requests, paste0("Data/requests.csv"))
+
+
+```
+
+##2
+Create a single request for all taxa key. The request is processed by GBIF. The processing of the request can take a while, but at GBIF website it says it can take up to 15min. Once the request is processed the file is ready for download from GBIF website under my user page.
+The advantage of this method is reproducibility. It generates a DOI that can be cited and link for download that can be shared.
+
+```{r}
+
+my_keys <- unique(N_OCC$taxon_key)
+
+inforequest <- occ_download(pred_in("taxonKey", my_keys), 
+                            pred_in("basisOfRecord", c("HUMAN_OBSERVATION","LITERATURE",
+                                                       "LIVING_SPECIMEN","OBSERVATION")),
+                            pred_gte("year", 1900),
+                            pred_lte("year", 2022),
+                            pred("hasCoordinate", TRUE),
+                            pred("hasGeospatialIssue", FALSE),
+                            pred("occurrenceStatus", "PRESENT"),
+                            format = "SIMPLE_CSV",
+                            user = "brunno.oliveira", 
+                            pwd = "ecology1984",
+                            email = "brunno.oliveira@me.com")
+
+inforequest
+
+# save information about request
+inforequest.save <- attributes(inforequest)
+inforequest.save <- data.frame(download_key = inforequest[1],
+                               created = inforequest.save$created,
+                               download_link = inforequest.save$downloadLink,
+                               doi = inforequest.save$doi,
+                               citation = inforequest.save$citation,
+                               format = inforequest.save$format,
+                               user = inforequest.save$user,
+                               email = inforequest.save$email)
+write.csv(inforequest.save, "Data/inforequest.csv")
+
+# check request status
+occ_download_wait(inforequest.save$download_key)
+
+# load information about request
+inforequest <- read.csv("Data/inforequest.csv")
+
+# Download data after request has been processed
+# Do not download from R because this is a massive dataset. Download from RGBIF website, under your user page.
+# occ_download_get(inforequest.save$download_key, path = "Data")
+
+```
+
+# Option 2
+Download data for each taxa key. The advantage of this option is that we can check the status of the download and limit the number of fields that are download, thus saving space.
+The weakness is that this is not reproducible because when new occurrences are added to the GBIF system. Also, a DOI is not generated.
+
+THE FUNCTION BREAKS AND NEVER FINISHES
+
+```{r}
+
+my_keys <- unique(N_OCC$taxon_key)
+my_N <- sapply(my_keys, function(x) sum(N_OCC$n_occ[N_OCC$taxon_key ==x]))
+my_fields <- c("acceptedTaxonKey", "decimalLatitude", "decimalLongitude", "year", "month")
+my_limit = 10000
+duration <- c(1901:2021)
+
+# Do a for loop for every 100 species for easier detection of errors
+
+my_chunks <- split(1:length(my_keys), ceiling(seq_along(1:length(my_keys)) / 100))
+
+start_time <- Sys.time()
+
+for(f in 1:length(my_chunks)){
+    cat("Processing chunk", f, "from", length(my_chunks),"\n")
+    
+    key_go <- my_keys[my_chunks[[f]]]
+    N_go <- my_N[my_chunks[[f]]]
+    
+    for(i in 1:length(key_go)) {
+        cat("Running key", i, "from", length(key_go))
+        
+        # if there is more than 10,000 occs, break code for downloading per year
+        # Needed because occ_search has a limit of 100,000 occs per request. I use a lower N for speed.
+        if(N_go[i] > my_limit){
+            
+            cat("\nParallelizing for > 10,000 occurrences\n")
+            
+            cl <- makeCluster(detectCores()-10) # running at rossinante
+            clusterExport(cl, c("i","duration","key_go","N_go","my_fields", "my_limit"))
+            
+            records <- retry(pblapply(1:length(duration), function(j) {
+                
+                # records <- list()
+                # for(j in 1:length(duration)){ # download data for each year
+                #     
+                #     cat("Processing year", j, "from", length(duration))
+                
+                occs <- rgbif::occ_search(taxonKey = key_go[i],
+                                          hasCoordinate = TRUE, 
+                                          hasGeospatialIssue=FALSE,
+                                          basisOfRecord = c("HUMAN_OBSERVATION", "LITERATURE",
+                                                            "LIVING_SPECIMEN", "OBSERVATION"),
+                                          fields = my_fields,
+                                          limit = my_limit,
+                                          year = duration[j],
+                                          return = "data")
+                
+                Sys.sleep(2) 
+                
+                tmp. <- sapply(1:length(occs), function(x){
+                    !is.null(occs[[x]]$data)
+                })
+                
+                if(any(tmp.)){
+                    occs <- occs[tmp.]
+                    occs <- lapply(occs, function(x) as.data.frame(x$data))
+                    occs <- do.call(rbind, occs)
+                    rownames(occs) <- NULL
+                    occs <- data.frame(sapply(my_fields, function(x) 
+                        ifelse(x %in% names(occs), occs[x], NA)))
+                } else {
+                    occs <- NULL
+                }
+                return(occs)
+                # records[[i]] <- occs
+            }
+            ,
+            cl = cl),
+            maxErrors=5, sleep=2)
+            
+            stopCluster(cl)
+            
+            # remove years without occs
+            rem <- sapply(records, is.null)
+            if(any(rem)){
+                records <- records[-which(rem)]
+            }
+            
+            records <- do.call(rbind, records)
+            
+        }
+        
+        if(N_go[i] <= my_limit){
+            
+            records <- rgbif::occ_search(taxonKey = key_go[i],
+                                         hasCoordinate = TRUE, 
+                                         hasGeospatialIssue=FALSE,
+                                         basisOfRecord = c("HUMAN_OBSERVATION", "LITERATURE",
+                                                           "LIVING_SPECIMEN", "OBSERVATION"),
+                                         fields = my_fields,
+                                         limit = my_limit,
+                                         year = paste(duration[1],duration[length(duration)],sep = ","))
+            
+            tmp. <- sapply(1:length(records), function(x){
+                !is.null(records[[x]]$data)
+            })
+            
+            if(any(tmp.)){
+                records <- records[tmp.]
+                records <- lapply(records, function(x) as.data.frame(x$data))
+                records <- do.call(rbind, records)
+                rownames(records) <- NULL
+                occs <- data.frame(sapply(my_fields, function(x) 
+                    ifelse(x %in% names(occs), occs[x], NA)))
+            } else {
+                records <- NULL
+            }
+            
+            # remove years without occs
+            rem <- sapply(records, is.null)
+            if(any(rem)){
+                records <- records[-which(rem)]
+            }
+        }
+        
+        write.csv(records, paste0("Data/GBIF_occ/",key_go[i],".csv"))
+        
+    }
+}
+
+end_time <- Sys.time()
+end_time - start_time
+
+# Took xxx FRB
+
+```
+
+
+
+
+```{r}
+# Load the downloaded file into R
+gbif_occs <- occ_download_import(paste0("Data/", inforequest$download_key), ".csv")
+
+# filtering pipeline  (from https://data-blog.gbif.org/post/gbif-filtering-guide/)
+
+gbif_occs <- occ_download_import(key = paste0("Data/", "0261901-210914110416597"), ".csv")
+
+gbif_occs_clean <- gbif_occs %>%
+    setNames(tolower(names(.))) %>% # set lowercase column names to work with CoordinateCleaner
+    filter(occurrencestatus  == "PRESENT") %>%
+    filter(year >= 1900) %>% 
+    filter(coordinateprecision < 0.01 | is.na(coordinateprecision)) %>% 
+    filter(coordinateuncertaintyinmeters < 10000 | is.na(coordinateuncertaintyinmeters)) %>%
+    filter(!coordinateuncertaintyinmeters %in% c(301,3036,999,9999)) %>% 
+    filter(!decimallatitude == 0 | !decimallongitude == 0) %>%
+    cc_cen(buffer = 2000) %>% # remove country centroids within 2km 
+    cc_cap(buffer = 2000) %>% # remove capitals centroids within 2km
+    cc_inst(buffer = 2000) %>% # remove zoo and herbaria within 2km 
+    cc_sea() %>% # remove from ocean 
+    distinct(decimallongitude,decimallatitude,specieskey, .keep_all = TRUE)
+
+#############################
+# create data requested for each key
+
+for(i in 1:length(my_keys)){
+    cat("\rRequesting",i, "from", length(my_keys))
+    
+    inforequest <- occ_download(pred_in("taxonKey", my_keys[c(3,6,8)]), 
+                                pred_in("basisOfRecord", c("HUMAN_OBSERVATION","LITERATURE","LIVING_SPECIMEN","OBSERVATION")),
+                                pred("hasCoordinate", TRUE),
+                                pred("hasGeospatialIssue", FALSE),
+                                format = "SIMPLE_CSV",
+                                user = "brunno.oliveira", 
+                                pwd = "ecology1984",
+                                email = "brunno.oliveira@me.com")
+    
+    # save information about request
+    tmp. <- attributes(inforequest)
+    inforequest <- data.frame(download_key = inforequest[1],
+                              created = tmp.$created,
+                              download_link = tmp.$downloadLink,
+                              doi = tmp.$doi,
+                              citation = tmp.$citation,
+                              format = tmp.$format,
+                              user = tmp.$user,
+                              email = tmp.$email)
+    
+    # write.csv(inforequest, paste0("Data/GBIF_requests/", inforequest[1], ".csv"),
+    #           row.names = F)
+    # 
+    tmp. = occ_download_get(key = inforequest$download_key, path = "Data", overwrite=TRUE) 
+    
+    # Load the downloaded file into R
+    gbif_occs <- occ_download_import(tmp., path = "Data/GBIF_occ")
+    
+}
+
+```
+
+
+# Load the very large file downloaded in Option 1 and split into smaller chunks
+```{r}
+
+test <- fread("D:/Bioshifts_GBIF/0262389-210914110416597.csv", nrows = 2)
+
+```
+
+# Thin occurrence data
+
+# Useful packages:
+# occCite or spOcc
+# Published pipeline for trimming:
+# coordinateCleaner or occCite
+
+```{r}
+
+
+
+```
+
+# Create a SQL file with species occurrences
+```{r}
+
+my_db_file <- "../Data/sp_occur.sqlite"
+my_db <- src_sqlite(my_db_file, create = TRUE)
+
+# driver
+drv <- dbDriver("SQLite") 
+# connect
+db <- dbConnect(drv, my_db_file) 
+
+# add occurrences to the DB
+pbsapply(new.occur.set, function(x){
+    tmp <- readRDS(x)
+    # fix sp names
+    tmp <- merge(tmp, TNRS_names_[,c("scrubbed_species_binomial","Name_submitted")], 
+                 by.x = "sps", by.y = "Name_submitted",
+                 all.x = T)
+    tmp <- tmp[,2:4]
+    names(tmp) <- c("x","y","sps")
+    # get only species in phylogeny
+    if(any(tmp$sps %in% my_sp_list)){
+        tmp <- tmp[which(tmp$sps %in% my_sp_list),]
+        dbWriteTable(conn=db, name="occur", tmp, append=T, row.names=F)
+    }
+})
+
+# disconnect
+DBI::dbDisconnect(db)
+
+```
+
+# test a query
+```{r}
+
+# driver
+drv <- dbDriver("SQLite") 
+# connect
+db <- dbConnect(drv, my_db_file) 
+
+# get all sps
+x1 = dbGetQuery(db, "
+   SELECT * FROM occur
+")
+
+# get 100 sps
+x2 = dbGetQuery(
+    db, 
+    paste(
+        "SELECT *",
+        "FROM occur",
+        "WHERE sps in (", paste(shQuote(my_sp_list[1:100], type = "sh"),collapse = ', '), ")")
+)
+
+# disconnect
+dbDisconnect(db)
+
+```
+
+# count N obs per species
+```{r}
+
+n_obs <- table(x1$sps)
+n_obs <- as.data.frame(n_obs)
+names(n_obs) <- c("Species", "N_obs")
+# subset for my list (i.e., without bryophytes)
+n_obs <- n_obs[n_obs$Species %in% my_sp_list,]
+
+write.csv(n_obs, "R/3_SDM/plants_N_obs_sps.csv")
+
+```
+
+# save final species list
+```{r}
+saveRDS(my_sp_list, "../Data/sp_list_final.RDS")
+```
+
