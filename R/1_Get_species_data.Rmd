@@ -1,5 +1,5 @@
 ---
-title: "Run SDMs"
+title: "Get species data for SDMs"
 author: "Brunno F Oliveira & Bioshifts group"
 date: "Last compiled on `r Sys.Date()`"
 output:
@@ -16,8 +16,8 @@ output:
 rm(list=ls())
 gc()
 
-list.of.packages <- c("stringr", "crul", "rgbif", "parallel", "pbapply", "raster", "dplyr", "here", 
-                      "data.table", "ggplot2", "readxl", "knitr", "knitr","speciesgeocodeR","CoordinateCleaner",
+list.of.packages <- c("stringr", "rgbif", "parallel", "pbapply", "raster", "dplyr", "here", 
+                      "data.table", "ggplot2", "readxl", "knitr",
                       "sqldf","RSQLite", "scales")
 
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
@@ -29,7 +29,7 @@ sapply(list.of.packages, require, character.only = TRUE)
 ```
 
 # Load functions
-```{r}
+```{r eval=FALSE}
 
 source(here::here("R/my_functions.R"))
 
