@@ -28,25 +28,53 @@ sapply(list.of.packages, require, character.only = TRUE)
 
 ```
 
+# Load parameters
+```{r}
+
+source(here::here("R/settings.R"))
+
+range_env_data <- sapply(temporal_range_env_data, function(x){
+    c(min(x),max(x))
+})
+range_env_data <- c(min(range_env_data),max(range_env_data))
+
+```
+
 # Load functions
-```{r eval=FALSE}
+```{r }
 
 source(here::here("R/my_functions.R"))
 
 ```
 
+# Load species list
+```{r}
+
+splist <- read.csv(here::here("Data/splist.csv"), header = T)
+
+```
+
+## Filter species with GBIF data
+```{r}
+
+splist <- splist[which(splist$db == "gbif"),]
+
+```
 
 # Load raw bioshifts
-```{r eval=FALSE}
-
+```{r }
 # Load v1
-biov1_raw <- read.table(here::here("Data/Shifts2018_checkedtaxo.txt"), header = T)
-unique(biov1_raw$ECO)
-# "T" "M"
-unique(biov1_raw$group)
-# "vertebrate"         "vascular.plant"     "other.animal"  
-# "fungi"              "algae"              "virus" 
-# "bacteria"           "non.vascular.plant"
+biov1 <- read.csv(here::here("Data/biov1_fixednames.csv"), header = T)
+# Fix references in biov1
+biov1$Article_ID <- gsub("[^0-9.-]", "", biov1$Article_ID)
+biov1$Article_ID <- as.numeric(biov1$Article_ID)
+biov1 <- biov1[-which(biov1$valid_species_name=="no"),]
+biov1$sp_name_std_v1 <- gsub("_"," ",biov1$sp_name_std_v1)
+# # "T" "M"
+# unique(biov1$group)
+# # "vertebrate"         "vascular.plant"     "other.animal"  
+# # "fungi"              "algae"              "virus" 
+# # "bacteria"           "non.vascular.plant"
 
 # Fishes are those from Class Actinopterygii
 # Class Actinopterygii + ECO T = freshwater fish
@@ -55,142 +83,120 @@ unique(biov1_raw$group)
 
 
 # Load v2 
-biov2_raw <- read_excel(here::here("Data/Bioshifts.v2.final.corrected.xlsx"), sheet = 2) # new file sent by Sarah with start/end dates for shifts
-biov2_raw$`Scientific Name` <- gsub(" ","_",biov2_raw$`Scientific Name`)
+biov2 <- read.csv(here::here("Data/biov2_fixednames.csv"), header = T)
+biov2$Scientific.Name <- gsub(" ","_",biov2$Scientific.Name)
+biov2$sp_name_std_v2 <- gsub("_"," ",biov2$sp_name_std_v2)
 
-unique(biov2_raw$`Ecosystem Type`)
-# "terrestrial" "marine"      "aquatic"
-unique(biov2_raw$`Habitat Type`)
-# Many
-unique(biov2_raw$`Taxonomic Group`)
-# "Bird"                                "Insect"                             
-# "Amphibian"                           "Mammal"                             
-# "Spider"                              "Plant"                              
-# "Sea anemones and corals"             "Polychaetes"                        
-# "Molluscs"                            "NA"                                 
-# "Crustacean"                          "Starfish"                           
-# "Ascidians tunicates and sea squirts" "Fish"                               
-# "Sea urchin"                          "Crinoid"                            
-# "Sea cucumber"                        "Reptile"                            
-# "Brittle stars"                       "Centipedes"                         
-# "Millipedes"                          "Hydrozoa" 
-
-
-```
-
-# Load species list
-
-```{r eval=FALSE}
-
-splist <- read.csv(here::here("Data/splist.csv"))
-# save original name
-splist$species_original <- splist$species
+# unique(biov2$Ecosystem.Type)
+# # "terrestrial" "marine"      "aquatic"
+# unique(biov2$Habitat.Type)
+# # Many
+# unique(biov2$Taxonomic.Group)
+# # "Bird"                                "Insect"                             
+# # "Amphibian"                           "Mammal"                             
+# # "Spider"                              "Plant"                              
+# # "Sea anemones and corals"             "Polychaetes"                        
+# # "Molluscs"                            "NA"                                 
+# # "Crustacean"                          "Starfish"                           
+# # "Ascidians tunicates and sea squirts" "Fish"                               
+# # "Sea urchin"                          "Crinoid"                            
+# # "Sea cucumber"                        "Reptile"                            
+# # "Brittle stars"                       "Centipedes"                         
+# # "Millipedes"                          "Hydrozoa" 
 
 ```
 
-# Fix species names
-## sp list
+## Remove species identified to the genus level or cf.
 
-```{r eval=FALSE}
-
-sp.tmp <- splist$species_original
-
-# remove species with only genus
-# remove special characters
-sp.tmp <- sapply(sp.tmp, fix.spnames)
-
-splist$species <- sp.tmp
-
-if(any(splist$species==0)){
-    splist <- splist[-which(splist$species==0),]
+```{r }
+if(any(grep("sp[.]",biov1$sp_reported_name_v1))){
+    biov1 <- biov1 %>% filter(!grepl("sp[.]",sp_reported_name_v1))
+}
+if(any(grep("sp[.]",biov1$sp_name_std_v1))){
+    biov1 <- biov1 %>% filter(!grepl("sp[.]",sp_name_std_v1))
+}
+if(any(grep("cf[.]",biov1$sp_reported_name_v1))){
+    biov1 <- biov1 %>% filter(!grepl("cf[.]",sp_reported_name_v1))
+}
+if(any(grep("cf[.]",biov1$sp_name_std_v1))){
+    biov1 <- biov1 %>% filter(!grepl("cf[.]",sp_name_std_v1))
 }
 
-# Fix duplicates
-mydups <- splist$species[which(duplicated(splist$species))]
-# View(splist[which(splist$species %in% mydups),])
-
-for(i in 1:length(mydups)){
-    myrows <- which(splist$species == mydups[i])
-    tmp <- splist[myrows,2:3]
-    tmp <- colSums(tmp)
-    tmp <- ifelse(tmp > 0 , 1, 0) 
-    splist$v1[myrows] <- tmp[1]
-    splist$v2[myrows] <- tmp[2]
+if(any(grep("sp[.]",biov2$sp_reported_name_v2))){
+    biov2 <- biov2 %>% filter(!grepl("sp.",sp_reported_name_v2))
 }
-
-splist <- splist[-which(duplicated(splist$species)),]
-
-```
-
-## v1 raw
-```{r eval=FALSE}
-
-sp.tmp <- biov1_raw$New_name
-
-# Use genus and species
-# remove species with only genus
-# remove species with sp
-# remove special characters
-
-sp.tmp <- sapply(sp.tmp, fix.spnames)
-
-biov1_raw$New_name <- sp.tmp
-
-if(any(biov1_raw$New_name==0)){
-    biov1_raw <- biov1_raw[-which(biov1_raw$New_name==0),]
+if(any(grep("sp[.]",biov2$sp_name_std_v2))){
+    biov2 <- biov2 %>% filter(!grepl("sp[.]",sp_name_std_v2))
+}
+if(any(grep("cf[.]",biov2$sp_reported_name_v2))){
+    biov2 <- biov2 %>% filter(!grepl("cf[.]",sp_reported_name_v2))
+}
+if(any(grep("cf[.]",biov2$sp_name_std_v2))){
+    biov2 <- biov2 %>% filter(!grepl("cf[.]",sp_name_std_v2))
+}
+if(any(grep("cf[.]",biov2$Scientific.Name))){
+    biov2 <- biov2 %>% filter(!grepl("cf[.]",Scientific.Name))
 }
 
 ```
 
-## v2 raw
-```{r eval=FALSE}
+## Filter LAT / ELE shifts
+```{r}
+biov1 <- biov1 %>%
+    mutate(
+        Type = case_when(
+            Type=="HOR" ~ "LAT",
+            TRUE ~ as.character(Type))) %>% # get LAT from LON
+    filter(Type %in% c("ELE","LAT"))  # Use LAT ELE shifts
 
-sp.tmp <- biov2_raw$`Scientific Name`
-
-# Use genus and species
-# remove species with only genus
-# remove species with sp
-# remove special characters
-
-sp.tmp <- sapply(sp.tmp, fix.spnames)
-
-biov2_raw$`Scientific Name` <- sp.tmp
-
-if(any(biov2_raw$`Scientific Name`==0)){
-    biov2_raw <- biov2_raw[-which(biov2_raw$`Scientific Name`==0),]
-}
-
+biov2 <- biov2 %>%
+    mutate(
+        Dimension = case_when(
+            Dimension=="latitude" ~ "LAT",
+            Dimension=="elevation" ~ "ELE",
+            TRUE ~ as.character(Dimension))) %>% 
+    filter(Dimension %in% c("ELE","LAT")) # Use LAT ELE shifts
 
 ```
-
 
 ## Classify species
-```{r eval=FALSE}
+```{r }
+
 # Class species as Terrestrial, Marine or Freshwater
 
-Terv1 <- unique(biov1_raw$New_name[which(biov1_raw$ECO == "T")])
-Terv2 <- unique(biov2_raw$`Scientific Name`[which(biov2_raw$`Ecosystem Type` == "terrestrial")])
+Terv1 <- unique(biov1$sp_name_std_v1[which(biov1$ECO == "T")])
+Terv2 <- unique(biov2$sp_name_std_v2[which(biov2$Ecosystem.Type == "terrestrial")])
 Terrestrials = unique(c(Terv1,Terv2))
 
-Mar1 <- unique(biov1_raw$New_name[which(biov1_raw$ECO == "M")])
-Mar2 <- unique(biov2_raw$`Scientific Name`[which(biov2_raw$`Ecosystem Type` == "marine")])
+Mar1 <- unique(biov1$sp_name_std_v1[which(biov1$ECO == "M")])
+Mar2 <- unique(biov2$sp_name_std_v2[which(biov2$Ecosystem.Type == "marine")])
 Marine = unique(c(Mar1,Mar2))
 
-Aquatic = unique(biov2_raw$`Scientific Name`[which(biov2_raw$`Ecosystem Type` == "aquatic")])
+Aquatic = unique(biov2$sp_name_std_v2[which(biov2$Ecosystem.Type == "aquatic")])
 
 # Freshwater fish
-FFishv1 <- unique(biov1_raw$New_name[biov1_raw$Class == "Actinopterygii" & biov1_raw$ECO == "T"])
-FFishv2 <- unique(biov2_raw$`Scientific Name`[biov2_raw$`speciesomic Group` == "Fish" & biov2_raw$`Ecosystem Type` == "terrestrial"])
+FFishv1 <- unique(biov1$sp_name_std_v1[biov1$Class == "Actinopterygii" & biov1$ECO == "T"])
+FFishv2 <- unique(biov2$sp_name_std_v2[biov2$Taxonomic.Group == "Fish" & biov2$Ecosystem.Type == "terrestrial"])
 FFish = unique(c(FFishv1,FFishv2))
 # Marine fish
-MFishv1 <- unique(biov1_raw$New_name[biov1_raw$Class == "Actinopterygii" & biov1_raw$ECO == "M"])
-MFishv2 <- unique(biov2_raw$`Scientific Name`[biov2_raw$`speciesomic Group` == "Fish" & biov2_raw$`Ecosystem Type` == "marine"])
+MFishv1 <- unique(biov1$sp_name_std_v1[biov1$Class == "Actinopterygii" & biov1$ECO == "M"])
+MFishv2 <- unique(biov2$sp_name_std_v2[biov2$Taxonomic.Group == "Fish" & biov2$Ecosystem.Type == "marine"])
 MFish = unique(c(MFishv1,MFishv2))
 
 splist$ECO = NA
-splist$ECO[which(splist$species %in% Terrestrials)] <- "T"
-splist$ECO[which(splist$species %in% Marine)] <- "M"
-splist$ECO[which(splist$species %in% Aquatic)] <- "A"
+splist$ECO[which(splist$scientificName %in% Terrestrials)] <- "T"
+splist$ECO[which(splist$scientificName %in% Marine)] <- "M"
+splist$ECO[which(splist$scientificName %in% Aquatic)] <- "A"
+
+biov1$ECO = NA
+biov1$ECO[which(biov1$sp_name_std_v1 %in% Terrestrials)] <- "T"
+biov1$ECO[which(biov1$sp_name_std_v1 %in% Marine)] <- "M"
+biov1$ECO[which(biov1$sp_name_std_v1 %in% Aquatic)] <- "A"
+
+biov2$ECO = NA
+biov2$ECO[which(biov2$sp_name_std_v2 %in% Terrestrials)] <- "T"
+biov2$ECO[which(biov2$sp_name_std_v2 %in% Marine)] <- "M"
+biov2$ECO[which(biov2$sp_name_std_v2 %in% Aquatic)] <- "A"
 
 splist$Group = NA
 splist$Group[which(splist$class == "Holothuroidea")] <- "Sea cucumber"
@@ -232,31 +238,163 @@ splist$Group[which(splist$kingdom == "Fungi")] <- "Fungi"
 splist$Group[which(splist$order == "Balanomorpha")] <- "Barnacles"
 splist$Group[which(splist$phylum == "Nematoda")] <- "Nematodes"
 splist$Group[which(splist$class == "Myxini")] <- "Hagfish"
-splist$Group[which(splist$kingdom == "Bacteria")] <- "Bacteria"
-splist$Group[which(splist$kingdom == "Bacteria")] <- "Bacteria"
+splist$Group[which(splist$kingdom == "Chromista")] <- "Chromista"
 
 ```
 
-# Filter only species with shifts after 1979 
-1979 is the limit of the climate data from CHELSA
-```{r eval=FALSE}
 
-bioshifts <- data.frame(species = c(biov1_raw$New_name, biov2_raw$`Scientific Name`),
-                        start = as.numeric(c(biov1_raw$START, biov2_raw$`Start Year`)),
-                        end = as.numeric(c(biov1_raw$END, biov2_raw$`End Year`)))
+# Look at the distribution of shift values per year before filtering the data
+```{r}
+biov1_raw <- as_tibble(biov1) %>%
+    dplyr::select(START, Type)
 
-bioshifts <- na.omit(bioshifts)
+biov2_raw <- as_tibble(biov2) %>%
+    dplyr::select(Start.Year, Dimension)
 
-bioshifts <- bioshifts %>%
-    group_by(species) %>%
-    summarise(start = ifelse(any(start >= 1979), mean(start[which(start >= 1979)]), NA),
-              end = ifelse(any(end <= 2020), mean(end[which(end <= 2020)]), NA))
 
-bioshifts <- na.omit(bioshifts)
+ggplot(biov1_raw, aes(START, fill = Type)) +
+    ggtitle("v1")+
+    geom_histogram(alpha = .5) +
+    geom_vline(xintercept = range_env_data[1], color = "Green")+
+    theme(plot.title = element_text(hjust = 0.5))
 
-splist <- splist[which(splist$species %in% bioshifts$species),]
+ggplot(biov1_raw, aes(START, colour = Type)) +
+    ggtitle("v1")+
+    stat_ecdf(geom = "step") +
+    geom_vline(xintercept = range_env_data[1], color = "Green")+
+    theme(plot.title = element_text(hjust = 0.5))
+
+
+ggplot(biov2_raw, aes(Start.Year, fill = Dimension)) +
+    ggtitle("v2")+
+    geom_histogram(alpha = .5) +
+    geom_vline(xintercept = range_env_data[1], color = "Green")+
+    theme(plot.title = element_text(hjust = 0.5))
+
+ggplot(biov2_raw, aes(Start.Year, colour = Dimension)) +
+    ggtitle("v2")+
+    stat_ecdf(geom = "step") +
+    geom_vline(xintercept = range_env_data[1], color = "Green")+
+    theme(plot.title = element_text(hjust = 0.5))
+
+#############
+# Summary 
+# N Studies 
+rbind(data.frame(Version = "v1",
+                 biov1 %>% 
+                     summarise(N_Studies = length(unique(Article_ID)),
+                               N_species = length(unique(sp_name_std_v1)),
+                               N_shifts = length(Type))),
+      data.frame(Version = "v2",
+                 biov2 %>% 
+                     summarise(N_Studies = length(unique(Paper.ID)),
+                               N_species = length(unique(sp_name_std_v2)),
+                               N_shifts = length(Dimension))))
+
+rbind(data.frame(Version = "v1",
+                 biov1 %>% 
+                     dplyr::group_by(Type) %>%
+                     summarise(N_Studies = length(unique(Article_ID)),
+                               N_species = length(unique(sp_name_std_v1)),
+                               N_shifts = length(Type))),
+      data.frame(Version = "v2",
+                 biov2 %>% 
+                     dplyr::rename(Type = Dimension) %>%
+                     group_by(Type) %>%
+                     summarise(N_Studies = length(unique(Paper.ID)),
+                               N_species = length(unique(sp_name_std_v2)),
+                               N_shifts = length(Type))))
+
+rbind(data.frame(Version = "v1",
+                 biov1 %>% 
+                     dplyr::group_by(ECO) %>%
+                     summarise(N_Studies = length(unique(Article_ID)),
+                               N_species = length(unique(sp_name_std_v1)),
+                               N_shifts = length(ECO))),
+      data.frame(Version = "v2",
+                 biov2 %>% 
+                     dplyr::group_by(ECO) %>%
+                     summarise(N_Studies = length(unique(Paper.ID)),
+                               N_species = length(unique(sp_name_std_v2)),
+                               N_shifts = length(ECO))))
+```
+
+# Filter shifts within the temporal range of the environmental data
+```{r}
+
+biov1 <- biov1 %>%
+    filter(START >= range_env_data[1]) # shifts within the range of environmental data
+
+biov2 <- biov2 %>%
+    filter(Start.Year >= range_env_data[1]) # shifts within the range of environmental data
+
+ggplot(biov1, aes(START, fill = Type)) +
+    ggtitle("v1")+
+    geom_histogram(alpha = .5) +
+    geom_vline(xintercept = range_env_data[1], color = "Green")+
+    theme(plot.title = element_text(hjust = 0.5))
+
+ggplot(biov2, aes(Start.Year, fill = Dimension)) +
+    ggtitle("v2")+
+    geom_histogram(alpha = .5) +
+    geom_vline(xintercept = range_env_data[1], color = "Green")+
+    theme(plot.title = element_text(hjust = 0.5))
+
+
+#############
+# Summary 
+# N Studies 
+rbind(data.frame(Version = "v1",
+                 biov1 %>% 
+                     summarise(N_Studies = length(unique(Article_ID)),
+                               N_species = length(unique(sp_name_std_v1)),
+                               N_shifts = length(Type))),
+      data.frame(Version = "v2",
+                 biov2 %>% 
+                     summarise(N_Studies = length(unique(Paper.ID)),
+                               N_species = length(unique(sp_name_std_v2)),
+                               N_shifts = length(Dimension))))
+
+rbind(data.frame(Version = "v1",
+                 biov1 %>% 
+                     dplyr::group_by(Type) %>%
+                     summarise(N_Studies = length(unique(Article_ID)),
+                               N_species = length(unique(sp_name_std_v1)),
+                               N_shifts = length(Type))),
+      data.frame(Version = "v2",
+                 biov2 %>% 
+                     dplyr::rename(Type = Dimension) %>%
+                     group_by(Type) %>%
+                     summarise(N_Studies = length(unique(Paper.ID)),
+                               N_species = length(unique(sp_name_std_v2)),
+                               N_shifts = length(Type))))
+
+rbind(data.frame(Version = "v1",
+                 biov1 %>% 
+                     dplyr::group_by(ECO) %>%
+                     summarise(N_Studies = length(unique(Article_ID)),
+                               N_species = length(unique(sp_name_std_v1)),
+                               N_shifts = length(ECO))),
+      data.frame(Version = "v2",
+                 biov2 %>% 
+                     dplyr::group_by(ECO) %>%
+                     summarise(N_Studies = length(unique(Paper.ID)),
+                               N_species = length(unique(sp_name_std_v2)),
+                               N_shifts = length(ECO))))
+```
+
+# Get species list with species we can work with given the conditions above
+```{r}
+
+sp_work <- unique(biov1$sp_name_std_v1, biov2$sp_name_std_v2)
+
+splist <- splist %>% dplyr::filter(scientificName %in% sp_work)
+
+# N species possible to work is 
+length(unique(splist$scientificName))
 
 ```
+
 
 # N occurrences GBIF
 
@@ -264,278 +402,53 @@ Retrieve a summary table with N occurrence per species.
 We only retrieve N occurrences for records based:
 1) "HUMAN_OBSERVATION", "LITERATURE", "LIVING_SPECIMEN", "OBSERVATION", "PRESERVED_SPECIMEN", "OCCURRENCE"
 2) from which there was coordinates recorded
-3) from which there were no identifiable Geospatial Issue
-4) Registered after 1900 (limit is 2022)
+3) Registered after 1979 (limit is 2022)
 
 ```{r eval=FALSE}
 
-taxodat <- c("kingdom", "phylum", "class", "order", "family")
-
-cl <- makeCluster(detectCores()-10)
-clusterExport(cl, c("splist","taxodat"))
-
-N_OCC <- pblapply(1:length(splist$species), function(i) {
-    # N_OCC <- list()
-    # for(i in 1:length(splist$species)) {
-    #     cat("Processing species", i, "on", length(splist$species), "\r")
-    
-    ## Retrieve GBIF species key ----
-    
-    tryCatch (
-        {
-            
-            # i = which(splist$species == "Ziziphus_parryi")
-            spgoing <- gsub("_"," ",splist$species[i])
-            response   <- rgbif::name_suggest(q = spgoing, rank = "species")
-            taxon_keys <- na.omit(response$data)$key
-            
-            # if didn't find a key, try with original name as provided in v1/v2. Removing special characters may have altered a correct species name
-            if(all(is.null(taxon_keys))){
-                spgoing <- gsub("_"," ",splist$species_original[i])
-                response   <- rgbif::name_suggest(q = spgoing, rank = "species")
-                taxon_keys <- na.omit(response$data)$key
-            }
-            
-            # if didn't find a key, check if it's a subspecies or variance and use only genus and species names
-            if(all(is.null(taxon_keys))){
-                test <- strsplit(spgoing," ")[[1]]
-                if(length(test)>2){
-                    spgoing <- paste(test[1],test[2])
-                    response   <- rgbif::name_suggest(q = spgoing, rank = "species")
-                    taxon_keys <- na.omit(response$data)$key
-                }
-            }
-            
-            if(!all(is.null(taxon_keys))){
-                ## Select GBIF species key only for accepted name ----
-                
-                status <- data.frame()
-                
-                for (j in 1:length(taxon_keys)){
-                    
-                    spdata <- rgbif::name_usage(taxon_keys[j])
-                    spdata <- spdata$"data"
-                    
-                    taxono <- data.frame(sapply(taxodat, function(x) 
-                        ifelse(x %in% names(spdata), spdata[x], NA)))
-                    
-                    if(!any(names(spdata) == "species")){
-                        spdata$species = spdata$canonicalName
-                    }
-                    
-                    if(!any(names(spdata) == "canonicalName")){
-                        spdata$canonicalName = spdata$species
-                    }
-                    
-                    if(!any(names(spdata) == "acceptedKey")){
-                        spdata$acceptedKey = spdata$speciesKey
-                    }
-                    
-                    status = rbind(status, 
-                                   cbind(data.frame(spdata[ , c('canonicalName', 'species', "taxonomicStatus", "acceptedKey")], 
-                                                    taxon_key = taxon_keys[j]),
-                                         taxono))
-                    
-                }
-                
-                # If multiple species returned select the one with the exact same name
-                if(nrow(status)>1){
-                    if(any(status$canonicalName == spgoing)){
-                        status <- status[which(status$canonicalName == spgoing),]
-                    }
-                }
-                
-                # If there is no exact name (or multiple exact names), use agrep allowing 1 substitution and 1 deletion >> for cases in which there was typo on species name
-                if(nrow(status)>1){
-                    matches <- sapply(status$species, function(x) 
-                        agrep(x, spgoing, costs = list(ins = 1, del = 1, subs =1)))
-                    matches <- lapply(matches, function(x) ifelse(identical(x,integer(0)),0,1))
-                    
-                    if(any(matches == 1)){
-                        status <- status[which(matches==1),]
-                    }
-                }
-                
-                ## If didn't find species with the exact same name (or multiple exact names) but still have multiple species returned, select the phylogenetically closest related (same family or same order)
-                if(nrow(status)>1){
-                    if(any(na.omit(status$family) == splist$family[which(splist$species == splist$species[i])])){
-                        status <- status[which(status$family == splist$family[which(splist$species == splist$species[i])]),]
-                    } else {
-                        if(any(na.omit(status$order) == splist$order[which(splist$species == splist$species[i])])){
-                            status <- status[which(status$order == splist$order[which(splist$species == splist$species[i])]),]
-                        } else {
-                            status <- data.frame()
-                        }
-                    }
-                }
-                
-                ## If species present in the GBIF system ----
-                
-                if (nrow(status) > 0) {
-                    
-                    n_occ <- list()
-                    
-                    for (j in 1:nrow(status)) {
-                        
-                        ## Get total number of records ----
-                        
-                        records <- rgbif::occ_search(taxonKey = status[j, 'taxon_key'],
-                                                     hasCoordinate = TRUE, 
-                                                     hasGeospatialIssue = FALSE,
-                                                     basisOfRecord = c("HUMAN_OBSERVATION", "LITERATURE",
-                                                                       "LIVING_SPECIMEN", "OBSERVATION",
-                                                                       "PRESERVED_SPECIMEN", "OCCURRENCE"),
-                                                     fields = c("acceptedTaxonKey", "decimalLatitude",
-                                                                "decimalLongitude", "year", "occurrenceStatus"),
-                                                     year =c("1979,2020"), # limit of climate data
-                                                     limit = 0,
-                                                     return = "meta")
-                        
-                        tmp. <- which(sapply(records, function(x){
-                            x$meta$count > 0
-                        }))
-                        
-                        if(any(tmp.)){
-                            occs <- records[tmp.]
-                            occs <- sapply(occs, function(x) as.data.frame(x$meta$count))
-                            occs <- sum(unlist(occs))
-                            
-                            n_occ[[j]] <- data.frame(n_occ = occs,
-                                                     taxon_key = as.numeric(status[j, 'taxon_key']),
-                                                     taxon = spgoing,
-                                                     gbif_name = status[j, 'species'],
-                                                     Kingdom = status[j, 'kingdom'],
-                                                     Phylum = status[j, 'phylum'],
-                                                     Class = status[j, 'class'],
-                                                     Order = status[j, 'order'],
-                                                     Family = status[j, 'family'],
-                                                     spNameOriginal = splist$species_original[i],
-                                                     round = i)
-                            
-                        } else {
-                            n_occ[[j]] <- data.frame(n_occ = NA,
-                                                     taxon_key = NA,
-                                                     taxon = spgoing,
-                                                     gbif_name = NA,
-                                                     Kingdom = NA,
-                                                     Phylum = NA,
-                                                     Class = NA,
-                                                     Order = NA,
-                                                     Family = NA,
-                                                     spNameOriginal = splist$species_original[i],
-                                                     round = i)
-                        }
-                        
-                    }
-                    
-                    n_occ <- do.call("rbind",n_occ)
-                    
-                } else {
-                    n_occ <- data.frame(n_occ = NA,
-                                        taxon_key = NA,
-                                        taxon = spgoing,
-                                        gbif_name = NA,
-                                        Kingdom = NA,
-                                        Phylum = NA,
-                                        Class = NA,
-                                        Order = NA,
-                                        Family = NA,
-                                        spNameOriginal = splist$species_original[i],
-                                        round = i)
-                }
-            } else {
-                n_occ <- data.frame(n_occ = NA,
-                                    taxon_key = NA,
-                                    taxon = spgoing,
-                                    gbif_name = NA,
-                                    Kingdom = NA,
-                                    Phylum = NA,
-                                    Class = NA,
-                                    Order = NA,
-                                    Family = NA,
-                                    spNameOriginal = splist$species_original[i],
-                                    round = i)
-            }
-            
-            return(n_occ)
-            # N_OCC[[i]] <- n_occ
-            
-        },
-        
-        error = function(e){
-            tmp = data.frame(species = spgoing,
-                             round = i)
-            write.csv(tmp, paste0("../errors/",spgoing,".csv"))
-        }
-    )
-}
-,
-cl = cl)
-
-stopCluster(cl)
-
-# Took 30min FRB
-
-N_OCC = do.call("rbind", N_OCC)
-
-length(unique(N_OCC$taxon)) == length(splist$species)
-
-mydups <- N_OCC$taxon[which(duplicated(N_OCC$taxon))]
-# View(N_OCC[which(N_OCC$taxon %in% mydups),])
-
-N_OCC <- merge(N_OCC, splist[,c("v1", "v2", "species_original", "ECO", "Group")], 
-               by.x = "spNameOriginal", by.y = "species_original")
-
-write.csv(N_OCC, here::here("Data/n_occ.csv"), row.names = F)
-
-
-```
-
-
-## Read and filter occurrences by N
-```{r eval=FALSE}
+# basisOfRecord = c("HUMAN_OBSERVATION", "LITERATURE",
+#                   "LIVING_SPECIMEN", "OBSERVATION",
+#                   "PRESERVED_SPECIMEN", "OCCURRENCE")
+# 
+# cl <- makeCluster(20)
+# clusterExport(cl, c("splist","basisOfRecord","range_env_data"))
+# 
+# N_OCC <- pbsapply(1:length(splist$db_code), function(i) {
+# 
+#     code <- gsub("GBIF:","",splist$db_code[i])
+# 
+#     records <- sapply(basisOfRecord, function(b) {
+#         rgbif::occ_count(taxonKey = code,
+#                          georeferenced = TRUE,
+#                          basisOfRecord = b,
+#                          from = range_env_data[1], to = range_env_data[2]) # limit of climate data
+#     })
+# 
+#     sum(records)
+# }
+# ,
+# cl = cl)
+# 
+# stopCluster(cl)
+# 
+# # Took 4min FRB
+# 
+# length(N_OCC) == length(splist$scientificName)
+# 
+# N_OCC <- data.frame(splist, n_occ = N_OCC)
+# 
+# write.csv(N_OCC, here::here("Data/n_occ.csv"), row.names = F)
 
 N_OCC <- read.csv(here::here("Data/n_occ.csv"))
 
-# remove species not found in GBIF
-N_OCC = N_OCC[-which(is.na(N_OCC$taxon_key)),]
-
-# N species
-length(unique(N_OCC$gbif_name))
-
-# Keep species with more then 30 occurrences
-obs_sps <- N_OCC %>%
-    group_by(gbif_name) %>%
-    summarise(n_occ = sum(n_occ))
-
-obs_sps <- obs_sps[which(obs_sps$n_occ >= 30),]
-length(unique(obs_sps$gbif_name))
-
-sp2go <- unique(obs_sps$gbif_name)
-
-N_OCC <- N_OCC[which(N_OCC$gbif_name %in% sp2go),]
-# remove taxa key with zero occ
-if(any(N_OCC$n_occ==0)) {
-    N_OCC <- N_OCC[-which(N_OCC$n_occ == 0),]
-}
-# remove taxa not found
-if(any(is.na(N_OCC$taxon_key))) {
-    N_OCC <- N_OCC[-which(is.na(N_OCC$taxon_key)),]
-}
-length(unique(N_OCC$gbif_name))
-
-length(unique(N_OCC$taxon_key))
-
 ```
-
-
 
 # Create a SQL Database with species Info (GBIF + Taxonomy)
 
 ```{r eval=FALSE}
 
-my_db_file <- here::here("Data/BioshiftsExposure.sqlite")
-my_db <- src_sqlite(my_db_file, create = TRUE)
+# my_db_file <- here::here("Data/BioshiftsExposure.sqlite")
+# my_db <- src_sqlite(my_db_file, create = TRUE)
 
 # driver
 drv <- dbDriver("SQLite") 
@@ -549,10 +462,14 @@ DBI::dbDisconnect(db)
 
 rm(N_OCC)
 
+
+
 ```
 
 # Stats
+## N species by group
 ```{r}
+
 my_db_file <- here::here("Data/BioshiftsExposure.sqlite")
 
 # driver
@@ -574,59 +491,56 @@ ggplot(tmp, aes(x = Var1, y = Freq))+
     coord_flip()+
     theme_classic()+
     ylab("N species")+xlab("")
+
 ```
 
-
+## N occurrences by group
 ```{r fig.height=4, fig.width=10}
 
 toplot <- N_OCC %>%
-    group_by(Class, Kingdom) %>%
+    filter(n_occ > 30) %>%
+    group_by(kingdom, Group) %>%
     summarise(n_occ = sum(n_occ))
-toplot$n_occ <- as.numeric(toplot$n_occ)
-toplot$Class <- factor(toplot$Class, levels = toplot$Class[order(toplot$n_occ)])
+
+toplot$class <- factor(toplot$Group, levels = toplot$Group[order(toplot$n_occ)])
 
 # Occ by Class
-ggplot(toplot, aes(x = Class, y = n_occ))+
+ggplot(toplot, aes(x = Group, y = n_occ))+
     geom_col()+
     theme_classic()+
     # coord_flip()+
-    scale_y_log10()+
-    facet_grid(scales = "free_x", space = "free", cols = vars(Kingdom))+
-    ylab("N occurrences (Log10)")+xlab("Class")+
+    ylab("N species")+xlab("Class")+
     theme(axis.text.x = element_text(angle = 45, hjust=1))
 
 ```
 
-
-```{r fig.width=8, fig.height=3}
+## N species by ECO
+```{r fig.width=8, fig.height=6}
 
 toplot <- N_OCC %>%
-    group_by(ECO, Kingdom) %>%
-    summarise(n_occ = sum(n_occ))
-toplot$n_occ <- as.numeric(toplot$n_occ)
-
-toplot$n_occ = as.numeric(toplot$n_occ)
+    group_by(ECO, Group) %>%
+    summarise(n_sps = length(unique(scientificName)))
+toplot$n_sps <- as.numeric(toplot$n_sps)
 
 # Occ by ECO
-ggplot(toplot, aes(x = ECO, y = n_occ))+
+ggplot(toplot, aes(x = ECO, y = n_sps))+
     geom_col(fill = "white", color = "black")+
-    geom_text(aes(label=scales::comma(n_occ)),
-              stat='identity', size = 3, vjust = 4.2)+
     theme_classic()+
-    scale_y_log10()+
-    ylab("N occurrences (Log10)")+xlab("Habitat")+
-    facet_grid(scales = "free", space = "free", cols = vars(Kingdom))
+    ylab("N species")+xlab("Habitat")+
+    facet_grid(scales = "free", space = "free", cols = vars(Group))+
+    theme(strip.text.x = element_text(angle = 90))
 
 ```
 
 
 ```{r}
+
 # % bioshift with occ
 bio <- read.csv(here::here("Data/n_occ.csv"))
-bio <- data.frame(table(bio$Class))
+bio <- data.frame(table(bio$class))
 names(bio) <- c("Class","Bioshifts_Freq")
 
-gbifocc <- data.frame(table(N_OCC$Class))
+gbifocc <- data.frame(table(N_OCC$class))
 names(gbifocc) <- c("Class","GBIF_Freq")
 
 bio <- merge(bio, gbifocc)
