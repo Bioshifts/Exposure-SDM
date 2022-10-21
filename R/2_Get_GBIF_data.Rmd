@@ -1,0 +1,753 @@
+---
+title: "Get GBIF data"
+author: "Brunno F Oliveira & Bioshifts group"
+date: "Last compiled on `r Sys.Date()`"
+output:
+    html_document:
+        toc: true
+        toc_float: true
+        number_sections: true
+---
+
+# Setup
+
+```{r setup, message = FALSE, warning = FALSE}
+
+rm(list=ls())
+gc()
+
+list.of.packages <- c("stringr", "crul", "dplyr", "here", 
+                      "parallel", "pbapply", 
+                      "data.table", "ggplot2", "disk.frame",
+                      "readxl", "knitr", 
+                      "speciesgeocodeR", "CoordinateCleaner", "rgbif", "raster", "terra",
+                      "sqldf","RSQLite","jsonlite",
+                      "meowR")
+
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+
+if(length(new.packages)) install.packages(new.packages)
+
+sapply(list.of.packages, require, character.only = TRUE)
+
+```
+
+
+# Load functions
+```{r}
+
+source(here::here("R/my_functions.R"))
+
+```
+
+
+# Get species list
+```{r}
+
+my_db_file <- here::here("Data/BioshiftsExposure.sqlite")
+# driver
+drv <- dbDriver("SQLite") 
+# connect
+db <- dbConnect(drv, my_db_file) 
+
+N_OCC <- dbGetQuery(db, "SELECT * FROM SpInfo")
+
+# disconnect
+DBI::dbDisconnect(db)
+
+```
+
+
+# GBIF requests
+
+Create requests for all taxa keys. The request is processed by GBIF. The processing of each request takes a while (GBIF website says it can take up to 15min). Once the request is processed, the file is ready for download under my user page at the GBIF website.
+The advantage of this method is reproducibility. It generates a DOI that can be cited and link for download that can be shared.
+Creating a single request can generate a very large file (File size was 300Gbs zipped == 600Gbs unziped). Thus, better submitting multiple requests. Here, we created divided species into chunks and loop through chunks for downloading data.
+
+```{r eval=FALSE}
+
+my_keys <- unique(N_OCC$taxon_key)
+
+# create 20 requests
+nR <- 20
+reqs <- list()
+for(i in 1:nR){ 
+    reqs[[i]] <- data.frame()
+}
+
+k = 1
+for(i in 1:length(my_keys)){ cat(i, "from", length(my_keys), "\r")
+    
+    if(k > 20) { k = 1 }
+    
+    reqs[[k]] <- rbind(reqs[[k]], my_keys[i])
+    k = k + 1
+}
+
+# from data.frame to vector
+reqs <- lapply(reqs, function(x) x[,1])
+
+# N keys per request chunk
+sapply(reqs, length)
+
+sum(sapply(reqs, length)) == length(my_keys)
+
+# n occs per chunk
+sapply(reqs, function(x) sum(N_OCC$n_occ[which(N_OCC$taxon_key %in% x)]))
+
+# Loop through chunks
+
+requests <- data.frame()
+k = 1
+inforequest <- list()
+
+query <- data.frame(predicate = c("taxonKey", 
+                                  "basisOfRecord", 
+                                  "year", 
+                                  "year", 
+                                  "hasCoordinate", 
+                                  "hasGeospatialIssue", 
+                                  "occurrenceStatus", 
+                                  "creator", 
+                                  "notification_address"),
+                    type = c("pred_in", 
+                             "pred_in", 
+                             "pred_gte", 
+                             "pred_lte", 
+                             "pred", 
+                             "pred", 
+                             "pred", 
+                             "pred", 
+                             "pred"),
+                    value = c(NA, 
+                              paste("HUMAN_OBSERVATION","LITERATURE","LIVING_SPECIMEN","OBSERVATION","PRESERVED_SPECIMEN","OCCURRENCE", sep = ", "), 
+                              1979, 
+                              2020, 
+                              TRUE, 
+                              FALSE, 
+                              "PRESENT", 
+                              "Brunno F. Oliveira", 
+                              "brunno.oliveira@me.com"))
+
+write.csv(query, here::here("Data/my_query_to_GBIF.csv"))
+
+for(i in 1:length(reqs)){ 
+    
+    cat("\r", "Requesting chunk", i, "from", length(reqs))
+    
+    if(k <= 3){ # GBIF allow 3 requests at a time
+        inforequest[[k]] <- occ_download(
+            # pred("taxonKey", 8417931),
+            pred_in("taxonKey", reqs[[i]]),
+            pred_in("basisOfRecord",
+                    c("HUMAN_OBSERVATION", "LITERATURE",
+                      "LIVING_SPECIMEN", "OBSERVATION",
+                      "PRESERVED_SPECIMEN", "OCCURRENCE")),
+            pred_gte("year", 1979),
+            pred_lte("year", 2020),
+            pred("hasCoordinate", TRUE),
+            pred("hasGeospatialIssue", FALSE),
+            pred("occurrenceStatus", "PRESENT"),
+            format = "SIMPLE_CSV",
+            user = Sys.getenv('GBIF_USER'), 
+            pwd = Sys.getenv('GBIF_PWD'),
+            email = "brunno.oliveira@me.com")
+        
+        tmp <- inforequest[[k]]
+        
+        # save information about request
+        tmp.save <- attributes(tmp)
+        tmp.save <- data.frame(download_key = tmp[1],
+                               created = tmp.save$created,
+                               download_link = tmp.save$downloadLink,
+                               doi = tmp.save$doi,
+                               citation = tmp.save$citation,
+                               format = tmp.save$format,
+                               user = tmp.save$user,
+                               email = tmp.save$email)
+        requests <- rbind(requests,tmp.save)
+        
+        k = k + 1 
+        
+    }
+    
+    if(k > 3){ # GBIF allows 3 requests at a time
+        occ_download_wait(inforequest[[1]])
+        occ_download_wait(inforequest[[2]])
+        occ_download_wait(inforequest[[3]])
+        
+        k = 1
+        inforequest <- list()
+    }
+    
+}
+
+write.csv(requests, here::here("Data/requests.csv"), row.names = F)
+
+```
+
+
+## Download requests in Rossinante
+** This must run in rossinante **
+
+* Ctrl+Alt+Enter sends active selection to the terminal *
+
+```{r eval=FALSE, engine.opts='-l'}
+
+ssh rossinante
+
+# check for active screens
+screen -ls
+
+screen -r gbif
+
+cd Exposure-SDM
+
+R
+
+### R-code ###
+
+source(here::here("R/my_functions.R"))
+
+library(rgbif)
+library(pbapply)
+library(parallel)
+
+requests <- read.csv(here::here("Data/requests.csv"))
+head(requests)
+
+new.dir <- here::here("/media/seagate/boliveira/GBIF_data")
+if(!dir.exists(new.dir)){
+    dir.create(new.dir,recursive = T)
+}
+
+cl <- makeCluster(detectCores()-10)
+clusterExport(cl, c("requests","new.dir"))
+
+check <- "Error"
+attempt <- 0
+
+keystogo <- requests$download_key
+
+while( keystogo > 0 ) {
+    attempt <- attempt + 1
+    
+    cat("Attempt", attempt, "\n")
+    
+    check <- pblapply(keystogo, function(i)
+    {
+        tryCatch (
+            {
+                rgbif::occ_download_get(i,
+                                        path = new.dir,
+                                        overwrite = TRUE)
+                return(paste("OK", i))
+            },
+            error = function(e){
+                return(paste("Error", i))
+            }
+        )
+    },
+    cl = cl)
+    
+    errors <- sapply(check, function(x) grepl("Error", x))
+    
+    if(any(errors)){
+        errors <- requests$download_key[which(errors)]
+        keystogo <- errors
+    }
+    cat("Error on keys:", errors)
+} 
+
+stopCluster(cl)
+
+```
+
+## Unzip occurrences in Rossinante
+
+```{r eval=FALSE, engine.opts='-l'}
+
+## Unzipping
+
+source(here::here("R/my_functions.R"))
+
+library(pbapply)
+library(parallel)
+
+requests <- read.csv(here::here("Data/requests.csv"))
+
+cl <- makeCluster(detectCores()-10)
+clusterExport(cl, c("requests", "decompress_file"))
+
+pblapply(1:length(requests$download_key), function(i) {
+    
+    decompress_file(directory = here::here("/media/seagate/boliveira/GBIF_data"), 
+                    file = here::here("/media/seagate/boliveira/GBIF_data",paste0(requests$download_key[i],".zip")))
+    
+    gc()
+    
+},
+cl = cl)
+
+stopCluster(cl)
+
+```
+
+## Feed a SQL Database with species occurrences
+
+```{r}
+
+myselection <- c("speciesKey", "decimalLongitude", "decimalLatitude", "year", "month","species")
+
+occs <- list.files(here::here("/media/seagate/boliveira/GBIF_data"), pattern = ".csv", full.names = TRUE)
+
+terrestrials <- N_OCC$gbif_name[which(N_OCC$ECO == "T")]
+marines <- N_OCC$gbif_name[which(N_OCC$ECO == "M")]
+aquatic <- N_OCC$gbif_name[which(N_OCC$ECO == "A")]
+
+# my terrestrial raster
+rasdir <- here::here("/media/seagate/boliveira")
+ter.ras <- terra::rast(here::here(rasdir,"Land","model_raster_ter.tif"))
+# my marine raster
+mar.ras <- terra::rast(here::here(rasdir,"Marine","model_raster_mar.tif"))
+# my aquatic raster
+# aqua.ras <- terra::rast(here::here(rasdir,"Aqua","model_raster_aqua.tif"))
+
+# test
+any(terrestrials %in% marines)
+# test
+any(aquatic %in% marines)
+
+# add occurrences to the DB
+for(i in 1:length(occs)) { cat("Running doc", i , "from", length(occs), "\n") 
+    tmp <- na.omit(fread(occs[i], select = myselection, 
+                         nThread = detectCores()-10))
+    ter. <- tmp[which(tmp$species %in% terrestrials),] 
+    # ter. <- ter.[1:10000,]
+    cat("\nRunning for terrestrials\n") 
+    if(nrow(ter.) > 0){
+        tmp.ter <- drugfree(x = ter., 
+                            my.mask = ter.ras)
+        # keep species with more than 30 obs
+        rem <- table(tmp.ter$species)
+        rem <- names(rem[which(rem >= 30)])
+        tmp.ter <- tmp.ter[which(tmp.ter$species %in% rem),]
+    }
+    cat("Running for Marines\n") 
+    # Marines
+    mar. <- tmp[which(tmp$species %in% marines),] 
+    # mar. <- mar.[1:10000]
+    if(nrow(mar.) > 0){
+        tmp.mar <- drugfree(x = mar., 
+                            my.mask = mar.ras)
+        # keep species with more than 30 obs
+        rem <- table(tmp.mar$species)
+        rem <- names(rem[which(rem >= 30)])
+        tmp.mar <- tmp.mar[which(tmp.mar$species %in% rem),]
+    }
+    # Feed
+    cat("Feeding SQL\n")
+    # driver/connect
+    drv <- dbDriver("SQLite") 
+    db <- dbConnect(drv, my_db_file) 
+    dbWriteTable(conn=db, name="occur", tmp.ter, append=T, row.names=F)
+    dbWriteTable(conn=db, name="occur", tmp.mar, append=T, row.names=F)
+    # disconnect
+    DBI::dbDisconnect(db)
+    gc()
+}
+
+```
+
+## Test a query
+```{r}
+
+# driver
+drv <- dbDriver("SQLite") 
+# connect
+db <- dbConnect(drv, my_db_file) 
+# show the tables in this database
+dbListTables(db)
+# dbRemoveTable(db, "EnvMar_o2")
+
+###
+# get first 5 rows
+x1 = dbGetQuery(db, 
+                "SELECT * FROM ClassOccTer LIMIT 5")
+###
+
+# get 1 sps
+myspecies <- N_OCC$gbif_name[1]
+myspecies <- "Abra alba"
+
+x2 = dbGetQuery(
+    db, 
+    paste0("SELECT * FROM occur WHERE species = '", myspecies, "' LIMIT 5")
+)
+###
+
+# Specify columns
+x2 = dbGetQuery(
+    db, 
+    paste0("SELECT decimalLongitude, decimalLatitude  
+         FROM occur 
+         WHERE species = '", myspecies, "' LIMIT 5")
+)
+###
+
+# Specify columns + condition
+x2 = dbGetQuery(
+    db, 
+    paste0("SELECT decimalLongitude, decimalLatitude, year   
+         FROM occur 
+         WHERE species = '", myspecies, "' 
+         AND year = 2019 
+         LIMIT 5")
+)
+###
+
+# Statistics
+x2 = dbGetQuery(
+    db, 
+    paste0("SELECT count(*) 
+         FROM occur 
+         WHERE species = '", myspecies, "' LIMIT 5")
+)
+###
+
+# Statistics
+x2 = dbGetQuery(
+    db, 
+    paste0("SELECT year, count(*) AS count_year
+            FROM occur 
+            WHERE species = '", myspecies, "'
+            GROUP BY year")
+)
+###
+
+# get 10 sps
+x2 = dbGetQuery(
+    db, 
+    paste(
+        "SELECT *",
+        "FROM occur",
+        "WHERE species in (", 
+        paste(shQuote(unique(N_OCC$gbif_name)[1:2], type = "sh"), 
+              collapse = ', '), ")")
+)
+
+# disconnect
+dbDisconnect(db)
+
+```
+
+# Create sp list for SDMs
+```{r}
+
+SDMsSpList = dbGetQuery(
+    db, 
+    paste0("SELECT species, count(*) AS N_occrs
+            FROM occur 
+            GROUP BY species")
+)
+
+# Add Extra info
+SDMsSpList <- merge(SDMsSpList, 
+                    N_OCC[,c("Class","gbif_name", "ECO", "Group")], 
+                    by.x = "species", by.y = "gbif_name",
+                    all.x = TRUE)
+View(SDMsSpList[which(duplicated(SDMsSpList$species)),])
+SDMsSpList <- saveRDS(SDMsSpList, here::here("Data/SDMsSpList.RDS"))
+
+table(SDMsSpList$Class)
+table(SDMsSpList$ECO)
+
+```
+
+# GBIF requests for Classes
+This will be used to generate taxa specific background points
+
+```{r}
+
+requests_class <- data.frame()
+k = 1
+inforequest <- list()
+
+# connect
+db <- dbConnect(drv, my_db_file) 
+
+# show the tables in this database
+dbListTables(db)
+
+# My Classes
+my_Class <- data.frame(Class = unique(N_OCC$Class))
+# Get taxon_key for Classes
+taxkey <- pbsapply(1:length(my_Class$Class), function(i) {
+    spgoing <- my_Class$Class[i]
+    response   <- rgbif::name_suggest(q = spgoing, rank = "Class")
+    taxon_keys <- na.omit(response$data)$key
+    spdata <- rgbif::name_usage(taxon_keys)
+    spdata <- spdata$data$classKey
+    spdata
+})
+my_Class$key = unlist(taxkey)
+
+for(i in 1:nrow(my_Class)){ cat("going", i, "from", nrow(my_Class))
+    # get species from Class i
+    sps_tmp <- dbGetQuery(
+        db, 
+        paste0(
+            "SELECT gbif_name 
+            FROM SpInfo 
+            WHERE Class = '", my_Class$Class[i], "'"
+        )
+    )
+    # get coords
+    xys <- dbGetQuery(
+        db, 
+        paste0(
+            "SELECT decimalLongitude, decimalLatitude, cell   
+            FROM occur 
+            WHERE species in (", 
+            paste(shQuote(unique(sps_tmp$gbif_name), type = "sh"),
+                  collapse = ', '), ")"
+        )
+    )
+    # remove duplicated cells
+    rem <- duplicated(xys$cell)
+    if(any(rem)){
+        xys <- xys[-which(rem),]
+    }
+    
+    if(k <= 3){ # GBIF allow 3 requests at a time
+        inforequest[[k]] <- occ_download(
+            pred_in("taxonKey", my_Class$key[i]),
+            pred_in("basisOfRecord",
+                    c("HUMAN_OBSERVATION", "LITERATURE",
+                      "LIVING_SPECIMEN", "OBSERVATION",
+                      "PRESERVED_SPECIMEN", "OCCURRENCE")),
+            pred_gte("year", 1979),
+            pred_lte("year", 2020),
+            pred("hasCoordinate", TRUE),
+            pred("hasGeospatialIssue", FALSE),
+            pred("occurrenceStatus", "PRESENT"),
+            format = "SIMPLE_CSV",
+            user = Sys.getenv('GBIF_USER'), 
+            pwd = Sys.getenv('GBIF_PWD'),
+            email = "brunno.oliveira@me.com")
+        
+        tmp <- inforequest[[k]]
+        
+        # save information about request
+        tmp.save <- attributes(tmp)
+        tmp.save <- data.frame(download_key = tmp[1],
+                               created = tmp.save$created,
+                               download_link = tmp.save$downloadLink,
+                               doi = tmp.save$doi,
+                               citation = tmp.save$citation,
+                               format = tmp.save$format,
+                               user = tmp.save$user,
+                               email = tmp.save$email)
+        requests_class <- rbind(requests_class, tmp.save)
+        
+        k = k + 1 
+        
+    }
+    
+    if(k > 3){ # GBIF allows 3 requests at a time
+        occ_download_wait(inforequest[[1]])
+        occ_download_wait(inforequest[[2]])
+        occ_download_wait(inforequest[[3]])
+        
+        k = 1
+        inforequest <- list()
+    }
+}
+
+# disconnect
+dbDisconnect(db)
+
+requests_class$Class <- my_Class$Class
+
+write.csv(requests_class, here::here("Data/requests_class.csv"), row.names = F)
+
+
+```
+
+## Download requests in Rossinante
+** This must run in rossinante **
+
+* Ctrl+Alt+Enter sends active selection to the terminal *
+
+```{r eval=FALSE, engine.opts='-l'}
+
+ssh rossinante
+
+# check for active screens
+screen -ls
+
+screen -r gbif
+
+cd Exposure-SDM
+
+R
+
+### R-code ###
+
+source(here::here("R/my_functions.R"))
+
+library(rgbif)
+library(pbapply)
+library(parallel)
+
+requests_class <- read.csv(here::here("Data/requests_class.csv"))
+head(requests_class)
+
+new.dir <- here::here("/media/seagate/boliveira/GBIF_data/Class")
+if(!dir.exists(new.dir)){
+    dir.create(new.dir,recursive = T)
+}
+
+cl <- makeCluster(detectCores()-10)
+clusterExport(cl, c("requests_class","new.dir"))
+
+check <- "Error"
+attempt <- 0
+
+keystogo <- requests_class$download_key
+
+while( length(keystogo) > 0 ) {
+    attempt <- attempt + 1
+    
+    cat("Attempt", attempt, "\n")
+    
+    check <- pblapply(keystogo, function(i)
+    {
+        tryCatch (
+            {
+                rgbif::occ_download_get(i,
+                                        path = new.dir,
+                                        overwrite = TRUE)
+                return(paste("OK", i))
+            },
+            error = function(e){
+                return(paste("Error", i))
+            }
+        )
+    },
+    cl = cl)
+    
+    errors <- sapply(check, function(x) grepl("Error", x))
+    
+    keystogo <- keystogo[which(errors)]
+    
+    cat("Error on keys:", which(errors))
+} 
+
+stopCluster(cl)
+
+```
+
+## Unzip occurrences in Rossinante
+
+```{r eval=FALSE, engine.opts='-l'}
+
+## Unzipping
+
+source(here::here("R/my_functions.R"))
+
+library(pbapply)
+library(parallel)
+
+requests_class <- read.csv(here::here("Data/requests_class.csv"))
+
+cl <- makeCluster(detectCores()-10)
+clusterExport(cl, c("requests_class", "decompress_file"))
+
+pblapply(1:length(requests_class$download_key), function(i) {
+    
+    decompress_file(directory = here::here("/media/seagate/boliveira/GBIF_data/Class"), 
+                    file = here::here("/media/seagate/boliveira/GBIF_data/Class",paste0(requests_class$download_key[i],".zip")))
+    
+    gc()
+    
+},
+cl = cl)
+
+stopCluster(cl)
+
+```
+
+## Feed a SQL Database with Class-level occurrences
+
+```{r}
+
+my_db_file <- here::here("Data/BioshiftsExposure.sqlite")
+drv <- dbDriver("SQLite") 
+
+requests_class <- read.csv(here::here("Data/requests_class.csv"))
+
+myselection <- c("decimalLongitude", "decimalLatitude", "year", "month")
+
+occs <- here::here("/media/seagate/boliveira/GBIF_data/Class", paste0(requests_class$download_key,".csv"))
+# check
+file.exists(occs)
+
+# add class name
+occs <- data.frame(file = occs, Class = requests_class$Class)
+
+# my terrestrial raster
+rasdir <- here::here("/media/seagate/boliveira")
+ter.ras <- terra::rast(here::here(rasdir,"Land","model_raster_ter.tif"))
+# my marine raster
+mar.ras <- terra::rast(here::here(rasdir,"Marine","model_raster_mar.tif"))
+# my aquatic raster
+# aqua.ras <- terra::rast(here::here(rasdir,"Aqua","model_raster_aqua.tif"))
+
+# generate taxa-specific background points
+for(i in 1:length(occs$Class)) { cat("\nRunning doc", i , "from", length(occs$Class), "\n") 
+    
+    myClass = occs$Class[i]
+    cat("Class", myClass,"\n")
+    # Load occurrences from Class i
+    ClassOcc <- na.omit(fread(occs$file[i], 
+                              select = myselection,
+                              nThread = 20)) # reduced N cores due to large file size
+    
+    # name class
+    ClassOcc$species = myClass
+    # get realm
+    db <- dbConnect(drv, my_db_file) 
+    splist <- dbGetQuery(
+        db,
+        paste0("SELECT * FROM SpInfo WHERE Class = '", myClass,"'"))
+    realm = unique(splist$ECO)
+    if(any(realm == "T" | realm == "A")){
+        cat("\nClean terrestrial")
+        # Remove duplicated XY 
+        ClassOccTer <- drugfree(x = ClassOcc, 
+                                my.mask = ter.ras)
+        # save
+        dbWriteTable(conn=db, name="ClassOccTer", ClassOccTer, 
+                     append=T, row.names=F)
+    }
+    if(any(realm == "M")){
+        cat("\nClean marine")
+        # get marine species from Class i
+        spsMar <- splist[which(splist$ECO == "M"),]
+        # get ecoregions from occurrences
+        # Remove duplicated XY
+        ClassOccMar <- drugfree(x = ClassOcc, 
+                                my.mask = mar.ras) # No inverse here. Remove all cells outside the mask
+        # save
+        dbWriteTable(conn=db, name="ClassOccMar", ClassOccMar, 
+                     append=T, row.names=F)
+    }
+    gc()
+}
+# disconnect
+DBI::dbDisconnect(db)
+gc()
+
+
+```
