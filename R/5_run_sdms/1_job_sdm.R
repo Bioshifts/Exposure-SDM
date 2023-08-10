@@ -1,0 +1,197 @@
+
+### Cannot run this inside singularity
+### On terminal, open new screen, load R and run this!!!
+
+rm(list=ls())
+gc()
+
+
+library(tictoc)
+library(here)
+
+########################
+# set computer
+computer = "muse"
+
+if(computer == "muse"){
+    setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
+    
+    work_dir <- getwd()
+    sps.dir <- here::here(work_dir,"Data/Env_data")
+    script.dir <- here::here(work_dir,"R/5_run_sdms")
+}
+
+# create dir for log files
+logdir <- here::here(script.dir,"slurm-log")
+if(!dir.exists(logdir)){
+    dir.create(logdir,recursive = TRUE)
+}
+
+# create dir for job files
+jobdir <- here::here(script.dir,"job")
+if(!dir.exists(jobdir)){
+    dir.create(jobdir,recursive = TRUE)
+}
+
+Rscript_file = here::here(script.dir,"1_run_sdm.R")
+
+########################
+
+# sp list
+all_sps <- list.files(here::here(sps.dir), pattern = '.qs', recursive = TRUE)
+all_sps <- gsub("_"," ",all_sps)
+all_sps <- gsub(".qs","",all_sps)
+all_sps <- sapply(all_sps, function(x){
+    tmp <- strsplit(x,"/")[[1]][2]
+    tmp <- strsplit(tmp," ")[[1]][1:2]
+    return(paste(tmp,collapse = " "))
+})
+
+length(all_sps)
+
+# select only v1 species for now
+biov1 <- read.csv("Data/Bioshifts/biov1_fixednames.csv", header = T)
+
+all_sps <- all_sps[all_sps %in% gsub("_"," ",biov1$sp_name_std_v1)]
+length(all_sps)
+
+#####################
+# # select a representative set of 1000 terrestrial species
+# 
+# N_OCC <- read.csv("Data/n_occ.csv")
+# N_OCC <- N_OCC[N_OCC$scientificName %in% all_sps,]
+# 
+# 
+# dim(N_OCC)
+# 
+# N_OCC_T <- N_OCC[N_OCC$ECO == "T",]
+# groups <- table(N_OCC$Group)
+# 
+# # Use:
+# # 300 birds
+# my_birds <- N_OCC_T[N_OCC_T$Group == "Bird",]
+# my_birds <- sample(my_birds$scientificName, 300)
+# # 300 plants
+# my_plants <- N_OCC_T[N_OCC_T$Group == "Plant",]
+# my_plants <- sample(my_plants$scientificName, 300)
+# # 300 insects
+# my_insects <- N_OCC_T[N_OCC_T$Group == "Insect",]
+# my_insects <- sample(my_insects$scientificName, 300)
+# # 50 amphibians
+# my_amphibian <- N_OCC_T[N_OCC_T$Group == "Amphibian",]
+# my_amphibian <- sample(my_amphibian$scientificName, 50)
+# # 22 reptiles
+# my_reptile <- N_OCC_T[N_OCC_T$Group == "Reptile",]
+# my_reptile <- sample(my_reptile$scientificName, 20)
+# # 30 spiders
+# my_spider <- N_OCC_T[N_OCC_T$Group == "Spider",]
+# my_spider <- sample(my_spider$scientificName, 30)
+# # 20 mammals
+# my_mammal <- N_OCC_T[which(N_OCC_T$Group == "Mammal"),]
+# my_mammal <- sample(my_mammal$scientificName, 20)
+# 
+# my_terrestrial_list <- c(my_birds,
+#                          my_plants,
+#                          my_insects,
+#                          my_amphibian,
+#                          my_reptile,
+#                          my_mammal)
+# 
+# # save
+# saveRDS(my_terrestrial_list, "my_list_sps.RDS")
+
+#####################
+
+N_OCC <- read.csv("Data/n_occ.csv")
+
+# select a list of representative terrestrial species
+# or run for all terrestrial species (option == "all")
+
+option <- "all"
+
+if(option == "all"){
+    terrestrials <- N_OCC$scientificName[which(N_OCC$ECO == "T")]
+} else {
+    my_terrestrial_list <- readRDS("my_list_sps.RDS")
+    N_OCC_T <- N_OCC[N_OCC$scientificName %in% my_terrestrial_list,]
+    terrestrials <- N_OCC_T$scientificName
+}
+
+marines <- N_OCC$scientificName[which(N_OCC$ECO == "M")]
+
+mar_sps <- all_sps[which(all_sps %in% marines)]
+mar_sps <- data.frame(sps = mar_sps, realm = "Mar")
+
+ter_sps <- all_sps[which(all_sps %in% terrestrials)]
+ter_sps <- data.frame(sps = ter_sps, realm = "Ter")
+
+
+# pipe line of species: first marines (because they run faster due to coarser resolution data) then terrestrials
+all_sps <- rbind(mar_sps, ter_sps)
+# all_sps = ter_sps
+
+########################
+# submit jobs
+
+N_jobs_at_a_time = 100
+
+N_Nodes = 1
+tasks_per_core = 1
+cores = 28
+time = "1:00:00"
+memory = "64G"
+
+for(i in 1:nrow(all_sps)){
+    
+    sptogo <- all_sps$sps[i]
+    sptogo <- gsub(" ","_",sptogo)
+    
+    realm <- all_sps$realm[i]
+    
+    args = paste(sptogo, realm)
+    
+    # Start writing to this file
+    sink(here::here(jobdir,paste0(sptogo,'.sh')))
+    
+    # the basic job submission script is a bash script
+    cat("#!/bin/bash\n")
+    
+    cat("#SBATCH -N",N_Nodes,"\n")
+    cat("#SBATCH -n",tasks_per_core,"\n")
+    cat("#SBATCH -c",cores,"\n")
+    
+    cat("#SBATCH --job-name=",sptogo,"\n", sep="")
+    cat("#SBATCH --output=",here::here(logdir,paste0(sptogo,".out")),"\n", sep="")
+    cat("#SBATCH --error=",here::here(logdir,paste0(sptogo,".err")),"\n", sep="")
+    cat("#SBATCH --time=",time,"\n", sep="")
+    cat("#SBATCH --mem=",memory,"\n", sep="")
+    cat("#SBATCH --mail-type=ALL\n")
+    cat("#SBATCH --mail-user=brunno.oliveira@fondationbiodiversite.fr\n")
+    
+    cat("IMG_DIR='/storage/simple/projects/t_cesab/brunno'\n")
+    
+    cat("module purge\n")
+    cat("module load singularity/3.5\n")
+    
+    cat("singularity exec --disable-cache $IMG_DIR/brunnospatial.sif Rscript",Rscript_file, args,"\n", sep=" ")
+    
+    # Close the sink!
+    sink()
+    
+    # Submit to run on cluster
+    system(paste("sbatch", here::here(jobdir, paste0(sptogo,'.sh'))))
+    
+    # check how many jobs in progress
+    tmp <- system("squeue -u $USER",intern = T)
+    
+    while(length(tmp)>N_jobs_at_a_time){
+        
+        Sys.sleep(10)
+        tmp <- system("squeue -u $USER",intern = T)
+        
+    }
+    
+}
+
+
+

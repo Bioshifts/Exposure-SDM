@@ -6,5 +6,4 @@ get_env_data_for_modeling <- function(realm, myvars, varsdir){
         env_data[[j]] <- tmp
     }
     env_data <- unlist(env_data)
-    return(env_data)
-}
+    return(env_d

@@ -1,3 +1,30 @@
+# from a distance object to data.frame
+dist.to.df <- function(d){
+    size <- attr(d, "Size")
+    return(
+        data.frame(
+            subset(expand.grid(row=2:size, col=1:(size-1)), row > col),
+            distance=as.numeric(d),
+            row.names = NULL
+        )
+    )
+}
+
+# Markdown table
+nice_table <- function(x){
+    DT::datatable(
+        x,
+        rownames = FALSE,
+        extensions = 'Buttons',
+        options = list(pageLength = 100, 
+                       scrollY = "400px",
+                       scrollX = T,
+                       dom = 'Blfrtip',
+                       buttons = c('csv', 'excel'),
+                       lengthMenu = list(c(10,25,50,-1),
+                                         c(10,25,50,"All"))))
+}
+
 # submit system job
 # args = spgoing
 # code_dir= here::here("R/get_data_sps_sdms.R")
@@ -7,6 +34,21 @@ systemjob <- function(args,code_dir,Rout_file){
                  dQuote(paste("--args", args), q = "C"), 
                  code_dir,
                  Rout_file))
+}
+
+slurmjobsingularity <- function(job_args, slurm_args, Rscript_file){
+    
+    slurm_cmd <- paste("srun",
+                       "-N", slurm_args$n_nodes, 
+                       "-n", slurm_args$n_task_per_node, 
+                       "-c", slurm_args$n_cores, 
+                       paste0("--time=", slurm_args$time), 
+                       paste0("--mem=", slurm_args$mem), 
+                       "-J", slurm_args$job_name,
+                       "singularity exec --disable-cache $HOME/work_t_cesab/brunno/brunnospatial.sif",
+                       "Rscript", Rscript_file, job_args)
+    
+    system(slurm_cmd)
 }
 
 # clean var names from raster files
@@ -102,123 +144,123 @@ GetTimeRange <- function(dates, n_years){
 
 ##################################
 # calculate bioclimatic variables from time series
-bioclimatics_ocean <- function(x, myvars, n_yr_bioclimatic){
-    tmp <- lapply(myvars, function(j){
-        tmp_ <- x[,grep(j, names(x))]
-        rownames(tmp_) <- NULL
-        # sensitivity (do not calculate if data range for cell i is lower then n_yr_bioclimatic)
-        nobs <- apply(tmp_, 1, function(k) length(na.omit(as.numeric(k))))
-        group1 <- which(nobs >= n_yr_bioclimatic*12)
-        tmp_E <- data.frame(mean = rep(NA,nrow(tmp_)), sd = rep(NA,nrow(tmp_)), min = rep(NA,nrow(tmp_)), max = rep(NA,nrow(tmp_)))
-        resp <- bioclimatics_ocean_inside(tmp_[group1,])
-        tmp_E[group1,] <- resp
-        return(tmp_E)
-    })
-    tmp <- lapply(1:length(tmp), function(i) { 
-        tmp_ <- tmp[[i]]
-        colnames(tmp_) <- paste(myvars[i],names(tmp_),sep = "_") 
-        return(tmp_)
-    })
-    return(data.frame(do.call(cbind,tmp)))
-}
-
-bioclimatics_ocean_inside <- function(x){
+bioclimatics_ocean_simple <- function(env_data){
+    x = env_data
     # annual average (equivalent to mean annual temperature)
     amean <- apply(x, 1, mean, na.rm = T) 
     # seasonality (equivalent to temperature seasonality)
     asd <- apply(x, 1, sd, na.rm = T) 
-    # minimum (equivalent to min temperature of the coldest quarter)
-    amin <- apply(x, 1, function(j){
-        tmp. <- which(j == min(j, na.rm = T))[1] # identify the quarter with the lowest value
-        tmp. <- c(tmp.-1, tmp., tmp.+1)
-        # keep range btw limits of the data size
-        if(tmp.[1] < 1){ tmp.[1] = 1 }
-        if(tmp.[3] > length(j)){ tmp.[3] = length(j) } 
-        min(j[tmp.])
-    }) 
+    # minimum (equivalent to max Temperature of Coldest Quarter
+    amin <- apply(x, 1, min, na.rm = T)
+    # maximum (equivalent to min Temperature of Warmest Quarter 
+    amax <- apply(x, 1, max, na.rm = T)
     
-    # for(i in 1:nrow(x)){
-    #     j = x[i,]
-    #     tmp. <- which(j == min(j, na.rm = T))[1] # identify the quarter with the lowest value
-    #     tmp. <- c(tmp.-1, tmp., tmp.+1)
-    #     # keep range btw limits of the data size
-    #     if(tmp.[1] < 1){ tmp.[1] = 1 }
-    #     if(tmp.[3] > length(j)){ tmp.[3] = length(j) } 
-    #     min(j[tmp.])
-    # }
+    return(data.frame(mean = amean, sd = asd, min = amin, max = amax))
+}
+
+# calculate bioclimatic variables from time series
+bioclimatics_ocean <- function(env_data){
+    tmp <- bioclimatics_ocean_inside(env_data)
+    return(tmp)
+}
+bioclimatics_ocean_inside <- function(x){
     
-    # maximum (equivalent to max temperature of the warmest quarter)
-    amax <- apply(x, 1, function(j){
-        tmp. <- which(j == max(j, na.rm = T))[1] # identify the quarter with the max value
-        tmp. <- c(tmp.-1, tmp., tmp.+1)
-        # keep range btw limits of the data size
-        if(tmp.[1] < 1){ tmp.[1] = 1 }
-        if(tmp.[3] > length(j)){ tmp.[3] = length(j) } 
-        max(j[tmp.])
-    }) 
+    window <- function(x)  { 
+        lng <- length(x)
+        x <- c(x,  x[1:3])
+        m <- matrix(ncol=3, nrow=lng)
+        for (i in 1:3) { m[,i] <- x[i:(lng+i-1)] }
+        apply(m, MARGIN=1, FUN=sum)
+    }
+    
+    # annual average (equivalent to mean annual temperature)
+    amean <- apply(x, 1, mean, na.rm = T) 
+    
+    tmp <- t(apply(x, 1, window)) / 3
+    
+    # seasonality (equivalent to temperature seasonality)
+    asd <- apply(x, 1, sd, na.rm = T) 
+    # minimum (equivalent to Mean Temperature of Coldest Quarter
+    amin <- apply(tmp, 1, min, na.rm = T)
+    # maximum (equivalent to Mean Temperature of Warmest Quarter 
+    amax <- apply(tmp, 1, max, na.rm = T)
     
     return(data.frame(mean = amean, sd = asd, min = amin, max = amax))
 }
 
 ##################################
 # calculate bioclimatic (terrestrial like >> tas, tasmim, tasmax, pr) variables from timeseries
-bioclimatics_land <- function(env_data, n_yr_bioclimatic){
-    # sensitivity (do not calculate if data range for cell i is lower then n_yr_bioclimatic)
-    nobs <- apply(env_data, 1, function(k) length(!na.omit(k)))
-    group1 <- which(!nobs<n_yr_bioclimatic)
-    tmp_E <- data.frame(mat = NA, seat = NA, mint = NA, maxt = NA,
-                        map = NA, seap = NA, minp = NA, maxp = NA)
-    resp <- bioclimatics_ocean_inside(env_data[group1,])
-    tmp_E[group1,] <- resp
-    return(tmp_E)
-}
-bioclimatics_land_inside <- function(env_data){
-    
-    tas <- as.numeric(env_data[,grep("tas_",names(env_data))])
-    tmin <- as.numeric(env_data[,grep("tasmin",names(env_data))])
-    tmax <- as.numeric(env_data[,grep("tasmax",names(env_data))])
-    pr <- as.numeric(env_data[,grep("pr",names(env_data))])
+bioclimatics_land_simple <- function(env_data){
+    tmin <- env_data[,grep("tmin",names(env_data))]
+    tmax <- env_data[,grep("tmax",names(env_data))]
+    pr <- env_data[,grep("prec",names(env_data))]
+    tas <- (tmin + tmax) / 2
     
     # mean annual temperature
     amean <- apply(tas, 1, mean, na.rm = T) 
     # temperature seasonality
     asd <- apply(tas, 1, sd, na.rm = T) 
-    # temperature of the coldest quarter
-    amin <- apply(tmin, 1, function(x){
-        tmp. <- which(x == min(j, na.rm = T)) # identify the quarter with the lowest value
-        tmp. <- c(tmp.-1, tmp., tmp.+1)
-        if(tmp.[1] < 1){ tmp.[1] = 1 } # keep range btw limits of the data size
-        if(tmp.[3] > length(j)){ tmp.[3] = length(j) } 
-        min(j[tmp.], na.rm = T)
-    })
-    # temperature of the warmest quarter
-    amax <- apply(tmax, 1, function(x){
-        tmp. <- which(x == max(j, na.rm = T)) # identify the quarter with the lowest value
-        tmp. <- c(tmp.-1, tmp., tmp.+1)
-        if(tmp.[1] < 1){ tmp.[1] = 1 } # keep range btw limits of the data size
-        if(tmp.[3] > length(j)){ tmp.[3] = length(j) } 
-        max(j[tmp.], na.rm = T)
-    })
+    # Max Temperature of Warmest Quarter 
+    amax <- apply(tmax, 1, max, na.rm = T)
+    # Min Temperature of Coldest Quarter
+    amin <- apply(tmin, 1, min, na.rm = T)
+    
     # mean annual precipitation
     pmean <- apply(pr, 1, mean, na.rm = T) 
     # precipitation seasonality
     psd <- apply(pr, 1, sd, na.rm = T) 
-    # precipitation of the coldest quarter
-    pmin <- apply(pr, 1, function(x){
-        tmp. <- which(x == min(j, na.rm = T)) # identify the quarter with the lowest value
-        tmp. <- c(tmp.-1, tmp., tmp.+1)
-        if(tmp.[1] < 1){ tmp.[1] = 1 } # keep range btw limits of the data size
-        if(tmp.[3] > length(j)){ tmp.[3] = length(j) } 
-        min(j[tmp.], na.rm = T)
-    })
-    # precipitation of the warmest quarter
-    pmax <- apply(pr, 1, function(x){
-        tmp. <- which(x == max(j, na.rm = T)) # identify the quarter with the lowest value
-        tmp. <- c(tmp.-1, tmp., tmp.+1)
-        if(tmp.[1] < 1){ tmp.[1] = 1 } # keep range btw limits of the data size
-        if(tmp.[3] > length(j)){ tmp.[3] = length(j) } 
-        max(j[tmp.], na.rm = T)
-    })
+    # Precipitation of Wettest Quarter 
+    pmin <- apply(pr, 1, max, na.rm = T)
+    # Precipitation of Driest Quarter 
+    pmax <- apply(pr, 1, min, na.rm = T)
+    
+    # return bioclimatics
+    return(data.frame(mat = amean, seat = asd, mint = amin, maxt = amax,
+                      map = pmean, seap = psd, minp = pmin, maxp = pmax))
+}
+
+# calculate bioclimatic (terrestrial like >> tas, tasmim, tasmax, pr) variables from timeseries
+bioclimatics_land <- function(env_data){
+    resp <- bioclimatics_land_inside(env_data)
+    return(resp)
+}
+bioclimatics_land_inside <- function(env_data){
+    
+    window <- function(x)  { 
+        lng <- length(x)
+        x <- c(x,  x[1:3])
+        m <- matrix(ncol=3, nrow=lng)
+        for (i in 1:3) { m[,i] <- x[i:(lng+i-1)] }
+        apply(m, MARGIN=1, FUN=sum)
+    }
+    
+    tmin <- env_data[,grep("tasmin",names(env_data))]
+    tmax <- env_data[,grep("tasmax",names(env_data))]
+    pr <- env_data[,grep("pr",names(env_data))]
+    tas <- (tmin + tmax) / 2
+    
+    tmp <- t(apply(tas, 1, window)) / 3
+    
+    # mean annual temperature
+    amean <- apply(tas, 1, mean, na.rm = T) 
+    # temperature seasonality
+    asd <- apply(tas, 1, sd, na.rm = T) 
+    # Mean Temperature of Warmest Quarter 
+    amax <- apply(tmp, 1, max, na.rm = T)
+    # Mean Temperature of Coldest Quarter
+    amin <- apply(tmp, 1, min, na.rm = T)
+    
+    # precip by quarter (3 months)		
+    wet <- t(apply(pr, 1, window))
+    
+    # mean annual precipitation
+    pmean <- apply(pr, 1, mean, na.rm = T) 
+    # precipitation seasonality
+    psd <- apply(pr, 1, sd, na.rm = T) 
+    # Precipitation of Wettest Quarter 
+    pmin <- apply(wet, 1, max, na.rm = T)
+    # Precipitation of Driest Quarter 
+    pmax <- apply(wet, 1, min, na.rm = T)
     
     # return bioclimatics
     return(data.frame(mat = amean, seat = asd, mint = amin, maxt = amax,
@@ -360,8 +402,8 @@ minorThreat <- function(occ, myvars, varsdir, crs = "+proj=longlat +datum=WGS84 
 
 # Clean coordinates
 drugfree <- function(x, inverse = FALSE, my.mask){
+    original_cols <- names(x)
     # Clean
-    # One coordinate per species/cellID/month/year
     ## get cells
     cells. <-  terra::extract(my.mask,x[,c("decimalLongitude", "decimalLatitude")],cells=TRUE)
     x$cell <- cells.$cell
@@ -369,18 +411,24 @@ drugfree <- function(x, inverse = FALSE, my.mask){
     # remove/keep cells falling in the ocean/Land
     rm <- x$layer
     if(inverse){
-        x <- x[which(is.nan(rm)),] # remove land / keep ocean
+        x <- x[which(rm==0),] # remove land / keep ocean
     } else{
         x <- x[which(rm==1),] # keep land / remove ocean
     }
-    ## Remove duplicates
+    x = x[,-"layer"]
+    ## Remove duplicates: One coordinate per species/cellID/month/year
     ## get combination species/cellID/month/year
-    test. <- paste0(x$species, x$cell, x$year, x$month) 
-    rm <- duplicated(test.)
+    rm <- duplicated(x[,c("species", "cell", "year", "month")])
     if(any(rm)){
-        x <- x[-which(duplicated(test.)),]
+        x <- x[-which(rm),]
     }
-    x = x[,c("decimalLongitude", "decimalLatitude","year","month","species","cell")]
+    ## Remove other potential issues
+    x = CoordinateCleaner::clean_coordinates(x = x,
+                                             lon = "decimalLongitude",
+                                             lat = "decimalLatitude",
+                                             tests = c("capitals", "centroids", "equal",
+                                                       "gbif", "institutions", "zeros"),
+                                             value = "clean")
     return(x)
 }
 
@@ -417,52 +465,6 @@ decompress_file <- function(directory, file, .file_cache = FALSE) {
             print(decompression)
         }
     }
-}
-
-##################################
-# Get file size before downloading
-DownloadSizeChelsa <- function(myvar,period){
-    download_size <- function(url) as.numeric(httr::HEAD(url)$headers$`content-length`)
-    
-    link <- "https://os.zhdk.cloud.switch.ch/envicloud/chelsa/chelsa_V2/GLOBAL/monthly/"
-    
-    myfile <- paste0(myvar,"/CHELSA_", myvar, "_", period, "_V.2.1.tif")
-    mylink <- paste0(link, myfile)
-    
-    download_size(mylink)
-}
-
-# Get Chelsa data
-getChelsa <- function(myvar, period, dest.folder, quiet = FALSE, over.write = TRUE){
-    
-    if(!is.logical(quiet)){
-        cat("quiet should be TRUE or FALSE")
-        stop()
-    }
-    
-    new.dir <- here::here(dest.folder, myvar)
-    if(!dir.exists(new.dir)){
-        dir.create(new.dir,recursive = T)
-    }
-    
-    link <- "https://os.zhdk.cloud.switch.ch/envicloud/chelsa/chelsa_V2/GLOBAL/monthly/"
-    
-    myfile <- here::here(myvar, myvar, "_", period, "_V.2.1.tif")
-    mylink <- paste0(link, myfile)
-    savefile <- here::here(dest.folder, myfile)
-    
-    if(!over.write){
-        over.write <- !file.exists(savefile)
-    }
-    if(over.write){
-        download.file(url = mylink,
-                      destfile = savefile,
-                      quiet = quiet,
-                      cacheOK = FALSE)
-    }
-    
-    gc()
-    
 }
 
 ##################################

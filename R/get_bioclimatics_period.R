@@ -70,15 +70,4 @@ get_bioclimatics_period <- function(p_1,p_2,n_yr_bioclimatic,BA,n_cores,env_data
                                           n_yr_bioclimatic = n_yr_bioclimatic))
         }, mc.cores = n_cores)
     } else {
-        bio_back_end <- mclapply(chunks, function(x) {
-            data.frame(bioclimatics_land(BG_data_end[x,], 
-                                         myvars = myvars, 
-                                         n_yr_bioclimatic = n_yr_bioclimatic))
-        }, mc.cores = n_cores)
-    }
-    bio_back_end <- rbindlist(bio_back_end)
-    bio_back_end <- data.frame(bio_back_end)
-    
-    return(list(back_start = bio_back_start, back_end = bio_back_end, xy = BG_xys))
-    
-}
+        bio_back_end <- mclapply(chunks, function(

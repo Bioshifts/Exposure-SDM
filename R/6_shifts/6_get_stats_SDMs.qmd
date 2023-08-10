@@ -41,6 +41,7 @@ SDMsSpListTer <- list.files(here::here(maxnet_dir,"Ter"))
 SDMsSpList <- data.frame(species = unique(c(SDMsSpListMar,SDMsSpListTer)))
 SDMsSpList$Mar <- ifelse(SDMsSpList$species %in% SDMsSpListMar, 1, 0)
 SDMsSpList$Ter <- ifelse(SDMsSpList$species %in% SDMsSpListTer, 1, 0)
+SDMsSpList <- SDMsSpList[-which(SDMsSpList$species=="Old"),]
 
 #################################
 # Get taxonomy
@@ -91,39 +92,43 @@ if(length(sp_Ter)>0){
 N_occ <- data.frame()
 if(length(sp_Mar)>0){
     N_occ <- rbind(N_occ,
-                   N_occ_Mar)
+                   data.frame(N_occ_Mar,ECO="Mar"))
 }
 if(length(sp_Ter)>0){
     N_occ <- rbind(N_occ,
-                   N_occ_Ter)
+                   data.frame(N_occ_Ter,ECO="Ter"))
 }
 
 
 #################################
-# Load SDM data
+# Load SDM validation data
 if(length(sp_Mar)>0){
     SDM_Mar <- pblapply(1:length(sp_Mar), function(i) {
-        file_i <- here::here(maxnet_dir,"Mar",sp_Mar[i],paste0(sp_Mar[i],"_SDM_CV.csv"))
+        file_i <- here::here(maxnet_dir,"Mar",sp_Mar[i],paste0(sp_Mar[i],"_CV.csv"))
         if(file.exists(file_i)){
             tmp <- read.csv(file_i)
-            tmp <- tmp %>% gather("metric","value",-Mod)
             data.frame(Realm = "Mar", sps = sp_Mar[i], tmp)
         }
     })
     SDM_Mar <- rbindlist(SDM_Mar)
+    SDM_Mar <- SDM_Mar %>%
+        group_by(Realm, sps, Metric, Model) %>%
+        dplyr::summarise(Value = mean(Value))
 }
 
 ### Terrestrials
 if(length(sp_Ter)>0){
     SDM_Ter <- pblapply(1:length(sp_Ter), function(i) {
-        file_i <- here::here(maxnet_dir,"Ter",sp_Ter[i],paste0(sp_Ter[i],"_SDM_CV.csv"))
+        file_i <- here::here(maxnet_dir,"Ter",sp_Ter[i],paste0(sp_Ter[i],"_CV.csv"))
         if(file.exists(file_i)){
             tmp <- read.csv(file_i)
-            tmp <- tmp %>% gather("metric","value",-Mod)
-            data.frame(Realm = "Mar", sps = sp_Ter[i], tmp)
+            data.frame(Realm = "Ter", sps = sp_Ter[i], tmp)
         }
     })
     SDM_Ter <- rbindlist(SDM_Ter)
+    SDM_Ter <- SDM_Ter %>%
+        group_by(Realm, sps, Metric, Model) %>%
+        dplyr::sumTerise(Value = mean(Value))
 }
 
 ### Merge all
@@ -227,61 +232,38 @@ ggplot(data = tmp)+
         axis.text=element_text(size=6),
         legend.position = "none") +
     theme_classic()+
-    xlab("Shift period (years)")+
-    ylab("Freq")
+    xlab("")+
+    ylab("Year")
 
 ```
 
 # *SDM performace*
 
 ```{r }
-tmp <- SDM_info[-which(SDM_info$metric %in% c("thresh","thresh_method")),]
-tmp$value <- as.numeric(tmp$value)
 
-ggplot(data = tmp, aes(x = metric, y = value, fill = Mod))+
-    geom_jitter(alpha = .3, position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.8), aes(color = Mod))+
+ggplot(data = SDM_info, aes(x = Metric, y = Value, fill = Model))+
+    geom_jitter(alpha = .3, position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.8), aes(color = Model))+
     geom_boxplot(alpha = .5)+
     theme_classic()+
     xlab("Shift period (years)")+
     ylab("Freq")+
-    facet_wrap(.~metric, scales = "free", ncol = 4)
+    facet_wrap(.~Metric, scales = "free", ncol = 4)
 
-```
-
-```{r fig.height=20, fig.width=5}
-tmp2 <- tmp %>% spread(Mod, value)
-tmp2 <- tmp2[which(tmp2$metric=="AUC"),]
-tmp2$sps <- factor(tmp2$sps, levels = tmp2$sps[order(tmp2$CV)])
-
-ggplot(tmp2) +
-    geom_segment( aes(x=sps, xend=sps, y=CV, yend=Train)) +
-    geom_point( aes(x=sps, y=CV), color=rgb(0.2,0.7,0.1,0.5), size=1 ) + #green
-    geom_point( aes(x=sps, y=Train), color=rgb(0.7,0.2,0.1,0.5), size=1 ) + # red
-    coord_flip()+
-    theme(axis.text=element_text(size=6),
-          legend.position = "none") +
-    xlab("") +
-    ylab("AUC")
-
-```
-
-```{r fig.height=20, fig.width=15}
 # breakdown by Class
-tmp3 <- tmp2 %>% 
+tmp3 <- SDM_info %>% 
     mutate(sps = gsub("_"," ",sps)) %>%
     left_join(MyList, by = join_by(sps == scientificName)) %>%
-    filter(!is.na(class))
-tmp3$sps <- factor(tmp3$sps, levels = tmp3$sps[order(tmp3$CV)])
+    dplyr::filter(!is.na(class)) %>%
+    dplyr::filter(Metric=="TSS")
 
-ggplot(tmp3) +
-    geom_segment( aes(x=sps, xend=sps, y=CV, yend=Train)) +
-    geom_point( aes(x=sps, y=CV), color=rgb(0.2,0.7,0.1,0.5), size=1 ) + #green
-    geom_point( aes(x=sps, y=Train), color=rgb(0.7,0.2,0.1,0.5), size=1 ) + # red
+ggplot(data = tmp3, aes(x = Model, y = Value))+
+    geom_jitter(alpha = .3, position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.8), aes(color = class))+
+    geom_boxplot(alpha = .5)+
+    theme_classic()+
+    ylab("TSS")+
     coord_flip()+
-    theme(axis.text=element_text(size=6),
-          legend.position = "none") +
-    xlab("") +
-    ylab("AUC") +
+    theme(legend.position = "none")+
     facet_wrap(.~class)
+
 ```
 
