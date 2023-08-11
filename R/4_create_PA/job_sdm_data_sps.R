@@ -17,9 +17,11 @@ if(computer == "muse"){
     setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
     
     work_dir <- getwd()
-    sps.dir <- here::here(work_dir,"Data/GBIF_data")
     script.dir <- here::here(work_dir,"R/4_create_PA")
 }
+
+# source settings
+source("R/settings.R")
 
 # create dir for log files
 logdir <- here::here(script.dir,"slurm-log")
@@ -38,7 +40,7 @@ Rscript_file = here::here(script.dir,"get_sdm_data_sps.R")
 ########################
 
 # sp list
-all_sps <- list.files(here::here(sps.dir), pattern = '.qs')
+all_sps <- list.files(here::here(occ_dir), pattern = '.qs')
 all_sps <- gsub("_"," ",all_sps)
 all_sps <- gsub(".qs","",all_sps)
 
@@ -66,7 +68,7 @@ N_jobs_at_a_time = 50
 N_Nodes = 1
 tasks_per_core = 1
 cores = 28
-time = "1:30:00"
+time = "2:00:00"
 memory = "64G"
 
 # Check if file exists
@@ -82,9 +84,8 @@ for(i in 1:nrow(all_sps)){
     
     ########################
     # Check if file exists
-    output_dir <- here::here(work_dir,"Data/Env_data",realm)
     
-    file.test <- here::here(output_dir,paste0(gsub(" ","_",sptogo),".qs"))
+    file.test <- here::here(env_data_dir(realm),paste0(gsub(" ","_",sptogo),"_",realm,".qs"))
     
     if(check_if_file_exists){
         RUN <- !file.exists(file.test)
@@ -140,10 +141,4 @@ for(i in 1:nrow(all_sps)){
 
 
 # check if I got env data for all species
-
-
-
-
-
-
-
+# check the error file for these species (if it is time, increase time)

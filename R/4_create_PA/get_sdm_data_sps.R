@@ -274,7 +274,7 @@ sp_occ <- sp_occ[,-"ID"]
 table(sp_occ$pa)
 
 # save
-qs::qsave(sp_occ, here::here(env_data_dir, paste0(gsub(" ","_",sptogo), ".qs")))
+qs::qsave(sp_occ, here::here(env_data_dir,paste0(gsub(" ","_",sptogo),"_",realm,".qs")))
 
 ########################
 # Stop the clock

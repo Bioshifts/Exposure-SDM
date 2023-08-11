@@ -3,12 +3,21 @@
 # author: "Brunno F Oliveira & Bioshifts group"
 # --------------------------------------------------------
 
+# Gradient-based climate velocities
+# 
+# Gradient-based climate velocities (gVoCC) are a way to describe the propensity of a species to move in response to climate change. They represent the ratio between the long-term temporal trend in climate conditions by the spatial gradient in climate conditions:
+#     
+#     gVoCC = long-term trend / spatial gradient
+# 
+# A high gVoCC indicates that a species in that location would have a high propensity to move in response to climate change. When the gVoCC is high, it indicates that the climate is changing quickly over time relative to the amount of spatial variation in climate. High gVoCCs tend to occur in areas with heterogeneous climates that are experiencing high rates of temporal change, such as deserts. In areas with high gVoCCs, an organism would have to shift quickly and move far in order to reach an analogous climate.
+# 
+# On the other hand, a low gVoCC indicates that a species in that location would have a high propensity to move in response to climate change. In these areas, the climate is changing slowly relative to the amount of spatial variation in climate conditions. Areas like mountainous regions, where spatial variation in climates is high, tend to have low gVoCCs. In these areas, on organism would be less inclined to move quickly because a similar climate is closer by.
 
 # Setup
 rm(list=ls())
 gc()
 
-list.of.packages <- c("terra","elevatr","raster","sf","rgdal","Hmisc","dplyr", "data.table","enmSdmX")
+list.of.packages <- c("terra","elevatr","raster","sf","rgdal","Hmisc","dplyr", "data.table","VoCC")
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
 if(length(new.packages)) install.packages(new.packages)
 sapply(list.of.packages, require, character.only = TRUE)
@@ -63,8 +72,8 @@ length(unique(v3_polygons_names))
 ########################
 # Loop through shape files of study areas
 
-# i =1 
-parallel::mclapply(1:length(v3_polygons), function(i) { 
+i =1
+# parallel::mclapply(1:length(v3_polygons), function(i) { 
     
     SA_i <- terra::vect(v3_polygons[i])
     
@@ -91,10 +100,10 @@ parallel::mclapply(1:length(v3_polygons), function(i) {
     S_time <- S_start:S_end
     
     # get layers within time period of shift
-    temperature_layers <- list.files(here::here(vars_dir(ECO),paste0("bio_proj_",my_res)))
-    temperature_layers_names <- list.files(here::here(vars_dir(ECO),paste0("bio_proj_",my_res)))
-    # temperature_layers <- list.files(here::here(vars_dir(ECO),"bio_proj_5km"),full.names = TRUE)
-    # temperature_layers_names <- list.files(here::here(vars_dir(ECO),"bio_proj_5km"))
+    # temperature_layers <- list.files(here::here(vars_dir(ECO),paste0("bio_proj_",my_res)))
+    # temperature_layers_names <- list.files(here::here(vars_dir(ECO),paste0("bio_proj_",my_res)))
+    temperature_layers <- list.files(here::here(vars_dir(ECO),"bio_proj_5km"),full.names = TRUE)
+    temperature_layers_names <- list.files(here::here(vars_dir(ECO),"bio_proj_5km"))
     temperature_layers_pos <- grepl(paste(S_time,collapse = "|"),temperature_layers_names)
     temperature_layers_names <- temperature_layers_names[temperature_layers_pos]
     temperature_layers <- temperature_layers[temperature_layers_pos]
@@ -107,18 +116,15 @@ parallel::mclapply(1:length(v3_polygons), function(i) {
     
     # project to equal-area
     temperature_layers <- terra::project(temperature_layers,Eckt)
+    temperature_layers <- raster::stack(temperature_layers)
     
-    # range 0-1
-    temperature_layers <- rast(lapply(temperature_layers,range01raster))
-    
-    # calculate velocity
-    sa_vel <- bioshifts(
-        x = temperature_layers,
-        times = S_time,
-        cores = 2,
-        metrics = c("centroid","nsCentroid","nsQuants")
+    ttrend = tempTrend(r = temperature_layers,
+                       th = 0.25*nlayers(temperature_layers) ## set minimum # obs. to 1/4 time series length
     )
+    
+    spgrad = spatGrad(r = temperature_layers, 
+                      projected = TRUE) ## our raster is projected to a coordinate system
     
     write.csv(sa_vel, here::here(velocity_SA_dir, paste0(v3_polygons_names[i],".csv")), row.names = FALSE)
     
-}, mc.cores = N_cores)
+# }, mc.cores = N_cores)

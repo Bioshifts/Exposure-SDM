@@ -1,4 +1,8 @@
 
+
+################################
+# Open screen / run a singularity container / and run this inside
+
 rm(list=ls())
 gc()
 
@@ -12,43 +16,42 @@ library(qs)
 # set computer
 computer = "muse"
 
-if(computer == "muse"){
-    wd <- "/storage/simple/projects/t_cesab/brunno/Exposure-SDM"
-    setwd(wd)
-    scratch_dir <- "/lustre/oliveirab"
-}
-
-# raw files are saved here
-scratch_dir <- here::here(scratch_dir,"cruts")
-
-# load functions
-source("R/getChelsa.R")
-source("R/my_functions.R")
-source("R/settings.R")
-
-# set n years to calculate bioclimatics
-n_yr_bioclimatic
+# detect slurm cores
+N_cores = as.numeric(Sys.getenv("SLURM_CPUS_ON_NODE"))
 
 # set realm
 realm = "Ter"
 
-# get directory to save bioclimatics
-vars_dir <- get_varsdir(realm = realm)
+# working directory
+if(computer == "muse"){
+    work_dir <- "/storage/simple/projects/t_cesab/brunno/Exposure-SDM"
+}
+setwd(work_dir)
+
+# source settings
+source("R/settings.R")
+
+# load functions and settings
+source("R/getChelsa.R")
+source("R/my_functions.R")
+
+# raw files are saved here
+scratch_dir <- here::here(vars_dir(realm),paste0("cruts_",my_res))
 
 # get vars
-my_vars <- get_myvars(realm)
+my_vars <- myvars(realm)
 
+# get directory to save bioclimatics
+vars_dir <- vars_dir(realm = realm)
+bios_dir <- here::here(vars_dir,paste0("bio_proj_",my_res))
 
-# create folder to store bios
-dir_bios <- here::here(vars_dir,"bios")
-if(!dir.exists(dir_bios)){
-    dir.create(dir_bios, recursive = TRUE)
+# create dir to store bioclimatics for each period
+if(!dir.exists(bios_dir)){
+    dir.create(bios_dir)
 }
 
-
 # get mask
-my_mask <- rast(here::here(vars_dir,"model_raster_ter_5km.tif"))
-cellsNA <- which(my_mask[]==0)
+my_mask <- rast(here::here(vars_dir,paste0("model_raster_ter_",my_res,".tif")))
 
 # all layers
 all_layers_names <- list.files(scratch_dir, pattern = ".tif", recursive = TRUE)
@@ -65,7 +68,6 @@ my_yrs <- sort(as.numeric(unique(my_yrs)))
 my_yrs <- my_yrs[-1:-n_yr_bioclimatic]
 
 
-
 # check if all bioclimatics calculations went well
 for(i in 1:length(my_yrs)) { 
     
@@ -74,7 +76,7 @@ for(i in 1:length(my_yrs)) {
     cat("\ryear",i,"from",length(my_yrs),"..... year", period_i)
     
     # file name to save
-    filetosave = here::here(vars_dir,"bio_proj",paste0("bios_",realm,"_",my_yrs[i],".tif"))
+    filetosave = here::here(vars_dir,"bio_proj",paste0("bios_",realm,"_",period_i,".tif"))
     
     # test if there is any issue loading the raster files
     tmp <- try(rast(filetosave),silent = TRUE)
@@ -84,31 +86,49 @@ for(i in 1:length(my_yrs)) {
         
         cat('calculating again for period', period_i)
         
-        # vector of dates
-        periods_i <- as.Date(paste0("01_",period_i),"%d_%m_%Y")
+        # load vars for period_i - n_yr_bioclimatic
+        periods_i <- as.Date(paste0("01_01_",period_i),"%d_%m_%Y")
         periods_i <- format(
-            seq.Date(from = periods_i-365, 
+            seq.Date(from = periods_i-364, 
                      to = periods_i, 
                      by = "month"), 
             "%m_%Y")
         
         layers_i_pos <- unique(grep(paste(periods_i,collapse = "|"),all_layers))
         layers_i <- all_layers[layers_i_pos]
-        layers_i <- rast(layers_i)
         
-        # layer names
-        layers_names_i <- all_layers_names[layers_i_pos]
-        names(layers_i) <- layers_names_i
+        tmax <- layers_i[grep("tmax",layers_i)]
+        tmin <- layers_i[grep("tmin",layers_i)]
+        prec <- layers_i[grep("prec",layers_i)]
         
-        # get bioclimatics for period i
-        mean_i <- terra::app(layers_i, mean)
-        max_i <- terra::app(layers_i, max)
-        min_i <- terra::app(layers_i, min)
-        sd_i <- terra::app(layers_i, sd)
-        bios_year_i <- c(mean_i, max_i, min_i, sd_i)
+        tmax <- rast(tmax)
+        tmin <- rast(tmin)
+        prec <- rast(prec)
+        
+        # create a SpatRasterDataset for tmean
+        tmean <- sds(tmin,tmax)
+        tmean <- terra::app(tmean, mean, cores = N_cores)
+        
+        tsea <- terra::app(tmean, sd, cores = N_cores)
+        tmean <- terra::app(tmean, mean, cores = N_cores)
+        tmax <- terra::app(tmax, max, cores = N_cores)
+        tmin <- terra::app(tmin, min, cores = N_cores)
+        
+        prmean <- terra::app(prec, mean, cores = N_cores)
+        prmax <- terra::app(prec, max, cores = N_cores)
+        prmin <- terra::app(prec, min, cores = N_cores)
+        prsea <- terra::app(prec, sd, cores = N_cores)
+        
+        bios_period_i <- c(tmean, tmax, tmin, tsea,
+                           prmean, prmax, prmin, prsea)
+        names(bios_period_i) <- c("mat","maxt","mint","seat",
+                                  "map","maxp","minp","seap")
+        
+        # mask the final raster
+        bios_period_i <- terra::mask(bios_period_i,my_mask,maskvalues=0)
         
         # save raster
-        writeRaster(bios_year_i, 
+        writeRaster(bios_period_i, 
                     filetosave,
                     overwrite = TRUE)
         
