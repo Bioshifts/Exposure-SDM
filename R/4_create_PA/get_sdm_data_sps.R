@@ -28,7 +28,7 @@ print(sptogo)
 print(realm)
 
 # run test with terrestrial
-# sptogo <- "Xestia_distensa"
+# sptogo <- "Vicia_villosa"
 # sptogo <- gsub("_"," ",sptogo)
 # realm = "Ter"
 
@@ -108,14 +108,13 @@ BA <- get_ecoregions(realm = realm,
 # 1) get cells at the BA
 cells_BA <- terra::cells(BA, 1)[[1]]
 # 2) get dates
-env_range <- temporal_range_env_data(realm)
+env_range <- temporal_range_env_data(realm) 
+env_range[1] <- env_range[1] + n_yr_bioclimatic # + n_yr_bioclimatic to be able to calculate bioclimatics for the previous n_yr_bioclimatic
 all_dates <- format(
     seq.Date(from = as.Date(paste0(env_range[1],"/01/01")), 
              to = as.Date(paste0(env_range[2],"/12/01")), 
              by = "month"), 
     "%m_%Y")
-# remove the first year
-all_dates <- all_dates[-grep(env_range[1],all_dates)]
 # 3) sample random cells and dates
 random_cells <- sample(cells_BA, size = nrow(sp_occ), replace = TRUE)
 random_dates <- sample(all_dates, size = nrow(sp_occ), replace = TRUE)
@@ -162,7 +161,6 @@ sp_occ$date <- as.Date(sp_occ$date,"%d_%m_%Y")
 sp_occ$date <- format(sp_occ$date,"%m_%Y")
 
 possibledates <- unique(sp_occ$date)
-head(possibledates)
 
 dim(sp_occ)
 length(possibledates)

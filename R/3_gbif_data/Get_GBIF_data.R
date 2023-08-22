@@ -347,9 +347,8 @@ any(aquatic %in% marines)
 occs <- list.files(here::here(occ.dir), pattern = ".zip")
 
 # create dir to save sps occurrences
-sps.dir <- here::here(work_dir,"Data/GBIF_data")
-if(!dir.exists(sps.dir)){
-    dir.create(sps.dir, recursive = T)
+if(!dir.exists(occ_dir)){
+    dir.create(occ_dir, recursive = T)
 }
 
 # create temp dir to decompress zip file
@@ -382,7 +381,7 @@ test_if_work <- mclapply(1:length(occs), function(i){
     tmp <- tmp %>% dplyr::filter(basisOfRecord %in% basisOfRecord_selected)
     
     # saved species
-    saved_sps <- list.files(sps.dir,pattern = ".qs")
+    saved_sps <- list.files(occ_dir,pattern = ".qs")
     saved_sps <- gsub(".qs","",saved_sps)
     saved_sps <- gsub("_"," ",saved_sps)
     if(!any(tmp$species %in% saved_sps)){
@@ -400,7 +399,8 @@ test_if_work <- mclapply(1:length(occs), function(i){
         ter. <- ter.[which(ter.$layer==1),] # keep land / remove ocean
         ter. = ter.[,-"layer"]
         # remove occurrences outside the temporal range of the env data
-        ter. <- ter. %>% filter(year >= temporal_range_env_data("Ter")[1] & year <= temporal_range_env_data("Ter")[2])
+        ter. <- ter. %>% filter(year >= temporal_range_env_data("Ter")[1]+1 + n_yr_bioclimatic # because we cannot calculate bioclimatics for the year 1
+                                & year <= temporal_range_env_data("Ter")[2])
         
         # subset marines
         mar. <- tmp[which(tmp$species %in% marines),] 
@@ -414,7 +414,8 @@ test_if_work <- mclapply(1:length(occs), function(i){
         mar. <- mar.[which(mar.$layer==1),] # remove land / keep ocean
         mar. = mar.[,-"layer"]
         # remove occurrences outside the temporal range of the env data
-        mar. <- mar. %>% filter(year > temporal_range_env_data("Mar")[1])
+        mar. <- mar. %>% filter(year > temporal_range_env_data("Mar")[1] + n_yr_bioclimatic # because we cannot calculate bioclimatics for the year 1
+                                & year <= temporal_range_env_data("Mar")[2])
         
         # Group all
         sps. <- rbind(ter.,mar.)
@@ -443,7 +444,7 @@ test_if_work <- mclapply(1:length(occs), function(i){
             for(j in 1:length(my_sps_i)){ cat("\rsaving sps", i, "from", length(my_sps_i))
                 tmp_sps <- subset(sps., species == my_sps_i[j])
                 
-                qs::qsave(tmp_sps, here::here(sps.dir, paste0(gsub(" ","_",my_sps_i[j]),".qs")))
+                qs::qsave(tmp_sps, here::here(occ_dir, paste0(gsub(" ","_",my_sps_i[j]),".qs")))
             }
         }
         
@@ -458,8 +459,9 @@ test_if_work <- mclapply(1:length(occs), function(i){
 unlink(tmp.dir, recursive = TRUE)
 
 
+
 # how many species?
-all_sps <- list.files(here::here(sps.dir), pattern = '.qs')
+all_sps <- list.files(here::here(occ_dir), pattern = '.qs')
 all_sps <- gsub("_"," ",all_sps)
 all_sps <- gsub(".qs","",all_sps)
 
@@ -467,13 +469,17 @@ length(all_sps)
 # 7309
 
 # how many clean occurrences?
-all_sps_c <- list.files(here::here(sps.dir), pattern = '.qs')
+all_sps_c <- list.files(here::here(occ_dir), pattern = '.qs')
 all_sps_c <- pbsapply(all_sps_c, function(x){
     # read in
-    sp_i <- qs::qread(here::here(sps.dir,x))
+    sp_i <- qs::qread(here::here(occ_dir,x))
     # count
     nrow(sp_i)
 })
+# N occurrence per species
+summary(all_sps_c)
+# Min. 1st Qu.  Median    Mean 3rd Qu.    Max.
+# 30     373    2441   39063   15682 3092867
 
 # how many marine species?
 length(which(marines %in% all_sps))

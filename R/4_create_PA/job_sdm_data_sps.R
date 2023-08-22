@@ -63,7 +63,7 @@ all_sps <- ter_sps # running only for terrestrials
 ########################
 # submit jobs
 
-N_jobs_at_a_time = 50
+N_jobs_at_a_time = 100
 
 N_Nodes = 1
 tasks_per_core = 1
@@ -74,7 +74,7 @@ memory = "64G"
 # Check if file exists
 check_if_file_exists <- TRUE
 
-for(i in 1:nrow(all_sps)){
+for(i in 1:nrow(missing_ter)){
     
     sptogo <- all_sps$sps[i]
     sptogo <- gsub(" ","_",sptogo)
@@ -140,5 +140,14 @@ for(i in 1:nrow(all_sps)){
 }
 
 
-# check if I got env data for all species
+# # check if I got env data for all species
+# # list of species we got data
+# sps_got_ter <- list.files(env_data_dir("Ter"))
+# sps_got_ter <- gsub("_Ter.qs","",sps_got_ter)
+# sps_got_ter <- gsub("_"," ",sps_got_ter)
+# missing_ter <- all_sps[!all_sps$sps %in% sps_got_ter,]
+# nrow(missing_ter)
+# head(missing_ter)
+
 # check the error file for these species (if it is time, increase time)
+# try to find a relationship between n occurrences and time to extract env data
