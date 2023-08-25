@@ -3,21 +3,13 @@
 # author: "Brunno F Oliveira & Bioshifts group"
 # --------------------------------------------------------
 
-# Gradient-based climate velocities
-# 
-# Gradient-based climate velocities (gVoCC) are a way to describe the propensity of a species to move in response to climate change. They represent the ratio between the long-term temporal trend in climate conditions by the spatial gradient in climate conditions:
-#     
-#     gVoCC = long-term trend / spatial gradient
-# 
-# A high gVoCC indicates that a species in that location would have a high propensity to move in response to climate change. When the gVoCC is high, it indicates that the climate is changing quickly over time relative to the amount of spatial variation in climate. High gVoCCs tend to occur in areas with heterogeneous climates that are experiencing high rates of temporal change, such as deserts. In areas with high gVoCCs, an organism would have to shift quickly and move far in order to reach an analogous climate.
-# 
-# On the other hand, a low gVoCC indicates that a species in that location would have a high propensity to move in response to climate change. In these areas, the climate is changing slowly relative to the amount of spatial variation in climate conditions. Areas like mountainous regions, where spatial variation in climates is high, tend to have low gVoCCs. In these areas, on organism would be less inclined to move quickly because a similar climate is closer by.
+# Calculates gradient-based climate velocities
 
 # Setup
 rm(list=ls())
 gc()
 
-list.of.packages <- c("terra","elevatr","raster","sf","rgdal","Hmisc","dplyr", "data.table","VoCC")
+list.of.packages <- c("terra","raster","sf","rgdal","Hmisc","dplyr", "data.table")
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
 if(length(new.packages)) install.packages(new.packages)
 sapply(list.of.packages, require, character.only = TRUE)
@@ -32,7 +24,7 @@ if(computer == "muse"){
 
 # source settings
 source("R/settings.R")
-source("R/bioshiftsFunction.R")
+source("R/velocity_functions.R")
 
 # detect slurm cores
 N_cores = as.numeric(Sys.getenv("SLURM_CPUS_ON_NODE"))
@@ -116,23 +108,26 @@ temperature_layers <- terra::mask(terra::crop(temperature_layers, SA_i), SA_i)
 
 # project to equal-area
 temperature_layers <- terra::project(temperature_layers,Eckt)
-temperature_layers <- raster::stack(temperature_layers)
 
 # calculate the trend
-ttrend = tempTrend(r = temperature_layers,
-                   th = 0.25*nlayers(temperature_layers) ## set minimum # obs. to 1/4 time series length
+ttrend = temp_grad(temperature_layers,
+                   th = 0.25*nlyr(temperature_layers) ## set minimum # obs. to 1/4 time series length
 )
 
 # calculate the spatial gradient
-spgrad = spatGrad(r = temperature_layers, 
-                  projected = TRUE) ## our raster is projected to a coordinate system
+spgrad = spatial_grad(temperature_layers)
 
-## calculate gradient based climate velocity:
-gvocc = gVoCC(tempTrend = ttrend, spatGrad = spgrad)
+## calculate gradient-based climate velocity:
+gVel = gVelocity(grad = spgrad, slope = ttrend)
+
+
 
 ## calculate resulting velocity North
 ## radians = degree × π/180
-gvocc_lat <- gvocc[[1]] * sin(gvocc[[2]]*pi/180) # convert degrees to radians
+tmp <- values(gVel$GradVel) * sin(gVel[[2]]$Grad*pi/180) # convert degrees to radians
+head(tmp)
+gVel_lat <- gVel$GradVel
+gVel_lat[] <- tmp
 
 # change sign if SA in the south hemisphere to reflect a velocity away of the tropics
 max_lat <- ext(SA_i)[4]

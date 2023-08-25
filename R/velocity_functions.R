@@ -126,6 +126,9 @@ gVelocity <- function(grad, slope, squeeze=FALSE) {
     
     v[grad$icell] <- slope[grad$icell] / grad$Grad
     
+    grad$slope <- NA
+    grad$slope[grad$icell] <- as.numeric(slope[grad$icell])
+    
     if(squeeze){
         .o <- as.matrix(global(v,fun=quantile,probs=c(0.05,0.95),na.rm=TRUE))[1,]
         v[v < .o[1]] <- .o[1]
@@ -133,7 +136,8 @@ gVelocity <- function(grad, slope, squeeze=FALSE) {
     }
     
     names(v) <- "GradVel"
-    return(v)
+    return(list(GradVel = v,
+                grad))
 }
 
 
