@@ -58,7 +58,7 @@ ter_sps <- data.frame(sps = ter_sps, realm = "Ter")
 
 # pipe line of species: first marines (because they run faster due to coarser resolution data) then terrestrials
 # all_sps <- rbind(mar_sps, ter_sps)
-all_sps <- ter_sps # running only for terrestrials
+all_sps <- mar_sps # running only for terrestrials
 
 ########################
 # submit jobs
@@ -68,17 +68,21 @@ N_jobs_at_a_time = 100
 N_Nodes = 1
 tasks_per_core = 1
 cores = 28
-time = "2:00:00"
+time = "20:00:00"
 memory = "64G"
 
 # Check if file exists
 check_if_file_exists <- TRUE
 
+# for(i in 1:nrow(all_sps)){
 for(i in 1:nrow(missing_ter)){
     
-    sptogo <- all_sps$sps[i]
+    # sptogo <- all_sps$sps[i]
+    # sptogo <- gsub(" ","_",sptogo)
+    # realm <- all_sps$realm[i]
+    sptogo <- missing_ter$sps[i]
     sptogo <- gsub(" ","_",sptogo)
-    realm <- all_sps$realm[i]
+    realm <- missing_ter$realm[i]
     
     args = paste(sptogo, realm)
     
@@ -142,12 +146,9 @@ for(i in 1:nrow(missing_ter)){
 
 # # check if I got env data for all species
 # # list of species we got data
-# sps_got_ter <- list.files(env_data_dir("Ter"))
-# sps_got_ter <- gsub("_Ter.qs","",sps_got_ter)
-# sps_got_ter <- gsub("_"," ",sps_got_ter)
-# missing_ter <- all_sps[!all_sps$sps %in% sps_got_ter,]
-# nrow(missing_ter)
-# head(missing_ter)
-
-# check the error file for these species (if it is time, increase time)
-# try to find a relationship between n occurrences and time to extract env data
+sps_got_ter <- list.files(env_data_dir("Mar"))
+sps_got_ter <- gsub("_Mar.qs","",sps_got_ter)
+sps_got_ter <- gsub("_"," ",sps_got_ter)
+missing_ter <- all_sps[!all_sps$sps %in% sps_got_ter,]
+nrow(missing_ter)
+head(missing_ter)

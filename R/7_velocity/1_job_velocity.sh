@@ -19,5 +19,5 @@ IMG_DIR="/storage/simple/projects/t_cesab/brunno"
 module purge
 module load singularity/3.5
 
-singularity exec $IMG_DIR/brunnospatial.sif Rscript $JOB_DIR/1_get_velocity.R $i
+singularity exec $IMG_DIR/brunnospatial.sif Rscript $JOB_DIR/1_get_velocity.R
 

@@ -28,7 +28,7 @@ print(sptogo)
 print(realm)
 
 # run test with terrestrial
-# sptogo <- "Vicia_villosa"
+# sptogo <- "Caltha_palustris"
 # sptogo <- gsub("_"," ",sptogo)
 # realm = "Ter"
 
@@ -151,6 +151,8 @@ PA_occ <- cbind(PA_occ, PA_xy)
 sp_occ <- rbind(sp_occ, PA_occ)
 
 table(sp_occ$pa)
+# head(sp_occ)
+# min(sp_occ$year)
 
 ########################
 # Load bioclimatics from each date and cell
