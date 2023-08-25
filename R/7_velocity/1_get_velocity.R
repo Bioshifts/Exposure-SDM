@@ -119,7 +119,7 @@ spgrad = spatial_grad(temperature_layers)
 
 ## calculate gradient-based climate velocity:
 gVel = gVelocity(grad = spgrad, slope = ttrend)
-
+vel_data <- gVel[[2]]
 
 
 ## calculate resulting velocity North

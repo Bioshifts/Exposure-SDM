@@ -148,6 +148,31 @@ v_bio <- gVelocity(spgrad_bio,trend_bio)
 
 bio_time <- Sys.time() - start
 
+# # Extra
+# # To calculate the velocity N, we have to use the gradient North provided in the output
+# # According to the calculations below, we can use the gradient North directly. It is not necessary to velocity rates to the north direction using angles 
+# 
+# # get data
+# v_data <- as.data.frame(spgrad_bio)
+# v_data <- na.omit(v_data)
+# head(v_data)
+# 
+# # Convert gradients to the North direction using the angle
+# temperature_change_rate <- v_data$Grad  # °C/km
+# angle_degrees <- v_data$angle-90        # degrees
+# 
+# # Convert angle to radians
+# angle_radians <- angle_degrees * pi / 180
+# 
+# # Calculate temperature change in North and West directions
+# temperature_change_north <- temperature_change_rate * sin(angle_radians)
+# temperature_change_west <- temperature_change_rate * cos(angle_radians)
+# 
+# plot(v_data$NS,temperature_change_north)
+# plot(v_data$WE,temperature_change_west)
+# 
+# # See! Use NS directly
+
 ########################################################
 ## Compare velocities maps
 # climetrics
