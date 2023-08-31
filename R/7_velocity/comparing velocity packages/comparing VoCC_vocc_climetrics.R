@@ -7,7 +7,7 @@ if(length(new.packages)) install.packages(new.packages)
 sapply(list.of.packages, require, character.only = TRUE)
 
 # Source velocity functions I adapted from the package climetrics after applying some corrections described below 
-source(here::here("R/velocity_functions.R"))
+source("/storage/simple/projects/t_cesab/brunno/Exposure-SDM/R/velocity_functions.R")
 
 # Use the same set of climate variables
 filePath <- system.file("external/", package="climetrics") # path to the dataset folder
@@ -16,8 +16,8 @@ n <- readRDS(paste0(filePath,'/dates.rds')) # corresponding dates
 
 # project to equal-area
 # Eckert 4 equal-area projection
-Eckt <- enmSdmX::getCRS('Eckert 4')
-tmean <- terra::project(tmean,Eckt)
+# Eckt <- "+proj=eck4 +lon_0=0 +x_0=0 +y_0=0 +ellps=WGS84 +datum=WGS84 +units=m +no_defs" 
+# tmean <- terra::project(tmean,Eckt)
 
 # Use rts function in the rts package to make a raster time series:
 tmean.t <- rts(tmean,n)
@@ -198,7 +198,7 @@ head(velocities)
 # climetrics vs VoCC
 ggpairs(velocities)
 
-# as we can see, velocity values for climatrics1 and vocc1 are identical (but not perfect because climatrics1 squeezes outliers), but both are different then VoCC1 and VoCC2 because they handle the spatial gradient differently. When we correct the velocities from climatrics and vocc (climatrics2 and vocc2, respectively), the values are identical to the ones in VoCC.
+# as we can see, velocity values for climatrics1 and vocc1 are identical (but not perfect because climatrics1 squeezes outliers), but both are different from VoCC because they handle the spatial gradient differently. When we correct the velocities from climatrics and vocc (climatrics2 and vocc2, respectively), the values are identical to the ones in VoCC.
 
 ## Compare time duration for calculating velocities
 timesFuncs <- data.frame(t(data.frame(climetrics_time[[1]],vocc_time[[1]],VoCC_time[[1]],bio_time[[1]])))

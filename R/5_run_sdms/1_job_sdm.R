@@ -56,67 +56,10 @@ all_sps <- all_sps[all_sps %in% gsub("_"," ",biov1$sp_name_std_v1)]
 length(all_sps)
 
 #####################
-# # select a representative set of 1000 terrestrial species
-# 
-# N_OCC <- read.csv("Data/n_occ.csv")
-# N_OCC <- N_OCC[N_OCC$scientificName %in% all_sps,]
-# 
-# 
-# dim(N_OCC)
-# 
-# N_OCC_T <- N_OCC[N_OCC$ECO == "T",]
-# groups <- table(N_OCC$Group)
-# 
-# # Use:
-# # 300 birds
-# my_birds <- N_OCC_T[N_OCC_T$Group == "Bird",]
-# my_birds <- sample(my_birds$scientificName, 300)
-# # 300 plants
-# my_plants <- N_OCC_T[N_OCC_T$Group == "Plant",]
-# my_plants <- sample(my_plants$scientificName, 300)
-# # 300 insects
-# my_insects <- N_OCC_T[N_OCC_T$Group == "Insect",]
-# my_insects <- sample(my_insects$scientificName, 300)
-# # 50 amphibians
-# my_amphibian <- N_OCC_T[N_OCC_T$Group == "Amphibian",]
-# my_amphibian <- sample(my_amphibian$scientificName, 50)
-# # 22 reptiles
-# my_reptile <- N_OCC_T[N_OCC_T$Group == "Reptile",]
-# my_reptile <- sample(my_reptile$scientificName, 20)
-# # 30 spiders
-# my_spider <- N_OCC_T[N_OCC_T$Group == "Spider",]
-# my_spider <- sample(my_spider$scientificName, 30)
-# # 20 mammals
-# my_mammal <- N_OCC_T[which(N_OCC_T$Group == "Mammal"),]
-# my_mammal <- sample(my_mammal$scientificName, 20)
-# 
-# my_terrestrial_list <- c(my_birds,
-#                          my_plants,
-#                          my_insects,
-#                          my_amphibian,
-#                          my_reptile,
-#                          my_mammal)
-# 
-# # save
-# saveRDS(my_terrestrial_list, "my_list_sps.RDS")
-
-#####################
-
+# N occurrences
 N_OCC <- read.csv("Data/n_occ.csv")
 
-# select a list of representative terrestrial species
-# or run for all terrestrial species (option == "all")
-
-option <- "all"
-
-if(option == "all"){
-    terrestrials <- N_OCC$scientificName[which(N_OCC$ECO == "T")]
-} else {
-    my_terrestrial_list <- readRDS("my_list_sps.RDS")
-    N_OCC_T <- N_OCC[N_OCC$scientificName %in% my_terrestrial_list,]
-    terrestrials <- N_OCC_T$scientificName
-}
-
+terrestrials <- N_OCC$scientificName[which(N_OCC$ECO == "T")]
 marines <- N_OCC$scientificName[which(N_OCC$ECO == "M")]
 
 mar_sps <- all_sps[which(all_sps %in% marines)]
@@ -127,8 +70,9 @@ ter_sps <- data.frame(sps = ter_sps, realm = "Ter")
 
 
 # pipe line of species: first marines (because they run faster due to coarser resolution data) then terrestrials
-all_sps <- rbind(mar_sps, ter_sps)
+# all_sps <- rbind(mar_sps, ter_sps)
 # all_sps = ter_sps
+all_sps = mar_sps
 
 ########################
 # submit jobs
@@ -140,6 +84,10 @@ tasks_per_core = 1
 cores = 28
 time = "1:00:00"
 memory = "64G"
+
+# # for the big jobs
+# time = "2-20:00:00"
+# memory = "120G"
 
 for(i in 1:nrow(all_sps)){
     

@@ -16,6 +16,8 @@ mar_data <- "oras"
 
 # Bioshifts database
 Bioshifts_DB <- "bioshifts_v3_raw.csv"
+Bioshifts_DB_v1 <- "biov1_fixednames.csv"
+Bioshifts_DB_v2 <- "biov2_fixednames.csv"
 
 # basis of records for downloading GBIF data
 basisOfRecord = c("HUMAN_OBSERVATION", "OBSERVATION", "OCCURRENCE")
@@ -35,10 +37,10 @@ work_dir <- "/storage/simple/projects/t_cesab/brunno/Exposure-SDM"
 # Scratch data
 scratch_dir <- "/lustre/oliveirab"
 
-# Bioshifts folder
-Bioshifts_dir <- here::here("Data/Bioshifts")
+# Bioshifts dir
+Bioshifts_dir <- here::here(work_dir,"Data/Bioshifts")
 
-# Env data folder
+# Env data dir
 env_data_dir <- function(realm){here::here(work_dir,"Data/Env_data",realm)}
 
 # Env variables dir
@@ -58,22 +60,40 @@ vars_dir <- function(realm){
     }
 }
 
-# Occurrence data folder
+# Bioclimatics dir
+bios_dir <- function(realm){
+    if(realm == "Ter"){
+        return(paste0(vars_dir(realm),"/bio_proj_",my_res))
+    } 
+    if(realm == "Mar"){
+        return(paste0(vars_dir(realm),"/bio_proj"))
+    }
+}
+
+# Bioclimatics at the SA dir
+bios_SA_dir <- function(realm){
+    return(paste0(bios_dir(realm),"_SA"))
+}
+
+# Occurrence data dir
 occ_dir <- here::here(work_dir,"Data/GBIF_data")
 
-# SA velocity folder
+# SA velocity dir
 velocity_SA_dir <- here::here(work_dir,"Data/Velocity_SA")
 
-# SA shapefiles folder
+# SA velocity script dir
+velocity_SA_scrit_dir <- here::here(work_dir,"R/7_velocity")
+
+# SA shapefiles dir
 SA_shps_dir <- here::here(Bioshifts_dir,"ShapefilesBioShiftsv3")
 
-# Range shifts folder
+# Range shifts dir
 shift_dir <- function(realm){here::here("Data/SHIFT",realm)}
 
-# Range shift scripts folder
+# Range shift scripts dir
 shift_script_dir <- here::here("R/6_shifts")
 
-# SDMs folder
+# SDMs dir
 sdm_dir <- function(realm){here::here(scratch_dir,"SDMs",realm)}
 
 # SDMs scripts dir

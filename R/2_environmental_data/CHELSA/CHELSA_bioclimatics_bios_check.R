@@ -76,7 +76,7 @@ for(i in 1:length(my_yrs)) {
     cat("\ryear",i,"from",length(my_yrs),"..... year", period_i)
     
     # file name to save
-    filetosave = here::here(vars_dir,"bio_proj",paste0("bios_",realm,"_",period_i,".tif"))
+    filetosave = here::here(vars_dir,paste0("bio_proj_",my_res),paste0("bios_",realm,"_",period_i,".tif"))
     
     # test if there is any issue loading the raster files
     tmp <- try(rast(filetosave),silent = TRUE)

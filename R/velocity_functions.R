@@ -25,14 +25,15 @@ spatial_grad <- function(rx, y_diff = 1) {
     
     if(nlyr(rx) > 1){ rx <- mean(rx,na.rm = TRUE) }
     
-    if (.getProj(rx) == 'longlat') y_dist <- res(rx) * c(111.325, 111.325)
-    
-    if (!.is_package_installed("dplyr") || !.is_package_installed('tidyr')) stop('The packages dplyr and tidyr are needed for this metric; Please make sure they are installed!')
-    
-    else {
+    if (.getProj(rx) == 'longlat') {
+        y_dist <- res(rx) * c(111.325, 111.325)
+    } else {
         y_dist <- res(rx)
         y_diff <- NA
     }
+    
+    if (!.is_package_installed("dplyr") || !.is_package_installed('tidyr')) stop('The packages dplyr and tidyr are needed for this metric; Please make sure they are installed!')
+    
     
     nlats <- nrow(rx)
     nlons <- ncol(rx)
@@ -55,15 +56,6 @@ spatial_grad <- function(rx, y_diff = 1) {
                            `1 -1` = "sstSE",
                            `0 1` = "sstN",
                            `0 -1` = "sstS")'),envir =environment())
-    # y$code1 <- dplyr::recode(y$code,
-    #                          `1 0` = "sstE",
-    #                          `-1 0` = "sstW",
-    #                          `-1 1` = "sstNW",
-    #                          `-1 -1` = "sstSW",
-    #                          `1 1` = "sstNE",
-    #                          `1 -1` = "sstSE",
-    #                          `0 1` = "sstN",
-    #                          `0 -1` = "sstS")
     
     y3b <- eval(parse(text="dplyr::select(y,from, code1, sst)"),envir =environment())
     y3b <- eval(parse(text="tidyr::spread(y3b,code1, sst)"),envir =environment())
@@ -119,14 +111,18 @@ spatial_grad <- function(rx, y_diff = 1) {
 }
 
 #----------
-# squeeze is for bouding max and min values to upper (95%) and lower (5%) quantiles, respectively
-gVelocity <- function(grad, slope, squeeze=FALSE) {
+# truncate is for bounding max and min values to upper (95%) and lower (5%) quantiles, respectively
+gVelocity <- function(grad, slope, grad_col = NULL, truncate=FALSE) {
     
     v <- rast(slope)
     
-    v[grad$icell] <- slope[grad$icell] / grad$Grad
+    if(is.null(grad_col)){
+        v[grad$icell] <- slope[grad$icell] / grad$Grad
+    } else {
+        v[grad$icell] <- slope[grad$icell] / grad[,grad_col]
+    }
     
-    if(squeeze){
+    if(truncate){
         .o <- as.matrix(global(v,fun=quantile,probs=c(0.05,0.95),na.rm=TRUE))[1,]
         v[v < .o[1]] <- .o[1]
         v[v > .o[2]] <- .o[2] 

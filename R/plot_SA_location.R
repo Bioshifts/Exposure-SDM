@@ -32,16 +32,16 @@ plot_SA_location <- function(sptogo,
     
     par(mfrow = c(2,1))
     plot(map_back, main = gsub("_"," ",sptogo), lwd = .5, col = "darkgray", type = "none")
-    plot(BA, alpha = .3, add=T, legend=FALSE)
-    plot(back_back, border = NULL, alpha = .5, add=T, type = "none")
-    plot(xyk, col = "red", cex = .3, border = NULL, alpha = .3, add=T, type = "none")
-    plot(StudyArea, col = "blue", border = NULL, alpha = .3, add=T, type = "none")
+    plot(BA, alpha = .3, add=T, legend=FALSE, col = "lightgreen", border = NULL)
+    plot(back_back, border = NULL, alpha = .5, add=T, type = "none", box=FALSE)
+    plot(xyk, col = "red", cex = .3, border = NULL, alpha = .3, add=T, type = "none", box=FALSE)
+    plot(StudyArea, col = "blue", border = NULL, alpha = .3, add=T, type = "none", box=FALSE)
     
     plot(back_back, main = "Study area", border = NULL, alpha = .5, type = "none")
-    plot(map_back, lwd = .5, col = "darkgray", alpha = .5, add=T, type = "none")
-    plot(BA, alpha = .3, add=T, legend=FALSE)
-    plot(xyk, col = "red", border = NULL, cex = 1, alpha = .3, add=T, type = "none")
-    plot(StudyArea, col = "blue", border = NULL, alpha = .3, add=T, type = "none")
+    plot(map_back, lwd = .5, col = "darkgray", alpha = .5, add=T, type = "none", box=FALSE)
+    plot(BA, alpha = .3, add=T, legend=FALSE, col = "lightgreen", border = NULL, box=FALSE)
+    plot(xyk, col = "red", border = NULL, cex = 1, alpha = .3, add=T, type = "none", box=FALSE)
+    plot(StudyArea, col = "blue", border = NULL, alpha = .3, add=T, type = "none", box=FALSE)
     
     if(!show.plot){
         dev.off()

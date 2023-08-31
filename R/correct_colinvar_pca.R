@@ -23,13 +23,7 @@ correct_colinvar_pca <- function(env_layer, proj, PresAbs, perc = 0.95){
                                                        cvar))
     
     if (!is.null(proj)) {
-        scen <- lapply(proj, function(x){
-            
-            back_start = terra::predict(x$back_start, p)
-            back_end = terra::predict(x$back_end, p)
-            
-            list(back_start = back_start, back_end = back_end)
-        })
+        scen <- lapply(proj, terra::predict, model = p)
             
         result$proj <- scen
     }
