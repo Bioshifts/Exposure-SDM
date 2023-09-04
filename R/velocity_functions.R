@@ -28,15 +28,12 @@ spatial_grad <- function(rx, y_diff = 1) {
     if (.getProj(rx) == 'longlat') {
         y_dist <- res(rx) * c(111.325, 111.325)
     } else {
-        y_dist <- res(rx)
+        y_dist <- res(rx) / 1000 # from meters to km
         y_diff <- NA
     }
     
     if (!.is_package_installed("dplyr") || !.is_package_installed('tidyr')) stop('The packages dplyr and tidyr are needed for this metric; Please make sure they are installed!')
     
-    
-    nlats <- nrow(rx)
-    nlons <- ncol(rx)
     y <- data.frame(adjacent(rx, cells=1:ncell(rx), directions=8,pairs=TRUE))
     y <- y[order(y$from, y$to),]
     y <- na.omit(y)

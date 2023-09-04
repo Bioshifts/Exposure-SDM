@@ -5,7 +5,8 @@ gc()
 # devtools::install_github("sjevelazco/flexsdm@HEAD")
 
 list.of.packages <- c("terra","rnaturalearthdata","biomod2",
-                      "tidyverse","tictoc","tidyterra","ggplot2","data.table")
+                      "tidyverse","tictoc","tidyterra","ggplot2","data.table",
+                      "parallelly")
 
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
 
@@ -28,8 +29,12 @@ print(realm)
 # sptogo="Abra_alba"
 # realm <- "Mar"
 # 
-# sptogo="Platanthera_cooperi"
+# sptogo="Acacia_melanoxylon"
 # realm <- "Ter"
+# sptogo="Abies_concolor"
+# realm <- "Ter"
+
+cores <- parallelly::availableCores()
 
 ########################
 # set computer
@@ -54,6 +59,7 @@ source("R/settings.R")
 check_if_exists = FALSE
 
 # get directories
+bios_SA_dir <- bios_SA_dir(realm)
 bios_dir <- bios_dir(realm)
 output_dir <- here::here(sdm_dir(realm), sptogo)
 occ_dir <- env_data_dir
@@ -76,11 +82,9 @@ mask.ras <- if(realm=="Ter") {
 # Check if file exists
 
 if(check_if_exists){
-    # check if there a file with ensemble model outputs
-    tmp = list.files(here::here(output_dir))
-    tmp = any(grepl("ens_SDM",tmp))
     
-    if(tmp){
+    # check if dir with sdm output exists
+    if(dir.exists(here::here(output_dir,gsub("_",".",sptogo)))){
         stop("No need to run this. SDMs were fitted for this species!")
     } 
 }
@@ -169,42 +173,44 @@ plot_SA_location(sptogo,
 S_time <- lapply(1:nrow(shift_info), function(i) {
     shift_info$START[i]:shift_info$END[i]
 })
-S_time <- unique(do.call(c,S_time))
+S_time <- unique(round(do.call(c,S_time),0))
 
+bioclimatics_BG <- list.files(bios_dir)
+bioclimatics_BG_pos <- grepl(paste(S_time,collapse = "|"),bioclimatics_BG)
+bioclimatics_BG <- bioclimatics_BG[bioclimatics_BG_pos]
+bioclimatics_BG <- lapply(bioclimatics_BG, function(x) terra::rast(here::here(bios_dir,x)))
+names(bioclimatics_BG) <- S_time
 
-files_bios_BG <- here::here(output_dir,"bios_BG",
-                            paste(sptogo,
-                                  S_time,
-                                  "BG bios.tif"))
-
-if(all(file.exists(files_bios_BG))){
-    
-    bioclimatics_BG <- lapply(files_bios_BG, terra::rast)
-    names(bioclimatics_BG) <- S_time
-    
-} else {
-    
-    bioclimatics_BG <- list.files(bios_dir)
-    bioclimatics_BG_pos <- grepl(paste(S_time,collapse = "|"),bioclimatics_BG)
-    bioclimatics_BG <- bioclimatics_BG[bioclimatics_BG_pos]
-    bioclimatics_BG <- lapply(bioclimatics_BG, function(x) terra::rast(here::here(bios_dir,x)))
-    names(bioclimatics_BG) <- S_time
-    
-    # mask
-    bioclimatics_BG <- lapply(bioclimatics_BG, function(x) {
-        terra::mask(terra::crop(x,BA_shp),BA_shp)
-    })
-    
-    # save
-    if(!dir.exists(here::here(output_dir,"bios_BG"))){
-        dir.create(here::here(output_dir,"bios_BG"))
-    }
-    lapply(1:length(bioclimatics_BG), function(x) {
-        writeRaster(bioclimatics_BG[[x]],
-                    files_bios_BG[x], overwrite=TRUE)
-    })
+# mask
+if(!dir.exists(here::here(output_dir,"BG"))){
+    dir.create(here::here(output_dir,"BG"))
 }
 
+bioclimatics_BG <- parallel::mclapply(1:length(bioclimatics_BG), function(x) {
+    bios_year_i = bioclimatics_BG[[x]]
+    year_i = names(bioclimatics_BG)[x]
+    window(bios_year_i) <- terra::ext(BA_shp)
+    terra::mask(bios_year_i, BA_shp,
+                filename = here::here(output_dir,"BG",paste0(year_i,".tif")),
+                overwrite = TRUE)
+}, mc.cores = cores)
+# load in
+bioclimatics_BG <- lapply(list.files(here::here(output_dir,"BG"),full.names = TRUE), 
+                          function(x) terra::rast(x))
+names(bioclimatics_BG) <- S_time
+
+########################
+# Load in bioclimatics at the SA 
+
+bioclimatics_SA <- lapply(StudyID, function(x) {
+    tmp_names <- list.files(here::here(bios_SA_dir,x))
+    tmp_names <- gsub(paste0(c(x,"bios",".tif"," "),collapse = "|"),"",tmp_names)
+    tmp <- list.files(here::here(bios_SA_dir,x), full.names = TRUE)
+    tmp <- lapply(tmp, terra::rast)
+    names(tmp) <- tmp_names
+    return(tmp)
+})
+names(bioclimatics_SA) <- StudyID
 
 # ########################
 # Reduce collinearity among the predictors
@@ -212,105 +218,35 @@ if(all(file.exists(files_bios_BG))){
 
 # create an assemble of environmental data coming from species occurrences + background data at each time period
 
-files_bios_BG_PC <- here::here(output_dir,"bios_BG",
-                               paste(sptogo,
-                                     S_time,
-                                     "BG bios PC.tif"))
-
-if(all(file.exists(files_bios_BG_PC))){
-    
-    bioclimatics_BG <- lapply(files_bios_BG_PC, terra::rast)
-    names(bioclimatics_BG) <- S_time
-    
-    PresAbsFull <- qs::qread(here::here(output_dir, paste(sptogo,"PresAbsFull.qs")))
-    
-} else {
-    
-    # 1) add background data 
-    
-    data_env <- as.data.frame(bioclimatics_BG[[1]], na.rm=TRUE)
-    if(nrow(data_env) > 20000){
-        data_env <- data_env[sample(1:nrow(data_env),20000),]
-    }
-    
-    # 2) add pres/abs data
-    data_env <- rbind(data_env, 
-                      data.frame(PresAbs)[,names(data_env)])
-    
-    dim(data_env)
-    
-    # set a cap for the size of dataset
-    mycap <- 100000
-    if(nrow(data_env) > mycap){
-        data_env <- data_env[sample(1:nrow(data_env),mycap), ]
-    }
-    
-    # 3) get uncorrelated PCs
-    new_data <- correct_colinvar_pca(env_layer = data_env, 
-                                     proj = bioclimatics_BG, 
-                                     PresAbs = PresAbs)
-    
-    # 4) update data
-    bioclimatics_BG <- new_data$proj
-    PresAbsFull <- data.table(data.frame(PresAbs[,c("x","y","pa")], new_data$PresAbs))
-    PresAbsFull <- PresAbsFull[order(PresAbsFull$pa, decreasing = TRUE),]
-    
-    # delete old bios and save new ones
-    unlink(files_bios_BG)
-    
-    lapply(1:length(bioclimatics_BG), function(x) {
-        writeRaster(bioclimatics_BG[[x]],
-                    files_bios_BG_PC[x], overwrite=TRUE)
-    })
-    
-    qs::qsave(PresAbsFull, here::here(output_dir, paste(sptogo,"PresAbsFull.qs")))
+# 1) add background data 
+data_env <- as.data.frame(bioclimatics_BG[[1]], na.rm=TRUE)
+if(nrow(data_env) > 20000){
+    data_env <- data_env[sample(1:nrow(data_env),20000),]
 }
 
-########################
-# Crop to the SA 
+# 2) add pres/abs data
+data_env <- rbind(data_env, 
+                  data.frame(PresAbs)[,names(data_env)])
 
-bioclimatics_SA <- list()
+dim(data_env)
 
-for(i in 1:nrow(shift_info)){
-    
-    S_time_i <- shift_info$START[i]:shift_info$END[i]
-    
-    files_bios_SA_i <- here::here(output_dir,"bios_SA",
-                                  paste(sptogo,
-                                        shift_info$ID[i],
-                                        S_time_i,
-                                        "SA bios.tif"))
-    
-    if(all(file.exists(files_bios_SA_i))){
-        
-        bioclimatics_SA[[i]] <- lapply(files_bios_SA_i, terra::rast)
-        names(bioclimatics_SA[[i]]) <- S_time_i
-        
-    } else {
-        
-        # mask for SA i
-        SA_i <- StudyArea[StudyArea$NAME==shift_info$ID[i]]
-        
-        bioclimatics_BG_i <- bioclimatics_BG[as.character(S_time_i)]
-        
-        bioclimatics_SA_i <- lapply(bioclimatics_BG_i, function(x) {
-            terra::mask(terra::crop(x,SA_i),SA_i)
-        })
-        
-        # save
-        if(!dir.exists(here::here(output_dir,"bios_SA"))){
-            dir.create(here::here(output_dir,"bios_SA"))
-        }
-        lapply(1:length(bioclimatics_SA_i), function(x) {
-            writeRaster(bioclimatics_SA_i[[x]],
-                        files_bios_SA_i[x], overwrite=TRUE)
-        })
-        
-        bioclimatics_SA[[i]] <- bioclimatics_SA_i
-    }
-    
+# set a cap for the size of dataset
+mycap <- 100000
+if(nrow(data_env) > mycap){
+    data_env <- data_env[sample(1:nrow(data_env),mycap), ]
 }
-names(bioclimatics_SA) <- paste(shift_info$ID)
+
+# 3) get uncorrelated PCs
+new_data <- correct_colinvar_pca(env_layer = data_env, 
+                                 proj = bioclimatics_BG, 
+                                 proj2 = bioclimatics_SA, 
+                                 PresAbs = PresAbs)
+
+# 4) update data
+bioclimatics_BG <- new_data$proj
+bioclimatics_SA <- new_data$proj2
+PresAbsFull <- data.table(data.frame(PresAbs[,c("x","y","pa")], new_data$PresAbs))
+PresAbsFull <- PresAbsFull[order(PresAbsFull$pa, decreasing = TRUE),]
 
 
 ########################
@@ -325,7 +261,7 @@ names(bioclimatics_SA) <- paste(shift_info$ID)
 # Fit SDMs
 
 # N cpus to use
-N_cpus = 12
+N_cpus = cores
 
 table(PresAbsFull$pa)
 
@@ -359,8 +295,6 @@ ens_model_sp <- BIOMOD_EnsembleModeling(
     model_sp, 
     metric.select = "TSS",
     metric.eval = "TSS")
-
-
 
 ########################
 # Evaluate
@@ -445,3 +379,7 @@ for(j in 1:length(bioclimatics_SA)){
     }
     
 }
+
+
+# delete saved bioclimatics at the background area
+unlink(here::here(output_dir,"BG"), recursive = TRUE)

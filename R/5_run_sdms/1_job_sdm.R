@@ -71,8 +71,8 @@ ter_sps <- data.frame(sps = ter_sps, realm = "Ter")
 
 # pipe line of species: first marines (because they run faster due to coarser resolution data) then terrestrials
 # all_sps <- rbind(mar_sps, ter_sps)
-# all_sps = ter_sps
-all_sps = mar_sps
+all_sps = ter_sps
+# all_sps = mar_sps
 
 ########################
 # submit jobs
@@ -82,8 +82,8 @@ N_jobs_at_a_time = 100
 N_Nodes = 1
 tasks_per_core = 1
 cores = 28
-time = "1:00:00"
-memory = "64G"
+time = "24:00:00"
+memory = "120G"
 
 # # for the big jobs
 # time = "2-20:00:00"

@@ -99,3 +99,10 @@ for(i in 1:length(v3_polygons)){
 }
 
 # Check if everything went well
+
+# did we get data for all polygons?
+got_mar <- list.files(bios_SA_dir("Mar"))
+got_ter <- list.files(bios_SA_dir("Ter"))
+got <- c(got_ter,got_mar)
+
+all(v3_polygons %in% got)

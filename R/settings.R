@@ -2,6 +2,7 @@ require("here")
 
 # -----------------------------
 ## Seetings
+
 # set resolution terrestrial environmental data
 # must be 1km or 5km
 my_res <- "1km"
@@ -27,6 +28,9 @@ n_yr_bioclimatic <- 1
 
 # limit records for fitting SDMs
 limit_recs = 20000
+
+# Eckert equal-area projection
+Eckt <- "+proj=eck4 +lon_0=0 +x_0=0 +y_0=0 +ellps=WGS84 +datum=WGS84 +units=m +no_defs" 
 
 # -------------------------------
 ## Directories 

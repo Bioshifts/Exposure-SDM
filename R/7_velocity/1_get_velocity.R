@@ -38,9 +38,6 @@ if(computer == "muse"){
 source("R/settings.R")
 source("R/velocity_functions.R")
 
-# Eckert equal-area projection
-Eckt <- "+proj=eck4 +lon_0=0 +x_0=0 +y_0=0 +ellps=WGS84 +datum=WGS84 +units=m +no_defs" 
-
 # create dir to store results
 if(!dir.exists(velocity_SA_dir)){
     dir.create(velocity_SA_dir)
@@ -193,38 +190,21 @@ if(ECO=="Ter"){
         
         #######
         ## calculate gradient-based climate velocity:
-        gVel <- gVelocity(grad = spgrad, slope = ttrend, truncate = TRUE)
-        gVel <- gVel[][,1]
+        # gVel <- gVelocity(grad = spgrad, slope = ttrend, truncate = TRUE)
         
-        gVelLat <- gVelocity(grad = spgrad, slope = ttrend, grad_col = "NS", truncate = TRUE)
-        gVelLat <- gVelLat[][,1]
+        gVelLat <- gVelocity(grad = spgrad, slope = ttrend, 
+                             grad_col = "NS", truncate = TRUE)
         
-        gVelEle <- gVelocity(grad = spgrad, slope = ttrend, grad_col = "Grad_ele", truncate = TRUE)
-        gVelEle <- gVelEle[][,1]
+        gVelEle <- gVelocity(grad = spgrad, slope = ttrend, 
+                             grad_col = "Grad_ele", truncate = TRUE)
         
         #######
-        ## change sign if SA in the south hemisphere to reflect a velocity away of the tropics
-        min_lat <- ext(SA_i)[3]
-        max_lat <- ext(SA_i)[4]
-        
-        if(all(sign(c(max_lat,min_lat)) == 1)){
-            prop_south <- 0
-            prop_north <- 1
-        } 
-        if(all(sign(c(max_lat,min_lat)) == -1)){ 
-            prop_south <- 1
-            prop_north <- 0
-        }
-        if(!all(sign(c(max_lat,min_lat)) == 1)){
-            total = max_lat - min_lat
-            prop_south <- abs(min_lat/total)
-            prop_north <- abs(max_lat/total)
-        } 
-        prop_NS <- prop_north-prop_south
-        
-        if(sign(prop_NS) == -1){ 
-            gVelLat <- gVelLat * -1 
-            gVel <- gVel * -1
+        ## change sign of gVelLat if in the south hemisphere to reflect a velocity away of the tropics
+        SouthCells <- terra::as.data.frame(gVelLat, xy = TRUE, cell = TRUE) 
+        SouthCells <- SouthCells %>% filter(y<0)
+        SouthCells <- SouthCells$cell
+        if(length(SouthCells)>0){
+            gVelLat[SouthCells] <- gVelLat[SouthCells] * -1
         }
         
         #######
@@ -232,12 +212,14 @@ if(ECO=="Ter"){
         baseline <- mean(global(climate_layers_i,mean,na.rm = TRUE)[,1])
         trend.mean <- as.numeric(global(ttrend,mean,na.rm = TRUE)[,1])
         trend.sd <- as.numeric(global(ttrend,sd,na.rm = TRUE)[,1])
-        v.lat.mean <- mean(gVelLat, na.rm=TRUE)
-        v.lat.median <- median(gVelLat, na.rm=TRUE)
-        v.lat.sd <- sd(gVelLat, na.rm=TRUE)
-        v.ele.mean <- mean(gVelEle, na.rm=TRUE)
-        v.ele.median <- median(gVelEle, na.rm=TRUE)
-        v.ele.sd <- sd(gVelEle, na.rm=TRUE)
+        
+        v.lat.mean <- global(gVelLat, mean, na.rm=TRUE)
+        v.lat.median <- global(gVelLat, median, na.rm=TRUE)
+        v.lat.sd <- global(gVelLat, sd, na.rm=TRUE)
+        
+        v.ele.mean <- global(gVelLat, mean, na.rm=TRUE)
+        v.ele.median <- global(gVelLat, median, na.rm=TRUE)
+        v.ele.sd <- global(gVelLat, sd, na.rm=TRUE)
         
         gVelSA_j <- data.frame(baseline, trend.mean, trend.sd, 
                                v.lat.mean, v.lat.median, v.lat.sd, 
@@ -287,35 +269,16 @@ if(ECO=="Ter"){
     
     #######
     ## calculate gradient-based climate velocity:
-    gVel <- gVelocity(grad = spgrad, slope = ttrend, truncate = TRUE)
-    gVel <- gVel[][,1]
-    
+    # gVel <- gVelocity(grad = spgrad, slope = ttrend, truncate = TRUE)
     gVelLat <- gVelocity(grad = spgrad, slope = ttrend, grad_col = "NS", truncate = TRUE)
-    gVelLat <- gVelLat[][,1]
     
     #######
-    ## change sign if SA in the south hemisphere to reflect a velocity away of the tropics
-    min_lat <- ext(SA_i)[3]
-    max_lat <- ext(SA_i)[4]
-    
-    if(all(sign(c(max_lat,min_lat)) == 1)){
-        prop_south <- 0
-        prop_north <- 1
-    } 
-    if(all(sign(c(max_lat,min_lat)) == -1)){ 
-        prop_south <- 1
-        prop_north <- 0
-    }
-    if(!all(sign(c(max_lat,min_lat)) == 1)){
-        total = max_lat - min_lat
-        prop_south <- abs(min_lat/total)
-        prop_north <- abs(max_lat/total)
-    } 
-    prop_NS <- prop_north-prop_south
-    
-    if(sign(prop_NS) == -1){ 
-        gVelLat <- gVelLat * -1 
-        gVel <- gVel * -1
+    ## change sign of gVelLat if in the south hemisphere to reflect a velocity away of the tropics
+    SouthCells <- terra::as.data.frame(gVelLat, xy = TRUE, cell = TRUE) 
+    SouthCells <- SouthCells %>% filter(y<0)
+    SouthCells <- SouthCells$cell
+    if(length(SouthCells)>0){
+        gVelLat[SouthCells] <- gVelLat[SouthCells] * -1
     }
     
     #######
@@ -323,16 +286,22 @@ if(ECO=="Ter"){
     baseline <- mean(global(climate_layers_i,mean,na.rm = TRUE)[,1])
     trend.mean <- as.numeric(global(ttrend,mean,na.rm = TRUE)[,1])
     trend.sd <- as.numeric(global(ttrend,sd,na.rm = TRUE)[,1])
-    v.lat.mean <- mean(gVelLat, na.rm=TRUE)
-    v.lat.median <- median(gVelLat, na.rm=TRUE)
-    v.lat.sd <- sd(gVelLat, na.rm=TRUE)
     
-    gVelSA <- data.frame(baseline, trend.mean, trend.sd, 
-                         v.lat.mean, v.lat.median, v.lat.sd)
+    v.lat.mean <- as.numeric(global(gVelLat, mean, na.rm=TRUE))
+    v.lat.median <- as.numeric(global(gVelLat, median, na.rm=TRUE))
+    v.lat.sd <- as.numeric(global(gVelLat, sd, na.rm=TRUE))
+    
+    gVelSA <- data.frame(baseline = baseline, 
+                         trend.mean = trend.mean, 
+                         trend.sd = trend.sd, 
+                         v.lat.mean = v.lat.mean, 
+                         v.lat.median = v.lat.median, 
+                         v.lat.sd = v.lat.sd)
     names(gVelSA) <- paste0(names(gVelSA),".sst")
     gVelSA$ID=polygontogo
-    
-    
+    gVelSA2=gVelSA
+    gVelSA1
+    gVelSA2
 }
 
 write.csv(gVelSA, here::here(velocity_SA_dir, paste0(polygontogo,".csv")), row.names = FALSE)

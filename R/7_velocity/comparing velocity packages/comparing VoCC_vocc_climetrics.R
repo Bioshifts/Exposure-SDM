@@ -7,19 +7,19 @@ if(length(new.packages)) install.packages(new.packages)
 sapply(list.of.packages, require, character.only = TRUE)
 
 # Source velocity functions I adapted from the package climetrics after applying some corrections described below 
-source("/storage/simple/projects/t_cesab/brunno/Exposure-SDM/R/velocity_functions.R")
+# source("/storage/simple/projects/t_cesab/brunno/Exposure-SDM/R/velocity_functions.R")
+source("R/velocity_functions.R")
+source("R/gael_velocity.R")
+source("R/settings.R")
 
 # Use the same set of climate variables
 filePath <- system.file("external/", package="climetrics") # path to the dataset folder
 tmean <- rast(paste0(filePath,'/tmean.tif'))
 n <- readRDS(paste0(filePath,'/dates.rds')) # corresponding dates
 
-# project to equal-area
-# Eckert 4 equal-area projection
-# Eckt <- "+proj=eck4 +lon_0=0 +x_0=0 +y_0=0 +ellps=WGS84 +datum=WGS84 +units=m +no_defs" 
-# tmean <- terra::project(tmean,Eckt)
+# project to equal area
+tmean <- terra::project(tmean,Eckt)
 
-# Use rts function in the rts package to make a raster time series:
 tmean.t <- rts(tmean,n)
 
 ##############
@@ -40,31 +40,31 @@ v_climetrics1 <- climetrics:::gVelocity(tmean.t)
 climetrics_time <- Sys.time() - start
 
 # spatial gradient (wrong way)
-spgrad_out_climetrics1 <- climetrics:::.spatialgradTerra(tmean)
+spgrad_climetrics1 <- climetrics:::.spatialgradTerra(tmean)
 
-spgrad_climetrics1 <- data.frame(NS = spgrad_out_climetrics1$NS, WE = spgrad_out_climetrics1$WE)
 spgrad_climetrics1$NS[is.na(spgrad_climetrics1$NS)] <- 0
 spgrad_climetrics1$WE[is.na(spgrad_climetrics1$WE)] <- 0
 spgrad_climetrics1$NAsort <- ifelse((abs(spgrad_climetrics1$NS)+abs(spgrad_climetrics1$WE)) == 0, NA, 1)
-spgrad_climetrics1 <- spgrad_climetrics1$NAsort * sqrt((spgrad_climetrics1$WE^2) + (spgrad_climetrics1$NS^2))
+spgrad_climetrics1$Grad <- spgrad_climetrics1$NAsort * sqrt((spgrad_climetrics1$WE^2) + (spgrad_climetrics1$NS^2))
+
 # Angles
-angle_climatrics1 <- spgrad_out_climetrics1$angle
+angle_climatrics1 <- spgrad_climetrics2$angle
 
 
 ### Right way
 # spatial gradient
-spgrad_out_climetrics2 <- climetrics:::.spatialgradTerra(mean(tmean))
+spgrad_climetrics2 <- climetrics:::.spatialgradTerra(mean(tmean))
 
-spgrad_climetrics2 <- data.frame(NS = spgrad_out_climetrics2$NS, WE = spgrad_out_climetrics2$WE)
 spgrad_climetrics2$NS[is.na(spgrad_climetrics2$NS)] <- 0
 spgrad_climetrics2$WE[is.na(spgrad_climetrics2$WE)] <- 0
 spgrad_climetrics2$NAsort <- ifelse((abs(spgrad_climetrics2$NS)+abs(spgrad_climetrics2$WE)) == 0, NA, 1)
-spgrad_climetrics2 <- spgrad_climetrics2$NAsort * sqrt((spgrad_climetrics2$WE^2) + (spgrad_climetrics2$NS^2))
+spgrad_climetrics2$Grad <- spgrad_climetrics2$NAsort * sqrt((spgrad_climetrics2$WE^2) + (spgrad_climetrics2$NS^2))
+
 # Angles
-angle_climatrics2 <- spgrad_out_climetrics2$angle
+angle_climatrics2 <- spgrad_climetrics2$angle
 
 # Velocity
-v_climetrics2 <- climetrics:::.calcvelocity(grad = spgrad_out_climetrics2,
+v_climetrics2 <- climetrics:::.calcvelocity(grad = spgrad_climetrics2,
                                             slope = trend_climatrics,
                                             .terra = TRUE)
 
@@ -146,7 +146,22 @@ spgrad_bio <- spatial_grad(tmean)
 # velocity
 v_bio <- gVelocity(spgrad_bio,trend_bio)
 
+# Angle
+angle_bio = spgrad_bio$angle
+
 bio_time <- Sys.time() - start
+
+##############
+# Gael's code
+
+# spatial gradient
+spgrad_gael <- Gael_grad(stack(tmean))
+# trend (use VoCC)
+trend_gael <- VoCC::tempTrend(r = stack(tmean), th = 10) 
+trend_gael = resample(trend_gael, spgrad_gael)
+
+v_gael = trend_gael[[1]] / spgrad_gael       # km/year
+v_gael = resample(v_gael, stack(tmean))
 
 # # Extra
 # # To calculate the velocity N, we have to use the gradient North provided in the output
@@ -175,7 +190,6 @@ bio_time <- Sys.time() - start
 
 ########################################################
 ## Compare velocities maps
-# climetrics
 tmp <- rast(c(climetrics1=v_climetrics1,
               climetrics2=v_climetrics2,
               vocc1=v_vocc_rast1,
@@ -187,18 +201,15 @@ tmp
 plot(tmp)
 
 
-bioshifts_time <- tictoc::toc()
-
-
-##############
+########################################################
 ## Compare velocities correlations
 velocities <- data.frame(tmp)
 head(velocities)
 
-# climetrics vs VoCC
 ggpairs(velocities)
 
 # as we can see, velocity values for climatrics1 and vocc1 are identical (but not perfect because climatrics1 squeezes outliers), but both are different from VoCC because they handle the spatial gradient differently. When we correct the velocities from climatrics and vocc (climatrics2 and vocc2, respectively), the values are identical to the ones in VoCC.
+# Values from bioshifts is identical to VoCC (both in km/year)!
 
 ## Compare time duration for calculating velocities
 timesFuncs <- data.frame(t(data.frame(climetrics_time[[1]],vocc_time[[1]],VoCC_time[[1]],bio_time[[1]])))
@@ -207,4 +218,102 @@ timesFuncs$Package <- gsub("_time..1..","",rownames(timesFuncs))
 
 ggplot(timesFuncs, aes(x = Package, y = elapsed))+
     geom_col() + ylab("Time elapsed (seconds)")
+
+########################################################
+# Now compare the North velocities
+# For this, we can add Gael's results for North velocity
+
+velocities_North <- data.frame(
+    climetrics1=values(v_climetrics1)[,1] * sin(angle_climatrics1 * pi / 180),
+    climetrics2=values(v_climetrics2)[,1] * sin(angle_climatrics2 * pi / 180),
+    vocc1=values(v_vocc_rast1)[,1] * sin(angle_vocc1 * pi / 180),
+    vocc2=values(v_vocc_rast2)[,1] * sin(angle_vocc2 * pi / 180),
+    VoCC=raster::values(v_VoCC[[1]]) * sin(angle_VoCC * pi / 180),
+    v_bio=values(v_bio)[,1] * sin(angle_bio * pi / 180),
+    v_gael=values(rast(v_gael))[,1])
+
+ggpairs(velocities_North)
+
+# VoCC and bioshifts still identical.
+# Gael's code give very different results
+
+########################################################
+## Compare velocities with projected and unprojects
+
+# Use the same set of climate variables
+tmean <- rast(paste0(filePath,'/tmean.tif'))
+# project to equal-area
+tmean_proj <- terra::project(tmean,Eckt)
+
+# Use rts function in the rts package to make a raster time series:
+tmean.t <- rts(tmean,n)
+tmean.t_proj <- rts(tmean_proj,n)
+
+
+####
+# VoCC unprojected
+# calculate the trend
+trend_VoCC = VoCC::tempTrend(r = stack(tmean),
+                             th = 0.25*nlyr(tmean))
+
+# calculate the spatial gradient
+spgrad_VoCC = VoCC::spatGrad(r = stack(tmean), 
+                             projected = FALSE) 
+
+# Calculating temperature velocity 
+v_VoCC = VoCC::gVoCC(tempTrend = trend_VoCC, 
+                     spatGrad = spgrad_VoCC)
+
+####
+# VoCC rojected
+# calculate the trend
+trend_VoCC = VoCC::tempTrend(r = stack(tmean_proj),
+                             th = 0.25*nlyr(tmean_proj) ## set minimum # obs. to 1/4 time series length
+)
+# calculate the spatial gradient
+spgrad_VoCC = VoCC::spatGrad(r = stack(tmean_proj), 
+                             projected = TRUE) 
+# Calculating temperature velocity 
+v_VoCC2 = VoCC::gVoCC(tempTrend = trend_VoCC, 
+                      spatGrad = spgrad_VoCC)
+
+## Compare velocities 
+v_VoCC[[1]]
+v_VoCC2[[1]]
+
+par(mfrow=c(1,2))
+hist(v_VoCC[[1]])
+hist(v_VoCC2[[1]]/1000)
+
+####
+# bioshifts unprojected
+# trend
+trend_bio <- temp_grad(tmean, th = 0.25*nlyr(tmean))
+# spatial gradient
+spgrad_bio <- spatial_grad(tmean)
+# velocity
+v_bio <- gVelocity(spgrad_bio,trend_bio)
+
+####
+# bioshifts rojected
+# trend
+trend_bio <- temp_grad(tmean_proj, th = 0.25*nlyr(tmean_proj))
+# spatial gradient
+spgrad_bio <- spatial_grad(tmean_proj)
+# velocity
+v_bio2 <- gVelocity(spgrad_bio,trend_bio)
+
+## Compare velocities 
+v_bio
+v_bio2
+
+
+########################################################
+## Conclusion
+## Why VoCC results are different when using projected and unprojected data?
+# Inspection of VoCC package functions suggests that when using unprojected data, the results are given in the unit of the environmental data provided. As the unit of projected data is usually in meters, the results of the projected data are 1000 smaller then the projected (1km = 1000 meters).
+# to make then identical (both in C/km) you have to:
+v_VoCC[[1]]
+v_VoCC2[[1]]/1000
+
 

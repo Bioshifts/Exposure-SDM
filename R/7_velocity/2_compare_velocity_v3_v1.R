@@ -8,6 +8,7 @@
 
 library(data.table)
 library(dplyr)
+library(ggplot2)
 
 ########################
 # set computer
@@ -44,33 +45,46 @@ Bioshifts_DB <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v1))
 # Filter Polygons in Study areas v3
 Bioshifts_DB <- Bioshifts_DB[Bioshifts_DB$ID %in% unique(SA_got$ID),]
 
-# Latitude shifts
-Bioshifts_DB_LAT <-merge(Bioshifts_DB %>% filter(Type == "LAT"),
-                         SA_got %>% filter(Type_grad == "LAT"),
-                         by = "ID")
-dim(Bioshifts_DB_LAT)
-names(Bioshifts_DB_LAT)
-unique(Bioshifts_DB_LAT$UNIT)
 
-outliers <- summary(na.omit(Bioshifts_DB_LAT$vel_v3))[c(2,5)]
+# Latitude shifts
+Bioshifts_vel <-merge(Bioshifts_DB %>% 
+                          select(ID, v.lat.mean, Type), 
+                      SA_got  %>%
+                          mutate(Type = Type_grad) %>% 
+                          select(ID, vel_v3, Type), 
+                      by = c("ID","Type"))
+head(Bioshifts_vel)
+
+# covert shift from m to km when across LAT
+Bioshifts_vel$vel_v3[which(Bioshifts_vel$Type=="LAT")] <- Bioshifts_vel$vel_v3[which(Bioshifts_vel$Type=="LAT")] / 1000
+
+outliers <- summary(na.omit(Bioshifts_vel$vel_v3))[c(2,5)]
+Bioshifts_vel_sub <- Bioshifts_vel %>% 
+    filter(vel_v3 > outliers[1] & vel_v3 < 4000 & !is.infinite(vel_v3))
+
+ggplot(Bioshifts_vel %>%
+           filter(Type == "LAT"), 
+       aes(x = vel_v3, y = v.lat.mean)) +
+    geom_point()+
+    theme_classic()
+rmote::plot_done()
 
 plot(vel_v3~v.lat.mean,
-     Bioshifts_DB_LAT %>% 
-         filter(vel_v3 > outliers[1] & vel_v3 < 4000 & !is.infinite(vel_v3)),
+     na.omit(Bioshifts_vel_sub),
      xlab = "Velocity v1",
      ylab = "Velocity v3")
 rmote::plot_done()
 
 par(mfrow=c(1,2))
 plot(SHIFT~v.lat.mean,
-     Bioshifts_DB_LAT %>% 
+     Bioshifts_vel %>% 
          filter(vel_v3 > outliers[1] & vel_v3 < 4000 & !is.infinite(vel_v3)),
      xlab = "Velocity v1",
      ylab = "SHIFT v1")
 # rmote::plot_done()
 
 plot(SHIFT~vel_v3,
-     Bioshifts_DB_LAT %>% 
+     Bioshifts_vel %>% 
          filter(vel_v3 > outliers[1] & vel_v3 < 4000 & !is.infinite(vel_v3)),
      xlab = "Velocity v3",
      ylab = "SHIFT v1")
@@ -78,7 +92,7 @@ rmote::plot_done()
 
 
 par(mfrow=c(1,2))
-tmp <- Bioshifts_DB_LAT %>% 
+tmp <- Bioshifts_vel %>% 
     filter(vel_v3 > outliers[1] & vel_v3 < 4000 & !is.infinite(vel_v3))
 hist(tmp$vel_v3)
 hist(tmp$v.lat.mean)
