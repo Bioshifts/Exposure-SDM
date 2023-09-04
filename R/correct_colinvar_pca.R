@@ -1,6 +1,6 @@
 # based on correct_colinvar {flexsdm}
 
-correct_colinvar_pca <- function(env_layer, proj, PresAbs, perc = 0.95){
+correct_colinvar_pca <- function(env_layer, proj, proj2, PresAbs, perc = 0.95){
     
     p <- stats::prcomp(env_layer, retx = TRUE, scale. = TRUE, center = TRUE)
     means <- p$center
@@ -24,8 +24,15 @@ correct_colinvar_pca <- function(env_layer, proj, PresAbs, perc = 0.95){
     
     if (!is.null(proj)) {
         scen <- lapply(proj, terra::predict, model = p)
-            
+        
         result$proj <- scen
+    }
+    if (!is.null(proj2)) {
+        scen <- lapply(proj2, function(x) {
+            lapply(x, terra::predict, model = p)
+        })
+        
+        result$proj2 <- scen
     }
     
     return(result)
