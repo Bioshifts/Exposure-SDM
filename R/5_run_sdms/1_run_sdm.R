@@ -34,7 +34,8 @@ print(realm)
 # sptogo="Abies_concolor"
 # realm <- "Ter"
 
-cores <- parallelly::availableCores()
+# N cpus to use
+N_cpus <- parallelly::availableCores()
 
 ########################
 # set computer
@@ -189,11 +190,11 @@ if(!dir.exists(here::here(output_dir,"BG"))){
 bioclimatics_BG <- parallel::mclapply(1:length(bioclimatics_BG), function(x) {
     bios_year_i = bioclimatics_BG[[x]]
     year_i = names(bioclimatics_BG)[x]
-    window(bios_year_i) <- terra::ext(BA_shp)
+    terra::window(bios_year_i) <- terra::ext(BA_shp)
     terra::mask(bios_year_i, BA_shp,
                 filename = here::here(output_dir,"BG",paste0(year_i,".tif")),
                 overwrite = TRUE)
-}, mc.cores = cores)
+}, mc.cores = N_cpus)
 # load in
 bioclimatics_BG <- lapply(list.files(here::here(output_dir,"BG"),full.names = TRUE), 
                           function(x) terra::rast(x))
@@ -259,9 +260,6 @@ PresAbsFull <- PresAbsFull[order(PresAbsFull$pa, decreasing = TRUE),]
 # https://biomodhub.github.io/biomod2/index.html
 
 # Fit SDMs
-
-# N cpus to use
-N_cpus = cores
 
 table(PresAbsFull$pa)
 
