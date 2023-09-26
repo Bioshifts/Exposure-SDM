@@ -21,6 +21,10 @@ print(command_args)
 polygontogo <- command_args
 # polygontogo <- "A112_P1" # Mar # South
 # polygontogo <- "A43_P1" # Mar # North
+# polygontogo <- "A1_P1" # Ter # North
+# polygontogo <- "A116_P1"
+# polygontogo <- "A10_P1"
+# polygontogo <- "A137_P1"
 
 print(polygontogo)
 
@@ -53,6 +57,8 @@ gradients <- c("LAT","ELE")
 ########################
 # load SA polygon
 SA_i <- terra::vect(here::here(SA_shps_dir,paste0(polygontogo,".shp")))
+# plot(SA_i);dev.off()
+
 
 # all_polis <- list.files(here::here(SA_shps_dir),pattern = ".shp")
 # all_polis <- gsub(".shp","",all_polis)
@@ -65,7 +71,6 @@ if(grepl("A",polygontogo)){
 if(grepl("B",polygontogo)){
     # Load Bioshifts version
     Bioshifts_DB <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v2))
-    Bioshifts_DB$Paper.ID
     # Create Polygon IDs
     Bioshifts_DB$ID <- paste0("B",Bioshifts_DB$Paper.ID,"_",Bioshifts_DB$Study.Period)
 }
@@ -84,7 +89,7 @@ my_test <- if(any(is.na(SA_i$EleExtentm))){ # it is terrestrial if it has elevat
         download.file("https://data.earthenv.org/topography/elevation_1KMmn_GMTEDmn.tif",
                       here::here(work_dir,"Data/elevation_1km.tif"))
     }
-    elevation <- terra::rast(here::here(work_dir,"Data/elevation_1km.tif"))
+    elevation_i <- terra::rast(here::here(work_dir,"Data/elevation_1km.tif"))
 }
 
 
@@ -118,13 +123,12 @@ climate_layers <- terra::rast(here::here(vars_dir,climate_layers))
 if(ECO=="Ter"){
     
     # crop elevation to the study area
-    elevation_i <- terra::mask(terra::crop(elevation, SA_i), SA_i)
-    plot(elevation_i)
-    rmote::stop_rmote()
+    terra::window(elevation_i) <- ext(SA_i)
+    elevation_i <- terra::mask(elevation_i, SA_i)
     # project to equal-area
     elevation_i <- terra::project(elevation_i,Eckt)
     
-    gVelSA <- data.frame()
+    gVelSA <- list()
     
     for(v in 1:length(velocity_variables)){ # for each climate variable
         
@@ -132,12 +136,13 @@ if(ECO=="Ter"){
         climate_layers_i <- climate_layers[[which(names(climate_layers)==velocity_variables[v])]]
         
         # crop layers to the study area
-        climate_layers_i <- terra::mask(terra::crop(climate_layers_i, SA_i), SA_i)
+        terra::window(climate_layers_i) <- ext(SA_i)
+        climate_layers_i <- terra::mask(climate_layers_i, SA_i)
         
         # project to equal-area
         climate_layers_i <- terra::project(climate_layers_i,Eckt)
         
-        # force raster to pair
+        # force rasters to pair
         elevation_i <- terra::project(elevation_i,climate_layers_i)
         
         # in CHELSA, temperature is *10
@@ -171,16 +176,12 @@ if(ECO=="Ter"){
         #######
         # calculate the spatial gradient (C/km)
         spgrad = spatial_grad(climate_layers_i)
-        # from meters to km
-        spgrad$WE <- spgrad$WE / 1000
-        spgrad$NS <- spgrad$NS / 1000
-        spgrad$Grad <- spgrad$Grad / 1000
         
         #######
-        # Get the spatial gradient up slope
+        # Get the spatial gradient up slope 
         spgrad_ele = spatial_grad(elevation_i)
         
-        # Convert angles to radians
+        # Convert angle to radians
         initial_angle_rad <- .rad(spgrad$angle) # angle of the spatial gradient 
         target_angle_rad <- .rad(spgrad_ele$angle) # angle of the elevation up slope
         
@@ -190,8 +191,6 @@ if(ECO=="Ter"){
         
         #######
         ## calculate gradient-based climate velocity:
-        # gVel <- gVelocity(grad = spgrad, slope = ttrend, truncate = TRUE)
-        
         gVelLat <- gVelocity(grad = spgrad, slope = ttrend, 
                              grad_col = "NS", truncate = TRUE)
         
@@ -213,22 +212,25 @@ if(ECO=="Ter"){
         trend.mean <- as.numeric(global(ttrend,mean,na.rm = TRUE)[,1])
         trend.sd <- as.numeric(global(ttrend,sd,na.rm = TRUE)[,1])
         
-        v.lat.mean <- global(gVelLat, mean, na.rm=TRUE)
-        v.lat.median <- global(gVelLat, median, na.rm=TRUE)
-        v.lat.sd <- global(gVelLat, sd, na.rm=TRUE)
+        v.lat.mean <- terra::global(gVelLat, mean, na.rm=TRUE)[,1]
+        v.lat.median <- terra::global(gVelLat, median, na.rm=TRUE)[,1]
+        v.lat.sd <- terra::global(gVelLat, sd, na.rm=TRUE)[,1]
         
-        v.ele.mean <- global(gVelLat, mean, na.rm=TRUE)
-        v.ele.median <- global(gVelLat, median, na.rm=TRUE)
-        v.ele.sd <- global(gVelLat, sd, na.rm=TRUE)
+        v.ele.mean <- global(gVelLat, mean, na.rm=TRUE)[,1]
+        v.ele.median <- global(gVelLat, median, na.rm=TRUE)[,1]
+        v.ele.sd <- global(gVelLat, sd, na.rm=TRUE)[,1]
         
         gVelSA_j <- data.frame(baseline, trend.mean, trend.sd, 
                                v.lat.mean, v.lat.median, v.lat.sd, 
                                v.ele.mean, v.ele.median, v.ele.sd)
         names(gVelSA_j) <- paste0(names(gVelSA_j),".",velocity_variables[v])
-        gVelSA_j$ID=polygontogo
+        
+        gVelSA[[v]] <- gVelSA_j
     } 
-    gVelSA <- rbind(gVelSA,gVelSA_j)
     
+    gVelSA <- do.call(cbind,gVelSA)
+    gVelSA$ID=polygontogo
+        
     
 } else {
     # If marine
@@ -261,16 +263,11 @@ if(ECO=="Ter"){
     #######
     # calculate the spatial gradient (C/km)
     spgrad = spatial_grad(climate_layers_i)
-    # from meters to km
-    spgrad$WE <- spgrad$WE / 1000
-    spgrad$NS <- spgrad$NS / 1000
-    spgrad$Grad <- spgrad$Grad / 1000
-    # na.omit(spgrad)
     
     #######
     ## calculate gradient-based climate velocity:
-    # gVel <- gVelocity(grad = spgrad, slope = ttrend, truncate = TRUE)
-    gVelLat <- gVelocity(grad = spgrad, slope = ttrend, grad_col = "NS", truncate = TRUE)
+    gVelLat <- gVelocity(grad = spgrad, slope = ttrend, 
+                         grad_col = "NS", truncate = TRUE)
     
     #######
     ## change sign of gVelLat if in the south hemisphere to reflect a velocity away of the tropics
@@ -299,18 +296,8 @@ if(ECO=="Ter"){
                          v.lat.sd = v.lat.sd)
     names(gVelSA) <- paste0(names(gVelSA),".sst")
     gVelSA$ID=polygontogo
-    gVelSA2=gVelSA
-    gVelSA1
-    gVelSA2
 }
 
 write.csv(gVelSA, here::here(velocity_SA_dir, paste0(polygontogo,".csv")), row.names = FALSE)
 
 
-gVelocity(spatial_grad(climate_layers_i),
-          temp_grad(climate_layers_i,
-                    th = 0.25*nlyr(climate_layers_i)))
-
-VoCC::gVoCC(VoCC::tempTrend(raster::stack(climate_layers_i),
-                            th = 0.25*nlyr(climate_layers_i)), 
-            VoCC::spatGrad(raster::stack(climate_layers_i)))

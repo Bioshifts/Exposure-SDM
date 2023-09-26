@@ -14,8 +14,6 @@ if(length(new.packages)) install.packages(new.packages)
 
 sapply(list.of.packages, require, character.only = TRUE)
 
-
-
 ########################
 # Args
 command_args <- commandArgs(trailingOnly = TRUE)
@@ -25,17 +23,18 @@ realm <- as.character(paste(command_args[2], collapse = " "))
 print(sptogo)
 print(realm)
 
-# sptogo="Deania_calcea"
 # sptogo="Abra_alba"
 # realm <- "Mar"
+# sptogo="Deania_calcea"
+# realm <- "Mar"
 # 
-# sptogo="Acacia_melanoxylon"
+# sptogo="Abies_alba"
 # realm <- "Ter"
 # sptogo="Abies_concolor"
 # realm <- "Ter"
+# sptogo="Acaena_magellanica"
+# realm <- "Ter"
 
-# N cpus to use
-N_cpus <- parallelly::availableCores()
 
 ########################
 # set computer
@@ -51,14 +50,16 @@ source("R/my_functions.R")
 source("R/get_ecoregions.R")
 source("R/correct_colinvar_pca.R")
 source("R/plot_SA_location.R")
+source("R/mask_bios_BG.R")
 
 ########################
 # settings
-# source settings
 source("R/settings.R")
 
-check_if_exists = FALSE
+# N cpus to use
+N_cpus <- parallelly::availableCores()
 
+########################
 # get directories
 bios_SA_dir <- bios_SA_dir(realm)
 bios_dir <- bios_dir(realm)
@@ -69,25 +70,6 @@ vars_dir <- vars_dir(realm)
 # create dirs
 if(!dir.exists(output_dir)){
     dir.create(output_dir,recursive = TRUE)
-}
-
-mask.ras <- if(realm=="Ter") { 
-    terra::rast(here::here(vars_dir,paste0("model_raster_ter_",my_res,".tif")))
-} else {
-    if(realm=="Mar") { 
-        terra::rast(here::here(vars_dir,"model_raster_mar.tif")) 
-    }
-}
-
-########################
-# Check if file exists
-
-if(check_if_exists){
-    
-    # check if dir with sdm output exists
-    if(dir.exists(here::here(output_dir,gsub("_",".",sptogo)))){
-        stop("No need to run this. SDMs were fitted for this species!")
-    } 
 }
 
 ########################
@@ -101,22 +83,6 @@ table(PresAbs$pa)
 sp_occ <- PresAbs %>% filter(pa == 1)
 # filter pseudo-absences
 back_occ <- PresAbs %>% filter(pa == 0)
-
-
-########################
-# Load ecoregions
-BA <- get_ecoregions(realm = realm, 
-                     PresAbs = sp_occ, 
-                     varsdir = vars_dir, 
-                     mask.ras = mask.ras,
-                     return.shp = TRUE)
-BA_shp <- BA[[2]]
-BA <- BA[[1]]
-# test
-# plot(BA)
-# plot(vect(data.frame(back_occ), geom = c("x","y")),add=T,col = "red")
-# plot(vect(data.frame(sp_occ), geom = c("x","y")),add=T)
-# dev.off()
 
 ########################
 # Study info
@@ -144,6 +110,39 @@ shift_info$Species <- sptogo
 #save
 write.csv(shift_info, here::here(output_dir,paste(sptogo,"shift_info.csv")),row.names = FALSE)
 
+# shift duration
+S_time <- lapply(1:nrow(shift_info), function(i) {
+    shift_info$START[i]:shift_info$END[i]
+})
+S_time <- unique(round(do.call(c,S_time),0))
+
+
+########################
+# Load ecoregions
+cat("Load ecoregions\n")
+
+# load mask raster
+mask.ras <- if(realm=="Ter") { 
+    terra::rast(here::here(vars_dir,paste0("model_raster_ter_",my_res,".tif")))
+} else {
+    if(realm=="Mar") { 
+        terra::rast(here::here(vars_dir,"model_raster_mar.tif")) 
+    }
+}
+
+BA <- get_ecoregions(realm = realm, 
+                     PresAbs = unique(sp_occ[,c('x','y')]), # to remove duplicated coordinates (in the same dates) 
+                     varsdir = vars_dir, 
+                     mask.ras = mask.ras,
+                     return.shp = TRUE,
+                     return.raster = FALSE,
+                     check_if_exists = TRUE)
+# # test
+# plot(BA$shape_file)
+# plot(vect(data.frame(back_occ), geom = c("x","y")),add=T,col = "red")
+# plot(vect(data.frame(sp_occ), geom = c("x","y")),add=T)
+# dev.off()
+
 
 ########################
 # Load study area
@@ -161,48 +160,50 @@ StudyArea$NAME = StudyID
 # Plot for study area location
 # create dir if doesn't exist
 plot_SA_location(sptogo, 
-                 BA_shp,
-                 realm, 
-                 PresAbs, 
-                 StudyArea, 
+                 BA_shp = BA$shape_file,
+                 realm = realm, 
+                 sp_occ = sp_occ %>% 
+                     dplyr::filter(!duplicated('x','y')), # remove duplicated coordinates (in the same dates) 
+                 StudyArea = StudyArea, 
                  maps.dir = output_dir, 
                  show.plot = FALSE)
+
 
 ########################
 # Get bioclimatics for the BG at each time period
 
-S_time <- lapply(1:nrow(shift_info), function(i) {
-    shift_info$START[i]:shift_info$END[i]
-})
-S_time <- unique(round(do.call(c,S_time),0))
-
+# select bioclimatics
 bioclimatics_BG <- list.files(bios_dir)
 bioclimatics_BG_pos <- grepl(paste(S_time,collapse = "|"),bioclimatics_BG)
 bioclimatics_BG <- bioclimatics_BG[bioclimatics_BG_pos]
-bioclimatics_BG <- lapply(bioclimatics_BG, function(x) terra::rast(here::here(bios_dir,x)))
-names(bioclimatics_BG) <- S_time
 
-# mask
-if(!dir.exists(here::here(output_dir,"BG"))){
-    dir.create(here::here(output_dir,"BG"))
+# load in bioclimatics
+bioclimatics_BG <- lapply(bioclimatics_BG, function(x) terra::rast(here::here(bios_dir,x)))
+names_bioclimatics_BG <- sapply(bioclimatics_BG, function(x){
+    tmp <- strsplit(terra::sources(x),"/")[[1]]
+    tmp <- tmp[length(tmp)]
+    tmp <- strsplit(tmp,"_")[[1]]
+    tmp <- tmp[length(tmp)]
+    gsub(".tif","",tmp)
+})
+names(bioclimatics_BG) <- names_bioclimatics_BG
+
+
+########################
+# Mask bioclimatics to the BG
+cat("Mask the BG\n")
+
+# do not parallelize this step with all cores - it will overload memory
+output_BG <- here::here(output_dir,"BG")
+if(!dir.exists(output_BG)){
+    dir.create(output_BG)
 }
 
-bioclimatics_BG <- parallel::mclapply(1:length(bioclimatics_BG), function(x) {
-    bios_year_i = bioclimatics_BG[[x]]
-    year_i = names(bioclimatics_BG)[x]
-    terra::window(bios_year_i) <- terra::ext(BA_shp)
-    terra::mask(bios_year_i, BA_shp,
-                filename = here::here(output_dir,"BG",paste0(year_i,".tif")),
-                overwrite = TRUE)
-}, mc.cores = N_cpus)
-# load in
-bioclimatics_BG <- lapply(list.files(here::here(output_dir,"BG"),full.names = TRUE), 
-                          function(x) terra::rast(x))
-names(bioclimatics_BG) <- S_time
+bioclimatics_BG <- mask_bios_BG(bioclimatics_BG, output_BG)
+
 
 ########################
 # Load in bioclimatics at the SA 
-
 bioclimatics_SA <- lapply(StudyID, function(x) {
     tmp_names <- list.files(here::here(bios_SA_dir,x))
     tmp_names <- gsub(paste0(c(x,"bios",".tif"," "),collapse = "|"),"",tmp_names)
@@ -213,45 +214,33 @@ bioclimatics_SA <- lapply(StudyID, function(x) {
 })
 names(bioclimatics_SA) <- StudyID
 
-# ########################
+
+#########################
 # Reduce collinearity among the predictors
 # Run SDMs of PCA axes
+cat("Treating collinearity\n")
 
-# create an assemble of environmental data coming from species occurrences + background data at each time period
+new_data <- PCA_env(sptogo = sptogo,
+                    bioclimatics_BG = bioclimatics_BG,
+                    bioclimatics_SA = bioclimatics_SA,
+                    output_dir = output_dir,
+                    shift_info = shift_info,
+                    PresAbs = PresAbs)
 
-# 1) add background data 
-data_env <- as.data.frame(bioclimatics_BG[[1]], na.rm=TRUE)
-if(nrow(data_env) > 20000){
-    data_env <- data_env[sample(1:nrow(data_env),20000),]
-}
+# Update data
+# BG
+bioclimatics_BG <- new_data$bios_BG
 
-# 2) add pres/abs data
-data_env <- rbind(data_env, 
-                  data.frame(PresAbs)[,names(data_env)])
+# SA
+bioclimatics_SA <- new_data$bios_SA
 
-dim(data_env)
+# PresAbs
+PresAbsFull <- new_data$bios_PresAbs
 
-# set a cap for the size of dataset
-mycap <- 100000
-if(nrow(data_env) > mycap){
-    data_env <- data_env[sample(1:nrow(data_env),mycap), ]
-}
-
-# 3) get uncorrelated PCs
-new_data <- correct_colinvar_pca(env_layer = data_env, 
-                                 proj = bioclimatics_BG, 
-                                 proj2 = bioclimatics_SA, 
-                                 PresAbs = PresAbs)
-
-# 4) update data
-bioclimatics_BG <- new_data$proj
-bioclimatics_SA <- new_data$proj2
-PresAbsFull <- data.table(data.frame(PresAbs[,c("x","y","pa")], new_data$PresAbs))
-PresAbsFull <- PresAbsFull[order(PresAbsFull$pa, decreasing = TRUE),]
-
+rm(new_data)
 
 ########################
-
+cat("Fitting SDMs\n")
 # P.S.: The code bellow works using the version 4.2-3 of biomod2
 # installation :
 # devtools::install_github("biomodhub/biomod2", dependencies = TRUE)
@@ -276,23 +265,49 @@ data_sp <- BIOMOD_FormatingData(
     PA.nb.rep = 1,
     PA.nb.absences = length(which(is.na(resp))))
 
-model_sp <- BIOMOD_Modeling(
-    data_sp, 
-    models = c("GLM","GBM","GAM","MAXENT.Phillips.2"),
-    CV.perc = 70,
-    CV.strategy = "kfold",
-    CV.k = 3,
-    CV.do.full.models = FALSE,
-    prevalence = 0.5,
-    metric.eval = c("TSS", "ROC"),
-    scale.models = TRUE,
-    nb.cpu = N_cpus)
+# check if model exists
+models_sp <- list.files(here::here(output_dir, gsub("_",".",sptogo)),
+                        pattern = "models.out")
 
+if(length(models_sp) == 0){
+    
+    # Fit sdms
+    
+    model_sp <- BIOMOD_Modeling(
+        data_sp, 
+        models = c("GLM","GBM","GAM","MAXENT.Phillips.2"),
+        CV.perc = 70,
+        CV.strategy = "kfold",
+        CV.k = 3,
+        CV.do.full.models = FALSE,
+        prevalence = 0.5,
+        metric.eval = c("TSS", "ROC"),
+        scale.models = TRUE,
+        nb.cpu = N_cpus)
+    
+    ens_model_sp <- BIOMOD_EnsembleModeling(
+        model_sp, 
+        metric.select = "TSS",
+        metric.eval = "TSS")
+    
+} else {
+    
+    # Load sdms
+    files_sdms <- list.files(
+        here::here(output_dir,gsub("_",".",sptogo)), 
+        full.names = TRUE,
+        pattern = "models.out")  
+    
+    pos <- grep("ensemble",files_sdms)
+    files_sdms_ensemble <- files_sdms[pos]
+    files_sdms <- files_sdms[-pos]
+    
+    model_sp <- get(load(files_sdms))
+    
+    ens_model_sp <- get(load(files_sdms_ensemble))
+    
+}
 
-ens_model_sp <- BIOMOD_EnsembleModeling(
-    model_sp, 
-    metric.select = "TSS",
-    metric.eval = "TSS")
 
 ########################
 # Evaluate
@@ -324,31 +339,47 @@ write.csv(basicD,
           row.names = FALSE)
 
 ########################
-# Project models to the Study area and time periods
+### Project to the BG at each time period
 
-### project at the BG at each time period
+# for(i in 1:length(bioclimatics_BG)){
+#     
+#     projname <- paste(sptogo, 
+#                       names(bioclimatics_BG)[[i]],
+#                       "BG")
+#     
+#     file_proj <- here::here(output_dir,gsub("_",".",sptogo),
+#                             paste0("proj_",projname),
+#                             paste0(gsub("_",".",sptogo),".",projname,".projection.out"))
+# 
+#     projname_ens <- paste(projname,"ens")
+#     
+#     file_ens <- gsub("BG","BG ens",file_proj)
+#     file_ens <- gsub(".projection.out",".ensemble.projection.out",file_ens)
+#     
+#     
+#     if(!file.exists(file_proj)){
+#         m <- BIOMOD_Projection(
+#             bm.mod = model_sp, 
+#             proj.name = projname, 
+#             new.env = bioclimatics_BG[[i]],
+#             nb.cpu = N_cpus,
+#             keep.in.memory = FALSE)
+#     }
+#     
+#     if(!file.exists(file_ens)){
+#         ens_m <- BIOMOD_EnsembleForecasting(
+#             bm.em = ens_model_sp, 
+#             bm.proj = m,
+#             proj.name = projname_ens,
+#             nb.cpu = N_cpus,
+#             keep.in.memory = FALSE)
+#     }
+#     
+#     gc()
+#     
+# }
 
-for(i in 1:length(bioclimatics_BG)){
-    
-    projname <- paste(sptogo, 
-                      names(bioclimatics_BG)[[i]],
-                      "BG")
-    
-    m <- BIOMOD_Projection(
-        bm.mod = model_sp, 
-        proj.name = projname, 
-        new.env = bioclimatics_BG[[i]],
-        nb.cpu = N_cpus)
-    
-    ens_m <- BIOMOD_EnsembleForecasting(
-        bm.em = ens_model_sp, 
-        bm.proj = m,
-        proj.name = paste(projname,"ens"),
-        nb.cpu = N_cpus)
-    
-}
-
-### project for each SA and time period
+### Project to each SA and each time period
 
 for(j in 1:length(bioclimatics_SA)){
     
@@ -357,27 +388,53 @@ for(j in 1:length(bioclimatics_SA)){
     for(i in 1:length(bioclimatics_SA_j)){
         
         projname <- paste(sptogo, 
-                          shift_info$ID[j], 
                           names(bioclimatics_SA)[[j]],
                           names(bioclimatics_SA_j)[[i]],
                           "SA")
         
-        m <- BIOMOD_Projection(
-            bm.mod = model_sp, 
-            proj.name = projname, 
-            new.env = bioclimatics_SA_j[[i]],
-            nb.cpu = N_cpus)
+        file_proj <- here::here(output_dir,gsub("_",".",sptogo),
+                                paste0("proj_",projname),
+                                paste0(gsub("_",".",sptogo),".",projname,".projection.out"))
         
-        ens_m <- BIOMOD_EnsembleForecasting(
-            bm.em = ens_model_sp, 
-            bm.proj = m,
-            proj.name = paste(projname,"ens"),
-            nb.cpu = N_cpus)
+        projname_ens <- paste(projname,"ens")
+        
+        file_ens <- gsub("SA","SA ens",file_proj)
+        file_ens <- gsub(".projection.out",".ensemble.projection.out",file_ens)
+        
+        
+        if(!file.exists(file_proj)){
+            m <- BIOMOD_Projection(
+                bm.mod = model_sp, 
+                proj.name = projname, 
+                new.env = bioclimatics_SA_j[[i]],
+                nb.cpu = N_cpus,
+                keep.in.memory = FALSE)
+        }
+        
+        if(!file.exists(file_ens)){
+            ens_m <- BIOMOD_EnsembleForecasting(
+                bm.em = ens_model_sp, 
+                bm.proj = m,
+                proj.name = projname_ens,
+                nb.cpu = N_cpus,
+                keep.in.memory = FALSE)
+        }
+        
+        gc()
         
     }
     
 }
 
+# delete temporary data
+possible_sdms_SA <- here::here(output_dir,gsub("_",".",sptogo),paste(paste0("proj_",sptogo),shift_info$ID,S_time,"SA"))
+possible_sdms_BG <- here::here(output_dir,gsub("_",".",sptogo),paste(paste0("proj_",sptogo),S_time,"BG"))
 
-# delete saved bioclimatics at the background area
-unlink(here::here(output_dir,"BG"), recursive = TRUE)
+if(all(dir.exists(possible_sdms_BG))){
+    unlink(here::here(output_dir,"BG"), recursive = TRUE)
+    unlink(here::here(output_dir,"BG_PC"), recursive = TRUE)
+} 
+
+if(all(dir.exists(possible_sdms_SA))){
+    unlink(here::here(output_dir,"SA_PC"), recursive = TRUE)
+} 

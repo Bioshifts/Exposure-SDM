@@ -1,0 +1,234 @@
+---
+title: "Compare velocity values from Bioshifts v1 and v3"
+author: "Brunno Oliveira"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:   
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: show
+---
+
+# Setup
+```{r}
+
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+
+# set computer
+# computer = "muse"
+# 
+# if(computer == "muse"){
+#     setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
+# 
+#     work_dir <- getwd()
+#     here::i_am("R/7_velocity/2_compare_velocity_v3_v1.R")
+# } else {
+#   work_dir <- here::here(work_dir)
+# }
+
+# source settings
+source(here::here("R/settings.R"))
+
+# Load in v3 velocities
+SAs <- list.files(here::here("Data/Velocity_SA"))
+SAs <- gsub(".csv","",SAs)
+SA_got <- list.files(here::here("Data/Velocity_SA"), full.names = TRUE)
+SA_got <- lapply(1:length(SA_got), function(i) {
+  tmp <- read.csv(SA_got[i])
+  tmp$ID = SAs[i]
+  tmp
+})
+SA_got <- rbindlist(SA_got, fill = TRUE)
+
+SA_got <- SA_got %>% 
+  dplyr::select(c(v.lat.median.mat,baseline.mat,trend.mean.mat,v.ele.median.mat,baseline.sst,trend.mean.sst,v.lat.median.sst,ID))
+
+SA_got$ECO <- ifelse(is.na(SA_got$v.lat.median.sst), "T", "M")
+
+SA_got <- SA_got %>%
+  mutate(vel_v3 = ifelse(ECO == "T", v.lat.median.mat, v.lat.median.sst),
+         baseline.temp_v3 = ifelse(ECO == "T", baseline.mat, baseline.sst),
+         Trend = ifelse(ECO == "T", trend.mean.mat, trend.mean.sst)) %>%
+  dplyr::select(ECO, vel_v3, Trend, ID, baseline.temp_v3)
+
+```
+
+# Load in Bioshifts v1
+```{r}
+Bioshifts_DB <- read.csv(here::here("Data/Bioshifts/biov1_fixednames.csv"))
+
+# Filter Polygons in Study areas v3
+Bioshifts_DB <- Bioshifts_DB[Bioshifts_DB$ID %in% unique(SA_got$ID),]
+
+# convert everything to km/year
+Bioshifts_DB <- Bioshifts_DB %>%
+  mutate(
+    Type = case_when(
+      Type=="HOR" ~ "LAT",
+      TRUE ~ as.character(Type)),
+    # Standardize shift measures to km/year
+    SHIFT = case_when(
+      UNIT == "m/year" ~ SHIFT/1000, 
+      UNIT == "km/year" ~ SHIFT, 
+      TRUE ~ NA_real_))
+
+```
+
+# Merge v1 to v3
+```{r}
+Bioshifts_vel <- merge(Bioshifts_DB %>%
+                         filter(Type %in% c("LAT","ELE")) %>%
+                         mutate(vel_v1 = ifelse(Type == "LAT", v.lat.mean, v.ele.mean),
+                                baseline.temp_v1 = baseline.temp) %>% 
+                         dplyr::select(ID, vel_v1, Type, ECO, SHIFT, baseline.temp_v1), 
+                       SA_got  %>%
+                         dplyr::select(ID, vel_v3, ECO, baseline.temp_v3), 
+                       by = c("ID","ECO"))
+head(Bioshifts_vel)
+
+
+```
+
+# Compare velocity
+## Histograms
+```{r}
+v1 <- Bioshifts_vel[,c("ID","Type","ECO","vel_v1","baseline.temp_v1","SHIFT")]
+v3 <- Bioshifts_vel[,c("ID","Type","ECO","vel_v3","baseline.temp_v3","SHIFT")]
+
+v1$baseline.temp <- v1$baseline.temp_v1
+v1$vel <- v1$vel_v1
+v1$version = "v1"
+
+v3$baseline.temp <- v3$baseline.temp_v3
+v3$vel <- v3$vel_v3
+v3$version = "v3"
+
+tmp <- rbind(v1[,c("ID","Type","ECO","vel","baseline.temp","SHIFT","version")],
+             v3[,c("ID","Type","ECO","vel","baseline.temp","SHIFT","version")])
+
+
+
+# All values
+ggplot(tmp, aes(x = vel))+
+  geom_histogram()+
+  theme_classic()+
+  facet_wrap(.~version, scales = "free") +
+  labs(x = "Velocity")
+
+## Terrestrials
+### Latitude
+ggplot(tmp %>% filter(ECO=="T",
+                      Type == "LAT"), 
+       aes(x = vel))+
+  geom_histogram()+
+  theme_classic()+
+  facet_wrap(.~version, scales = "free") +
+  labs(x = "Velocity")
+
+### Elevation
+ggplot(tmp %>% filter(ECO=="T",
+                      Type == "ELE"), 
+       aes(x = vel))+
+  geom_histogram()+
+  theme_classic()+
+  facet_wrap(.~version, scales = "free") +
+  labs(x = "Velocity")
+
+## Marine
+ggplot(tmp %>% filter(ECO=="M"), 
+       aes(x = vel))+
+  geom_histogram()+
+  theme_classic()+
+  facet_wrap(.~version, scales = "free") +
+  labs(x = "Velocity")
+
+```
+
+## Velocity scatter plots
+```{r}
+# All data
+ggplot(Bioshifts_vel, aes(x = vel_v3, y = vel_v1)) +
+  geom_point()+
+  theme_classic()+
+  facet_wrap(.~Type, scales = "free") +
+  labs(x = "Velocity v3", y = "Velocity v1")
+
+# Terrestrial
+ggplot(Bioshifts_vel %>% filter(ECO == "T"), 
+       aes(x = vel_v3, y = vel_v1)) +
+  ggtitle("Terrestrials") + 
+  geom_point()+
+  theme_classic()+
+  facet_wrap(.~Type, scales = "free") +
+  labs(x = "Velocity v3", y = "Velocity v1")
+
+# Marine
+ggplot(Bioshifts_vel %>% filter(ECO == "M"), 
+       aes(x = vel_v3, y = vel_v1)) +
+  ggtitle("Marine") + 
+  geom_point()+
+  theme_classic()+
+  facet_wrap(.~Type, scales = "free") +
+  labs(x = "Velocity v3", y = "Velocity v1")
+```
+
+
+## Trends
+```{r}
+# all data
+ggplot(Bioshifts_vel, aes(x = baseline.temp_v3, y = baseline.temp_v1)) +
+  geom_point()+
+  theme_classic()+
+  facet_wrap(.~Type, scales = "free") +
+  labs(x = "Trend v3", y = "Trend v1")
+
+# Terrestrial
+ggplot(Bioshifts_vel %>% filter(ECO == "T"), 
+       aes(x = baseline.temp_v3, y = baseline.temp_v1)) +
+  ggtitle("Terrestrials") + 
+  geom_point()+
+  theme_classic()+
+  facet_wrap(.~Type, scales = "free") +
+  labs(x = "Trend v3", y = "Trend v1")
+
+# Marine
+ggplot(Bioshifts_vel %>% filter(ECO == "M"), 
+       aes(x = baseline.temp_v3, y = baseline.temp_v1)) +
+  ggtitle("Marine") + 
+  geom_point()+
+  theme_classic()+
+  facet_wrap(.~Type, scales = "free") +
+  labs(x = "Trend v3", y = "Trend v1")
+```
+
+
+## Velocity vs shift
+```{r}
+
+# Velocity v1 vs Shift
+ggplot(Bioshifts_vel, 
+       aes(x = vel_v1, y = SHIFT)) +
+  ggtitle("Terrestrial") + 
+  geom_point()+
+  theme_classic()+
+  facet_wrap(ECO~Type, scales = "free") +
+  labs(x = "Velocity v1", y = "SHIFT v1")
+
+# Velocity v3 vs Shift
+ggplot(Bioshifts_vel, 
+       aes(x = vel_v3, y = SHIFT)) +
+  ggtitle("Terrestrial") + 
+  geom_point()+
+  theme_classic()+
+  facet_wrap(ECO~Type, scales = "free") +
+  labs(x = "Velocity v3", y = "SHIFT v1")
+
+
+
+```
+
+

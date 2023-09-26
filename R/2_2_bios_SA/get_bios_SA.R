@@ -80,7 +80,8 @@ bioclima <- lapply(bioclima, function(x){
 
 # mask to the SA
 bioclima <- lapply(bioclima, function(x){
-    terra::mask(terra::crop(x, SA_poly_i), SA_poly_i)
+    terra::window(x) <- terra::ext(SA_poly_i)
+    terra::mask(bios_year_i, SA_poly_i)
 })
 
 # save

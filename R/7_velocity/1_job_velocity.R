@@ -44,17 +44,17 @@ v3_polygons <- gsub(".shp","",list.files(SA_shps_dir,pattern = ".shp"))
 ########################
 # submit jobs
 
-N_jobs_at_a_time = 100
+N_jobs_at_a_time = 50
 
 N_Nodes = 1
 tasks_per_core = 1
-cores = 28
-time = "20:00:00"
-memory = "64G"
+cores = 5 # this is not a parallel job
+# time = "5:00:00"
+# memory = "64G"
 
 # for the big jobs
-# time = "2-20:00:00"
-# memory = "120G"
+time = "2-20:00:00"
+memory = "120G"
 
 
 # Check if file exists
@@ -70,11 +70,11 @@ for(i in 1:length(v3_polygons)){
     # Check if file exists
     
     file.test <- here::here(velocity_SA_dir, paste0(SAtogo,".csv"))
-    
+
     if(check_if_file_exists){
         RUN <- !file.exists(file.test)
     } else {
-        RUN <- TRUE
+        RUN <- FALSE
     }
     if(RUN){
         # Start writing to this file
@@ -86,12 +86,12 @@ for(i in 1:length(v3_polygons)){
         cat("#SBATCH -N",N_Nodes,"\n")
         cat("#SBATCH -n",tasks_per_core,"\n")
         cat("#SBATCH -c",cores,"\n")
+        cat("#SBATCH --mem=",memory,"\n", sep="")
         
         cat("#SBATCH --job-name=",SAtogo,"\n", sep="")
         cat("#SBATCH --output=",here::here(logdir,paste0(SAtogo,".out")),"\n", sep="")
         cat("#SBATCH --error=",here::here(logdir,paste0(SAtogo,".err")),"\n", sep="")
         cat("#SBATCH --time=",time,"\n", sep="")
-        cat("#SBATCH --mem=",memory,"\n", sep="")
         cat("#SBATCH --mail-type=ALL\n")
         cat("#SBATCH --mail-user=brunno.oliveira@fondationbiodiversite.fr\n")
         
@@ -139,6 +139,6 @@ for(i in 1:length(v3_polygons)){
 #     tmp <- read.csv(here::here(script.dir,"slurm-log",paste0(x,".err")))
 #     tmp[nrow(tmp),]
 # })
-# error_f[25]
+# error_f
 
 

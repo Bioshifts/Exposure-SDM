@@ -99,7 +99,10 @@ nrow(sp_occ)
 BA <- get_ecoregions(realm = realm, 
                      PresAbs = sp_occ, 
                      varsdir = vars_dir, 
-                     mask.ras = mask.ras)
+                     mask.ras = mask.ras,
+                     return.shp = FALSE,
+                     return.raster = TRUE)
+BA <- BA$raster_file
 # plot(BA);dev.off()
 
 ########################
