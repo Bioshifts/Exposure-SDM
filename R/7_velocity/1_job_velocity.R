@@ -41,6 +41,28 @@ Rscript_file = here::here(script.dir,"1_get_velocity.R")
 # Load study areas v3
 v3_polygons <- gsub(".shp","",list.files(SA_shps_dir,pattern = ".shp"))
 
+
+##############################
+# Rerun just for marines
+
+Bioshifts_DB_v1 <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v1))
+Bioshifts_DB_v2 <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v2))
+Bioshifts_DB_v2$ID <- paste0("B",Bioshifts_DB_v2$Paper.ID,"_",Bioshifts_DB_v2$Study.Period)
+Bioshifts_DB_v2$ECO <- ifelse(Bioshifts_DB_v2$Ecosystem.Type=="marine","M","T")
+
+Bioshifts_DB_v1 <- Bioshifts_DB_v1[,c("ID","ECO")]
+Bioshifts_DB_v2 <- Bioshifts_DB_v2[,c("ID","ECO")]
+
+Bioshifts_DB <- rbind(Bioshifts_DB_v1,
+                      Bioshifts_DB_v2)
+Bioshifts_DB <- Bioshifts_DB[-which(duplicated(Bioshifts_DB$ID)),]
+
+Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$ECO=="M"),]
+
+# Filter Polygons in Study areas v3
+v3_polygons <- v3_polygons[v3_polygons %in% Bioshifts_DB$ID]
+
+
 ########################
 # submit jobs
 
@@ -49,16 +71,16 @@ N_jobs_at_a_time = 50
 N_Nodes = 1
 tasks_per_core = 1
 cores = 5 # this is not a parallel job
-# time = "5:00:00"
-# memory = "64G"
+time = "10:00:00"
+memory = "64G"
 
 # for the big jobs
-time = "2-20:00:00"
-memory = "120G"
+# time = "2-20:00:00"
+# memory = "120G"
 
 
 # Check if file exists
-check_if_file_exists <- TRUE
+check_if_file_exists <- FALSE
 
 for(i in 1:length(v3_polygons)){
     
@@ -70,11 +92,11 @@ for(i in 1:length(v3_polygons)){
     # Check if file exists
     
     file.test <- here::here(velocity_SA_dir, paste0(SAtogo,".csv"))
-
+    
     if(check_if_file_exists){
         RUN <- !file.exists(file.test)
     } else {
-        RUN <- FALSE
+        RUN <- TRUE
     }
     if(RUN){
         # Start writing to this file

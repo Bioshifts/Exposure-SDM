@@ -50,6 +50,26 @@ Rscript_file = here::here(script.dir,"get_bios_SA.R")
 # Load study areas v3
 v3_polygons <- gsub(".shp","",list.files(SA_shps_dir,pattern = ".shp"))
 
+##############################
+# Rerun just for marines
+
+Bioshifts_DB_v1 <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v1))
+Bioshifts_DB_v2 <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v2))
+Bioshifts_DB_v2$ID <- paste0("B",Bioshifts_DB_v2$Paper.ID,"_",Bioshifts_DB_v2$Study.Period)
+Bioshifts_DB_v2$ECO <- ifelse(Bioshifts_DB_v2$Ecosystem.Type=="marine","M","T")
+
+Bioshifts_DB_v1 <- Bioshifts_DB_v1[,c("ID","ECO")]
+Bioshifts_DB_v2 <- Bioshifts_DB_v2[,c("ID","ECO")]
+
+Bioshifts_DB <- rbind(Bioshifts_DB_v1,
+                      Bioshifts_DB_v2)
+Bioshifts_DB <- Bioshifts_DB[-which(duplicated(Bioshifts_DB$ID)),]
+
+Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$ECO=="M"),]
+
+# Filter Polygons in Study areas v3
+v3_polygons <- v3_polygons[v3_polygons %in% Bioshifts_DB$ID]
+
 ########################
 # submit jobs
 

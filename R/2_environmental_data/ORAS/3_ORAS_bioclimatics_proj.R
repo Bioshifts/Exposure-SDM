@@ -11,13 +11,6 @@ library(qs)
 # set computer
 computer = "muse"
 
-# set n years to calculate bioclimatics
-n_yr_bioclimatic
-
-# set realm
-realm = "Mar"
-
-
 if(computer == "muse"){
     wd <- "/storage/simple/projects/t_cesab/brunno/Exposure-SDM"
     setwd(wd)
@@ -28,13 +21,17 @@ source("R/getChelsa.R")
 source("R/my_functions.R")
 source("R/settings.R")
 
+# set n years to calculate bioclimatics
+n_yr_bioclimatic
+
+# set realm
+realm = "Mar"
 
 # raw files are saved here
-scratch_dir <- here::here(vars_dir("Mar"),"SST")
+scratch_dir <- here::here(vars_dir(realm),"SST")
 
 # get directory to save bioclimatics
-vars_dir <- get_varsdir(computer = computer,
-                        realm = realm)
+vars_dir <- vars_dir(realm)
 
 # get vars
 my_vars <- myvars(realm)
@@ -77,7 +74,7 @@ for(i in 1:length(my_yrs)) {
         # load vars for year_i - n_yr_bioclimatic
         periods_i <- as.Date(paste0("01_01_",year_i),"%d_%m_%Y")
         periods_i <- format(
-            seq.Date(from = periods_i-365, 
+            seq.Date(from = periods_i-364, 
                      to = periods_i, 
                      by = "month"), 
             "%m_%Y")

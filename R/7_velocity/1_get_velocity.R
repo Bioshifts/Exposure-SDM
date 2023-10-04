@@ -24,7 +24,7 @@ polygontogo <- command_args
 # polygontogo <- "A1_P1" # Ter # North
 # polygontogo <- "A116_P1"
 # polygontogo <- "A10_P1"
-# polygontogo <- "A137_P1"
+# polygontogo <- "A112_P1"
 
 print(polygontogo)
 
@@ -92,7 +92,6 @@ my_test <- if(any(is.na(SA_i$EleExtentm))){ # it is terrestrial if it has elevat
     elevation_i <- terra::rast(here::here(work_dir,"Data/elevation_1km.tif"))
 }
 
-
 # shifts start and end
 if(grepl("A",polygontogo)){
     S_start <- round(unique(Bioshifts_DB$START),0)
@@ -107,8 +106,9 @@ S_time <- S_start:S_end
 # get layers within time period of shift
 if(ECO=="Ter"){
     vars_dir <- here::here(vars_dir(ECO),paste0("bio_proj_",my_res))
-} else {
-    vars_dir <- here::here(vars_dir(ECO),"SST")
+}
+if(ECO=="Mar"){
+    vars_dir <- here::here(vars_dir(ECO),"bio_proj")
 }
 climate_layers <- list.files(vars_dir)
 climate_layers_pos <- grepl(paste(S_time,collapse = "|"),climate_layers)
@@ -230,7 +230,7 @@ if(ECO=="Ter"){
     
     gVelSA <- do.call(cbind,gVelSA)
     gVelSA$ID=polygontogo
-        
+    
     
 } else {
     # If marine
@@ -238,8 +238,11 @@ if(ECO=="Ter"){
     
     gVelSA <- data.frame()
     
+    # select the climate variable
+    climate_layers_i <- climate_layers[[which(names(climate_layers)=="mean")]]
+    
     # crop layers to the study area
-    climate_layers_i <- terra::mask(terra::crop(climate_layers, SA_i), SA_i)
+    climate_layers_i <- terra::mask(terra::crop(climate_layers_i, SA_i), SA_i)
     
     # project to equal-area
     climate_layers_i <- terra::project(climate_layers_i,Eckt)

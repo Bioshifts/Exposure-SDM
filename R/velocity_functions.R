@@ -13,8 +13,12 @@ temp_gradFun <- function(x, th) {
     } else NA
 }
 #--------------
-temp_grad <- function(x, th) {
-    tmp <- app(x,temp_gradFun,th=th)
+temp_grad <- function(x, th, ncores=NULL, tempfile="",overwrite=TRUE) {
+  if(is.null(ncores)){
+    tmp <- terra::app(x,temp_gradFun,th=th,filename=tempfile,overwrite=overwrite)
+  } else {
+    tmp <- terra::app(x,temp_gradFun,th=th,cores=ncores,filename=tempfile,overwrite=overwrite)
+  }
     names(tmp) <- "Trend"
     return(tmp)
 }
@@ -26,7 +30,7 @@ spatial_grad <- function(rx, y_diff = 1) {
     if(nlyr(rx) > 1){ rx <- mean(rx,na.rm = TRUE) }
     
     if (.getProj(rx) == 'longlat') {
-        y_dist <- res(rx) * c(111.325, 111.325)
+        y_dist <- res(rx) * c(111.325, 111.325) # from degrees to km
     } else {
         y_dist <- res(rx) / 1000 # from meters to km
         y_diff <- NA

@@ -32,7 +32,7 @@ print(realm)
 # realm <- "Ter"
 # sptogo="Abies_concolor"
 # realm <- "Ter"
-# sptogo="Acaena_magellanica"
+# sptogo="Acalles_camelus"
 # realm <- "Ter"
 
 
@@ -400,7 +400,6 @@ for(j in 1:length(bioclimatics_SA)){
         
         file_ens <- gsub("SA","SA ens",file_proj)
         file_ens <- gsub(".projection.out",".ensemble.projection.out",file_ens)
-        
         
         if(!file.exists(file_proj)){
             m <- BIOMOD_Projection(
