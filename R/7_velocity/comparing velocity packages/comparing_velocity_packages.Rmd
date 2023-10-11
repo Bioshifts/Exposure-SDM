@@ -2,11 +2,13 @@
 title: "Comparing velocity packages"
 author: "Brunno Oliveira"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
-output:   
+output:
+  pdf_document:
+    toc: yes
   html_document:
-    toc: true
-    toc_float: true
-    number_sections: true
+    toc: yes
+    toc_float: yes
+    number_sections: yes
     code_folding: show
 ---
 
@@ -16,7 +18,7 @@ output:
 # devtools::install_github("cbrown5/vocc")
 # devtools::install_github("oliveirab/VoCC", build_vignettes = FALSE)
 
-list.of.packages <- c("climetrics","vocc","VoCC1","terra","ggplot2","GGally","data.table")
+list.of.packages <- c("climetrics","vocc","VoCC1","terra","ggplot2","GGally","data.table","geodata","tidyterra")
 # new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
 # if(length(new.packages)) install.packages(new.packages)
 sapply(list.of.packages, require, character.only = TRUE)
@@ -33,6 +35,7 @@ source(here::here("R/settings.R"))
 
 In order to generate comparable results across multiple R packages, we sourced climate data from the package `climetrics.` These represent monthly mean annual temperature from Jan 1991 to Dec 2020. The geographical area covers North of France, Great Britain and West of Norway.
 ```{r}
+
 # path to the dataset folder
 filePath <- system.file("external/", package="climetrics") 
 tmean <- rast(paste0(filePath,'/tmean.tif'))
@@ -47,6 +50,10 @@ tmean <- tapp(tmean, "years", mean)
 
 # project to equal area
 tmean <- terra::project(tmean,Eckt)
+
+# Global continental lines
+globe_lines <- vect(rnaturalearth::ne_countries(scale = "small"))
+globe_lines <- terra::aggregate(globe_lines)
 
 ```
 # Calculate velocities
@@ -176,7 +183,7 @@ trend_bio <- temp_grad(tmean, th = 0.25*nlyr(tmean))
 spgrad_bio <- spatial_grad(tmean)
 
 # Velocity
-v_bio <- gVelocity(spgrad_bio,trend_bio)
+v_bio <- gVelocity(spgrad_bio,trend_bio,truncate = TRUE)
 
 # Angle
 angle_bio = spgrad_bio$angle
@@ -199,8 +206,8 @@ v_gael = resample(v_gael, stack(tmean))
 
 ```
 
-# Extra
-This tests whether we can calculate the velocity in the North direction using the gradient North provided in the output, or if it isn necessary to convert the angle of the velocity to the North direction.
+# Extra I - Tests whether we can use velocity North provided directly from the function output
+Tests whether we can use velocity North provided directly from the function output, or if it's necessary to calculate the resultant velocity at the angle of the gradient.
 According to the calculations below, we can use the gradient North directly. It is not necessary to convert velocity rates to the North direction using angles.
 ```{r}
 
@@ -212,24 +219,119 @@ v_data <- na.omit(v_data)
 temperature_change_rate <- v_data$Grad  # °C/km
 vel_angle <- v_data$angle
 
-angle_degrees_NS <- vel_angle+90        # degrees (+90 transforms 0 to North angle and 90 the East angle)
-angle_degrees_WE <- vel_angle-90        # degrees (-90 transforms 90 to West angle and 0 to the South angle)
-
-# Convert angle to radians
-angle_radians_NS <- angle_degrees_NS * pi / 180
-angle_radians_WE <- angle_degrees_WE * pi / 180
-
 # Calculate temperature change in North and West directions
-temperature_change_north <- temperature_change_rate * sin(angle_radians_NS)
-temperature_change_west <- temperature_change_rate * cos(angle_radians_WE)
+temperature_change_north <- temperature_change_rate * cos(.rad(vel_angle))
+temperature_change_west <- temperature_change_rate * sin(.rad(vel_angle))
 
 plot(v_data$NS,temperature_change_north,
-     xlab="Change given",ylab = "Change calculated")
+     xlab="Change given",ylab = "Change calculated from angle")
 plot(v_data$WE,temperature_change_west,
-     xlab="Change given",ylab = "Change calculated")
+     xlab="Change given",ylab = "Change calculated from angle")
+
+all.equal(v_data$NS,temperature_change_north)
+all.equal(v_data$WE,temperature_change_west)
 
 ```
 See! Use NS/WE directly.
+
+# Extra II - We expect velocity North to be greater when angle is North
+We expect velocity North to be greater when angle is North, and same direct comparison for South direction.
+```{r}
+
+plot(v_data$angle,v_data$NS,
+     xlab="Gradient direction",ylab = "Temperature change North -> South")
+
+plot(v_data$angle,v_data$WE,
+     xlab="Gradient direction",ylab = "Temperature change West -> East")
+
+plot(angle_degrees_NS,v_data$NS,
+     xlab="Gradient direction",ylab = "Temperature change North -> South")
+
+plot(angle_degrees_WE,v_data$WE,
+     xlab="Gradient direction",ylab = "Temperature change West -> East")
+
+```
+
+Indeed!
+
+# Extra III - Trajectory lines
+```{r}
+
+## get the set of starting cells for the trajectories
+tmean2 <- terra::project(tmean,"+proj=lonlat")
+tmean2 <- mean(tmean2)
+tmean2 <- mask(tmean2, globe_lines)
+tmean2 <-  raster::raster(tmean2)
+
+angle_rast <- v_bio$GradVel
+angle_rast[v_data$icell] <- v_data$angle
+angle_rast <- terra::project(angle_rast,tmean2)
+angle_rast <- mask(angle_rast, globe_lines)
+angle_rast <- raster::raster(angle_rast)
+
+vel_rast <- v_bio$GradVel
+vel_rast <- terra::project(vel_rast,tmean2)
+vel_rast <- mask(vel_rast, globe_lines)
+vel_rast <- raster::raster(vel_rast)
+
+NAcells <- raster::brick(tmean2,angle_rast,vel_rast)
+NAcells <- all(!is.na(NAcells))
+NAcells[NAcells==0] <- NA
+
+tmean2 <- tmean2*NAcells
+angle_rast <- angle_rast*NAcells
+vel_rast <- vel_rast*NAcells
+
+lonlat <- na.omit(as.data.frame(tmean2, xy=TRUE))[,1:2]
+
+## calculate trajectory:
+traj = voccTraj(correct = TRUE,
+                lonlat = lonlat, # starting lat lon coords
+                vel = vel_rast, # velocity 
+                ang = angle_rast, # angle
+                mn = tmean2, # mean temp 
+                tyr = 30 # length of period of interest, years
+)
+
+## create a spatial line data frame from traj
+lns <- trajLine(x = traj)
+lns <- terra::vect(lns)
+
+myramp <- colorRampPalette(colors = c("red","green","blue","yellow","red"))(360)
+
+{
+  layout(matrix(c(1,1,1,2), nrow = 1, ncol = 4, byrow=T))
+  plot(rast(angle_rast), 
+       col = myramp)
+  # plot(lns,add=TRUE)
+  plot(globe_lines,add=TRUE)
+  plotrix::polar.plot(
+    start = 90,
+    lengths = c(rnorm(360,mean = 1, sd = 0.001)),
+    polar.pos = seq(0,360,by=1),
+    cex=.01,
+    clockwise = TRUE,
+    show.grid.labels=0,
+    line.col=myramp)
+}
+
+{
+  layout(matrix(c(1,1,1,2), nrow = 1, ncol = 4, byrow=T))
+  plot(rast(angle_rast), 
+       col = myramp)
+  plot(lns,add=TRUE)
+  plot(globe_lines,add=TRUE)
+  plotrix::polar.plot(
+    start = 90,
+    lengths = c(rnorm(360,mean = 1, sd = 0.001)),
+    polar.pos = seq(0,360,by=1),
+    cex=.01,
+    clockwise = TRUE,
+    show.grid.labels=0,
+    line.col=myramp)
+}
+```
+
 
 # Compare results
 ## Velocities maps
@@ -247,9 +349,11 @@ plot(tmp)
 
 ## Velocities correlations
 ```{r message=FALSE, warning=FALSE}
+
 velocities <- data.frame(tmp)
 
 ggpairs(velocities)
+
 ```
 
 Velocity values for `climatrics1` and `vocc1` are identical (but not perfect because `climatrics1` squeezes outliers), but both are different from VoCC because they handle the spatial gradient differently. When we correct the velocities from climatrics and vocc (`climatrics2` and `vocc2`, respectively), the values are identical to the ones in `VoCC.`
@@ -262,7 +366,7 @@ names(timesFuncs) <- "elapsed"
 timesFuncs$Package <- gsub("_time..1..","",rownames(timesFuncs))
 
 ggplot(timesFuncs, aes(x = Package, y = elapsed))+
-    geom_col() + ylab("Time elapsed (seconds)")
+  geom_col() + ylab("Time elapsed (seconds)")
 
 ```
 
@@ -273,13 +377,13 @@ Here, we can add Gael's results for North velocity
 
 # Convert all velocities to the North direction
 velocities_North <- data.frame(
-    climetrics1=values(v_climetrics1)[,1] * sin(angle_climatrics1 * pi / 180),
-    climetrics2=values(v_climetrics2)[,1] * sin(angle_climatrics2 * pi / 180),
-    vocc1=values(v_vocc_rast1)[,1] * sin(angle_vocc1 * pi / 180),
-    vocc2=values(v_vocc_rast2)[,1] * sin(angle_vocc2 * pi / 180),
-    VoCC=raster::values(v_VoCC[[1]]) * sin(angle_VoCC * pi / 180),
-    v_bio=values(v_bio)[,1] * sin(angle_bio * pi / 180),
-    v_gael=values(rast(v_gael))[,1])
+  climetrics1=values(v_climetrics1)[,1] * cos(.rad(angle_climatrics1)),
+  climetrics2=values(v_climetrics2)[,1] * cos(.rad(angle_climatrics2)),
+  vocc1=values(v_vocc_rast1)[,1] * cos(.rad(angle_vocc1)),
+  vocc2=values(v_vocc_rast2)[,1] * cos(.rad(angle_vocc2)),
+  VoCC=raster::values(v_VoCC[[1]]) * cos(.rad(angle_VoCC)),
+  v_bio=values(v_bio)[,1] * cos(.rad(angle_bio)),
+  v_gael=values(rast(v_gael))[,1])
 
 ggpairs(velocities_North)
 
@@ -352,6 +456,7 @@ v_bio2 <- gVelocity(spgrad_bio,trend_bio)
 ## Compare velocities 
 v_bio
 v_bio2
+
 ```
 
 ## Why VoCC results are different when using projected and unprojected data?

@@ -156,7 +156,6 @@ gVelocity <- function(grad, slope, grad_col = NULL, truncate=FALSE) {
             else 'projected'
         }
     }
-    
 }
 #-----
 .mnwm <- function(d1, d2, d3, d4, d5, d6){
@@ -165,7 +164,7 @@ gVelocity <- function(grad, slope, grad_col = NULL, truncate=FALSE) {
     return(X/w)
 }
 #-----
-.ang <- function(dx, dy){
+.ang <- function(dx, dy){ # transforms trigonometric angles to bearings
     ifelse(dy < 0, 180 + .deg(atan(dx/dy)),
            ifelse(dx < 0, 360 + .deg(atan(dx /dy )), .deg(atan(dx/dy))))
 }

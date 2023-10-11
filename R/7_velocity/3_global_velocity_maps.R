@@ -38,7 +38,8 @@ velocity_variable <- as.character(paste(command_args[2], collapse = " "))
 # velocity_variable="mean"
 
 # set time period
-S_time <- 1979:2018
+S_time <- 1960:2009
+S_time_name <- paste(range(S_time), collapse = "-")
 
 ########################
 ## Calculate velocity
@@ -163,23 +164,23 @@ if(ECO=="Ter"){
     
     terra::writeRaster(
         gVelLat,
-        filename = here::here("Data",paste(ECO,velocity_variable,"gVelLat.tif", sep = "_")),
+        filename = here::here("Data",paste(ECO,velocity_variable,"gVelLat",paste0(S_time_name,".tif"), sep = "_")),
         overwrite = TRUE)
     terra::writeRaster(
         gVelEle,
-        filename = here::here("Data",paste(ECO,velocity_variable,"gVelEle.tif", sep = "_")),
+        filename = here::here("Data",paste(ECO,velocity_variable,"gVelEle",paste0(S_time_name,".tif"), sep = "_")),
         overwrite = TRUE)
     terra::writeRaster(
         gVel,
-        filename = here::here("Data",paste(ECO,velocity_variable,"gVel.tif", sep = "_")),
+        filename = here::here("Data",paste(ECO,velocity_variable,"gVel",paste0(S_time_name,".tif"), sep = "_")),
         overwrite = TRUE)
     terra::writeRaster(
         gVelAngle,
-        filename = here::here("Data",paste(ECO,velocity_variable,"gVelAngle.tif", sep = "_")),
+        filename = here::here("Data",paste(ECO,velocity_variable,"gVelAngle",paste0(S_time_name,".tif"), sep = "_")),
         overwrite = TRUE)
     terra::writeRaster(
         gVelAngleEle,
-        filename = here::here("Data",paste(ECO,velocity_variable,"gVelAngleEle.tif", sep = "_")),
+        filename = here::here("Data",paste(ECO,velocity_variable,"gVelAngleEle",paste0(S_time_name,".tif"), sep = "_")),
         overwrite = TRUE)
     
     
@@ -196,7 +197,7 @@ if(ECO=="Ter"){
     cat("calculate the trend\n")
     
     ttrend_file <- here::here(work_dir,"Data",
-                              paste(ECO,velocity_variable,"trend.tif", sep = "_"))
+                              paste(ECO,velocity_variable,"trend",paste0(S_time_name,".tif"), sep = "_"))
     ttrend <- try(terra::rast(ttrend_file),silent = TRUE)
     if(class(ttrend)=="try-error"){
         ttrend = temp_grad(
@@ -212,7 +213,7 @@ if(ECO=="Ter"){
     cat("calculate the spatial gradient\n")
     
     avg_climate_layers_file <- here::here(work_dir,"Data",
-                                          paste(ECO,velocity_variable,"avg_climate_layers.tif", sep = "_"))
+                                          paste(ECO,velocity_variable,"avg_climate_layers",paste0(S_time_name,".tif"), sep = "_"))
     avg_climate_layers <- try(terra::rast(avg_climate_layers_file),silent = TRUE)
     if(class(avg_climate_layers)=="try-error"){
         avg_climate_layers <- terra::app(
@@ -253,15 +254,15 @@ if(ECO=="Ter"){
     cat("Save rasters\n")
     terra::writeRaster(
         gVelLat,
-        filename = here::here("Data",paste(ECO,"gVelLat.tif", sep = "_")),
+        filename = here::here("Data",paste(ECO,velocity_variable,"gVelLat",paste0(S_time_name,".tif"), sep = "_")),
         overwrite = TRUE)
     terra::writeRaster(
         gVel,
-        filename = here::here("Data",paste(ECO,"gVel.tif", sep = "_")),
+        filename = here::here("Data",paste(ECO,velocity_variable,"gVel",paste0(S_time_name,".tif"), sep = "_")),
         overwrite = TRUE)
     terra::writeRaster(
         gVelAngle,
-        filename = here::here("Data",paste(ECO,"gVelAngle.tif", sep = "_")),
+        filename = here::here("Data",paste(ECO,velocity_variable,"gVelAngle",paste0(S_time_name,".tif"), sep = "_")),
         overwrite = TRUE)
     
 }
