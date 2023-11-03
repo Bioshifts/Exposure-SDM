@@ -19,23 +19,26 @@ sapply(list.of.packages, require, character.only = TRUE)
 command_args <- commandArgs(trailingOnly = TRUE)
 print(command_args)
 polygontogo <- command_args
+# polygontogo <- "A169_P1" # Mar # Small
 # polygontogo <- "A112_P1" # Mar # South
 # polygontogo <- "A43_P1" # Mar # North
 # polygontogo <- "A1_P1" # Ter # North
-# polygontogo <- "A116_P1"
-# polygontogo <- "A10_P1"
-# polygontogo <- "A112_P1"
+# polygontogo <- "A31_P1" # Ter # North # Elevation
 
-print(polygontogo)
 
 cat("\rrunning polygon", polygontogo)
 
 ########################
 # set computer
-computer = "muse"
+computer = "matrics"
 
 if(computer == "muse"){
     setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
+    work_dir <- getwd()
+}
+if(computer == "matrics"){
+    setwd("/users/boliveira/Exposure-SDM")
+    work_dir <- getwd()
 }
 
 # source settings
@@ -182,15 +185,18 @@ if(ECO=="Ter"){
         spgrad_ele = spatial_grad(elevation_i)
         
         # Convert angle to radians
-        initial_angle_rad <- .rad(spgrad$angle) # angle of the spatial gradient 
-        target_angle_rad <- .rad(spgrad_ele$angle) # angle of the elevation up slope
+        initial_angle_rad <- deg_to_rad(spgrad$angle) # angle of the spatial gradient 
+        target_angle_rad <- deg_to_rad(spgrad_ele$angle) # angle of the elevation up slope
+        conversion_rate <- cos(initial_angle_rad - target_angle_rad) 
         
         # Apply conversion >> What is the environmental gradient up slope? 
-        spgrad$angle_ele <- spgrad_ele$angle
-        spgrad$Grad_ele <- spgrad$Grad * cos(initial_angle_rad - target_angle_rad) 
+        spgrad$Grad_ele <- spgrad$Grad * conversion_rate
         
         #######
         ## calculate gradient-based climate velocity:
+        gVel <- gVelocity(grad = spgrad, slope = ttrend,
+                          truncate = TRUE)
+        
         gVelLat <- gVelocity(grad = spgrad, slope = ttrend, 
                              grad_col = "NS", truncate = TRUE)
         
@@ -212,15 +218,20 @@ if(ECO=="Ter"){
         trend.mean <- as.numeric(global(ttrend,mean,na.rm = TRUE)[,1])
         trend.sd <- as.numeric(global(ttrend,sd,na.rm = TRUE)[,1])
         
-        v.lat.mean <- terra::global(gVelLat, mean, na.rm=TRUE)[,1]
-        v.lat.median <- terra::global(gVelLat, median, na.rm=TRUE)[,1]
-        v.lat.sd <- terra::global(gVelLat, sd, na.rm=TRUE)[,1]
+        v.mean <- terra::global(gVel$GradVel, mean, na.rm=TRUE)[,1]
+        v.median <- terra::global(gVel$GradVel, median, na.rm=TRUE)[,1]
+        v.sd <- terra::global(gVel$GradVel, sd, na.rm=TRUE)[,1]
         
-        v.ele.mean <- global(gVelLat, mean, na.rm=TRUE)[,1]
-        v.ele.median <- global(gVelLat, median, na.rm=TRUE)[,1]
-        v.ele.sd <- global(gVelLat, sd, na.rm=TRUE)[,1]
+        v.lat.mean <- terra::global(gVelLat$GradVel, mean, na.rm=TRUE)[,1]
+        v.lat.median <- terra::global(gVelLat$GradVel, median, na.rm=TRUE)[,1]
+        v.lat.sd <- terra::global(gVelLat$GradVel, sd, na.rm=TRUE)[,1]
+        
+        v.ele.mean <- global(gVelEle$GradVel, mean, na.rm=TRUE)[,1]
+        v.ele.median <- global(gVelEle$GradVel, median, na.rm=TRUE)[,1]
+        v.ele.sd <- global(gVelEle$GradVel, sd, na.rm=TRUE)[,1]
         
         gVelSA_j <- data.frame(baseline, trend.mean, trend.sd, 
+                               v.mean, v.median, v.sd, 
                                v.lat.mean, v.lat.median, v.lat.sd, 
                                v.ele.mean, v.ele.median, v.ele.sd)
         names(gVelSA_j) <- paste0(names(gVelSA_j),".",velocity_variables[v])
@@ -269,6 +280,9 @@ if(ECO=="Ter"){
     
     #######
     ## calculate gradient-based climate velocity:
+    gVel <- gVelocity(grad = spgrad, slope = ttrend,
+                      truncate = TRUE)
+    
     gVelLat <- gVelocity(grad = spgrad, slope = ttrend, 
                          grad_col = "NS", truncate = TRUE)
     
@@ -287,20 +301,31 @@ if(ECO=="Ter"){
     trend.mean <- as.numeric(global(ttrend,mean,na.rm = TRUE)[,1])
     trend.sd <- as.numeric(global(ttrend,sd,na.rm = TRUE)[,1])
     
-    v.lat.mean <- as.numeric(global(gVelLat, mean, na.rm=TRUE))
-    v.lat.median <- as.numeric(global(gVelLat, median, na.rm=TRUE))
-    v.lat.sd <- as.numeric(global(gVelLat, sd, na.rm=TRUE))
+    v.mean <- terra::global(gVel$GradVel, mean, na.rm=TRUE)[,1]
+    v.median <- terra::global(gVel$GradVel, median, na.rm=TRUE)[,1]
+    v.sd <- terra::global(gVel$GradVel, sd, na.rm=TRUE)[,1]
     
-    gVelSA <- data.frame(baseline = baseline, 
-                         trend.mean = trend.mean, 
-                         trend.sd = trend.sd, 
-                         v.lat.mean = v.lat.mean, 
-                         v.lat.median = v.lat.median, 
-                         v.lat.sd = v.lat.sd)
+    v.lat.mean <- as.numeric(global(gVelLat$GradVel, mean, na.rm=TRUE))
+    v.lat.median <- as.numeric(global(gVelLat$GradVel, median, na.rm=TRUE))
+    v.lat.sd <- as.numeric(global(gVelLat$GradVel, sd, na.rm=TRUE))
+    
+    gVelSA <- data.frame(baseline, trend.mean, trend.sd, 
+                         v.mean, v.median, v.sd, 
+                         v.lat.mean, v.lat.median, v.lat.sd)
     names(gVelSA) <- paste0(names(gVelSA),".sst")
     gVelSA$ID=polygontogo
 }
 
+# save velocity results
 write.csv(gVelSA, here::here(velocity_SA_dir, paste0(polygontogo,".csv")), row.names = FALSE)
+
+
+# save velocity maps
+terra::writeRaster(gVel$GradVel, here::here(velocity_SA_dir, paste0(polygontogo,"_gVel.tif")),overwrite=TRUE)
+terra::writeRaster(gVelLat$GradVel, here::here(velocity_SA_dir, paste0(polygontogo,"_gVelLat.tif")),overwrite=TRUE)
+if(ECO=="Ter"){
+    terra::writeRaster(gVelEle$GradVel, here::here(velocity_SA_dir, paste0(polygontogo,"_gVelEle.tif")),overwrite=TRUE)    
+}
+
 
 

@@ -3,13 +3,13 @@ title: "Compare velocity values from Bioshifts v1 and v3"
 author: "Brunno Oliveira"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
-  pdf_document:
-    toc: yes
   html_document:
     toc: yes
     toc_float: yes
     number_sections: yes
     code_folding: show
+  pdf_document:
+    toc: yes
 ---
 
 # Setup
@@ -46,6 +46,7 @@ globe_lines <- terra::aggregate(globe_lines)
 
 # Load in v3 velocities
 ```{r}
+
 SAs <- list.files(here::here("Data/Velocity_SA"))
 SAs <- gsub(".csv","",SAs)
 SA_got <- list.files(here::here("Data/Velocity_SA"), full.names = TRUE)
@@ -66,6 +67,9 @@ SA_got <- SA_got %>%
          baseline.temp_v3 = ifelse(ECO == "T", baseline.mat, baseline.sst),
          Trend = ifelse(ECO == "T", trend.mean.mat, trend.mean.sst)) %>%
   dplyr::select(ECO, vel_v3, Trend, ID, baseline.temp_v3)
+
+
+SA_got$vel_v3 <- SA_got$vel_v3 * -1
 
 ```
 
@@ -95,17 +99,20 @@ Bioshifts_DB <- Bioshifts_DB %>%
 Bioshifts_vel <- merge(Bioshifts_DB %>%
                          filter(Type %in% c("LAT","ELE")) %>%
                          mutate(vel_v1 = ifelse(Type == "LAT", v.lat.mean, v.ele.mean),
-                                baseline.temp_v1 = baseline.temp) %>% 
-                         dplyr::select(ID, vel_v1, Type, ECO, SHIFT, baseline.temp_v1), 
+                                baseline.temp_v1 = baseline.temp,
+                                trend_v1 = trend.mean) %>% 
+                         dplyr::select(ID, vel_v1, Type, ECO, SHIFT, baseline.temp_v1, trend_v1), 
                        SA_got  %>%
-                         dplyr::select(ID, vel_v3, ECO, baseline.temp_v3), 
+                         dplyr::select(ID, vel_v3, ECO, baseline.temp_v3, Trend) %>%
+                         mutate(trend_v3 = Trend) %>%
+                         dplyr::select(-Trend), 
                        by = c("ID","ECO"))
 head(Bioshifts_vel)
 
 ```
 
-# Compare velocity
-## Density plots
+# Compare 
+## Density plots of velocities
 ```{r}
 
 v1 <- Bioshifts_vel[,c("ID","Type","ECO","vel_v1","baseline.temp_v1","SHIFT")]
@@ -162,12 +169,6 @@ V3 velocity values are mainly negative (towards the tropics).
 ## Velocity scatter plots
 ```{r}
 
-# All data
-ggplot(Bioshifts_vel, aes(x = vel_v3, y = vel_v1)) +
-  geom_point()+
-  theme_classic()+
-  labs(x = "Velocity v3", y = "Velocity v1")
-
 # Terrestrial
 ggplot(Bioshifts_vel %>% filter(ECO == "T"), 
        aes(x = vel_v3, y = vel_v1)) +
@@ -175,7 +176,8 @@ ggplot(Bioshifts_vel %>% filter(ECO == "T"),
   geom_point()+
   theme_classic()+
   facet_wrap(.~Type, scales = "free") +
-  labs(x = "Velocity v3", y = "Velocity v1")
+  labs(x = "Velocity v3", y = "Velocity v1")+
+  geom_abline(slope = 1, intercept = 0)
 
 # Marine
 ggplot(Bioshifts_vel %>% filter(ECO == "M"), 
@@ -184,19 +186,14 @@ ggplot(Bioshifts_vel %>% filter(ECO == "M"),
   geom_point()+
   theme_classic()+
   facet_wrap(.~Type, scales = "free") +
-  labs(x = "Velocity v3", y = "Velocity v1")
+  labs(x = "Velocity v3", y = "Velocity v1")+
+  geom_abline(slope = 1, intercept = 0)
 ```
 
 Velocity values from v3 and v1 are highly decoupled, and tend to be negatively correlated to each other.
 
-## Trends
+## Baseline temperature
 ```{r}
-# all data
-ggplot(Bioshifts_vel, aes(x = baseline.temp_v3, y = baseline.temp_v1)) +
-  geom_point()+
-  theme_classic()+
-  facet_wrap(.~Type, scales = "free") +
-  labs(x = "Trend v3", y = "Trend v1")
 
 # Terrestrial
 ggplot(Bioshifts_vel %>% filter(ECO == "T"), 
@@ -205,7 +202,8 @@ ggplot(Bioshifts_vel %>% filter(ECO == "T"),
   geom_point()+
   theme_classic()+
   facet_wrap(.~Type, scales = "free") +
-  labs(x = "Trend v3", y = "Trend v1")
+  labs(x = "Trend v3", y = "Trend v1")+
+  geom_abline(slope = 1, intercept = 0)
 
 # Marine
 ggplot(Bioshifts_vel %>% filter(ECO == "M"), 
@@ -214,7 +212,32 @@ ggplot(Bioshifts_vel %>% filter(ECO == "M"),
   geom_point()+
   theme_classic()+
   facet_wrap(.~Type, scales = "free") +
-  labs(x = "Trend v3", y = "Trend v1")
+  labs(x = "Trend v3", y = "Trend v1")+
+  geom_abline(slope = 1, intercept = 0)
+```
+
+## Trend
+```{r}
+# Terrestrial
+ggplot(Bioshifts_vel %>% filter(ECO == "T"), 
+       aes(x = trend_v3, y = trend_v1)) +
+  ggtitle("Terrestrials") + 
+  geom_point()+
+  theme_classic()+
+  facet_wrap(.~Type, scales = "free") +
+  labs(x = "Trend v3", y = "Trend v1") +
+  geom_abline(slope = 1, intercept = 0)
+
+# Marine
+ggplot(Bioshifts_vel %>% filter(ECO == "M"), 
+       aes(x = trend_v3, y = trend_v1)) +
+  ggtitle("Marine") + 
+  geom_point()+
+  theme_classic()+
+  facet_wrap(.~Type, scales = "free") +
+  labs(x = "Trend v3", y = "Trend v1") +
+  geom_abline(slope = 1, intercept = 0)
+
 ```
 
 When comparing trend values between v1 and v3, they seem to be correlated. This means that the decoupling in velocity values between v1 and v3 comes from differences in the way the spatial gradient is calculated.
@@ -324,200 +347,4 @@ ggplot(ols, aes(y = model, x = R2, fill = version))+
 Coefficients tend to be stepper when using velocities v3 relative to v1. However, the coefficient in negative at the marine realm.
 
 In general, I believe that velocities at the landscape scale are not helpful to explain observed range shifts. We might need to work better metrics, perhaps using sdms to apply weights on landscape scale velocity based on suitability. This way, we have a species level, rather than landscape level velocity.
-
-A next step we made was to  test if the metric of velocity calculated in Bioshifts v3 matches with velocity patterns shown in previous studies. This is crutial for us to test if we can trust the metric. Therefore, we calculated velocity at global scale at the marine realm and compare with a published global map.
-
-# Global velocity maps
-## Undirectional
-```{r}
-
-gVel <- terra::rast(here::here("Data/Mar_gVel.tif"))
-
-gVelrange <- range(gVel[],na.rm = TRUE)
-the_palette_fc <- leaflet::colorNumeric(
-  palette = "RdBu", 
-  domain = c(-max(abs(gVelrange)),max(abs(gVelrange))),
-  reverse = TRUE)
-
-the_colors <- the_palette_fc(seq(min(gVelrange), max(gVelrange), length.out = 50))
-
-plot(gVel, col = the_colors)
-
-# zoom to mediterranean
-plot(project(crop(gVel,c(-10,40,30,71)),Eckt), col = the_colors)
-
-# zoom to australia
-plot(project(crop(gVel,c(90,180,-30,30)),Eckt), col = the_colors)
-
-```
-
-
-The velocity pattern identified here, using our function based on the VoCC package, is very similar to what has been presented in a previous study (see Fig 2c from https://www.nature.com/articles/s41558-020-0889-7).
-
-## Trend
-```{r}
-
-ttrend <- terra::rast(here::here("Data/Mar_mean_trend.tif"))
-
-ttrendrange <- range(ttrend[],na.rm = TRUE)
-the_palette_fc <- leaflet::colorNumeric(
-  palette = "RdBu", 
-  domain = c(-max(abs(ttrendrange)),max(abs(ttrendrange))),
-  reverse = TRUE)
-the_colors <- the_palette_fc(seq(min(ttrendrange), max(ttrendrange), length.out = 50))
-
-plot(ttrend, col = the_colors)
-
-```
-
-Likewise, the temporal trend calculate using our function is very similar to what has been presented in a previous study (see Fig 2a from https://www.nature.com/articles/s41558-020-0889-7).
-
-
-In order to retrieve a climate velocity across the latitudinal gradient, we calculated the resulting velocity away from the tropics (direction North for study areas at the North hemisphere, and direction South for study areas at the South hemisphere). Note that velocity values become quite different if compared to multidirectional velocity gradient showed above.
-
-## Latitude
-```{r}
-
-# Latitude 
-gVelLat <- terra::rast(here::here("Data/Mar_gVelLat.tif"))
-
-# SouthCells <- terra::as.data.frame(gVelLat, xy = TRUE, cell = TRUE) 
-# SouthCells <- SouthCells %>% filter(y<0)
-# SouthCells <- SouthCells$cell
-# if(length(SouthCells)>0){
-#   gVelLat[SouthCells] <- gVelLat[SouthCells] * -1
-# }
-
-gVelLatrange <- range(gVelLat[],na.rm = TRUE)
-the_palette_fc <- leaflet::colorNumeric(
-  palette = "RdBu", 
-  domain = c(-max(abs(gVelLatrange)),max(abs(gVelLatrange))),
-  reverse = TRUE)
-the_colors <- the_palette_fc(seq(min(gVelLatrange), max(gVelLatrange), length.out = 50))
-
-plot(gVelLat, col = the_colors)
-
-```
-
-
-The difference is due to the direction (angle) of the gradient. Take a closer look to the direction of climate change.
-
-## Angle
-```{r}
-
-SouthCells <- terra::as.data.frame(gVelLat, xy = TRUE, cell = TRUE)
-SouthCells <- SouthCells %>% filter(y<0)
-SouthCells <- SouthCells$cell
-
-gVelAngle <- terra::rast(here::here("Data/Mar_gVelAngle.tif"))
-
-myramp <- colorRampPalette(colors = c("red","green","blue","yellow","red"))(360)
-
-{
-  layout(matrix(c(1,1,1,2), nrow = 1, ncol = 4, byrow=T))
-  plot(gVelAngle, 
-       col = myramp)
-  plotrix::polar.plot(
-    start = 90,
-    lengths = c(rnorm(360,mean = 1, sd = 0.001)),
-    polar.pos = seq(0,360,by=1),
-    clockwise = TRUE,
-    cex=.01,
-    show.grid.labels=0,
-    line.col=myramp)
-}
-
-# par(mfrow=c(1,2))
-# plot(gVelAngle, 
-#          col = myramp)
-# plot(gVelAngle2, 
-#          col = myramp)
-
-
-# Fix gVelLat sign in the South cells
-gVelLat2 <- gVelLat
-if(length(SouthCells)>0){
-  gVelLat2[SouthCells] <- gVelLat2[SouthCells] * -1
-}
-
-plot(gVelAngle, gVelLat2,
-     xlab="Gradient direction", 
-     ylab = "Temperature change North")
-
-gVelLat3 <- gVelLat2
-gVelLat3[SouthCells] <- NA
-gVelAngle3 <- gVelAngle2
-gVelAngle3[SouthCells] <- NA
-
-plot(gVelAngle3, gVelLat3,
-     xlab="Gradient direction", 
-     ylab = "Temperature change North")
-
-```
-
-Observed that many trajectories are West (blue) and East (green) and just a few are North (red), or South (yellow). The West and East trajectories ultimately will results in slower South-North (at the North hemisphere) velocity (clear "white" colors in the latitudinal velocity map above). 
-
-## Trajectories
-
-Plotting trajectory lines
-```{r}
-
-# coarser resolution raster 
-gVelAngle_coarse <- terra::aggregate(gVelAngle, fact = 5)
-
-## get the set of starting cells for the trajectories
-lonlat <- na.omit(as.data.frame(gVelAngle_coarse, xy=TRUE))[,1:2]
-
-## calculate trajectory:
-traj = voccTraj(lonlat, # starting lat lon coords
-                raster::aggregate(raster::raster(gVel),5), # velocity 
-                raster::aggregate(raster::raster(gVelAngle),5), # angle
-                raster::aggregate(raster::raster(here::here("Data/Mar_mean_avg_climate_layers.tif")),5), # mean temp 
-                tyr = 40 # length of period of interest, years
-)
-
-## create a spatial line data frame from traj
-lns <- trajLine(x = traj)
-
-{
-  plot(gVelAngle, 
-       col = myramp)
-  plot(lns,add=TRUE)
-  plot(globe_lines, add=TRUE)
-}
-
-# zoom to Australia for contrast with 10.1111/2041-210X.13295
-{
-  layout(matrix(c(1,1,1,2), nrow = 1, ncol = 4, byrow=T))
-  plot(rast(crop(raster::raster((gVelAngle + 180) %% 360), c(90,180,-30,30))),
-       col = myramp)
-  plot(globe_lines,add=TRUE)
-  plot(lns, add = TRUE, arrows = 1)
-  plotrix::polar.plot(
-    start = 90,
-    lengths = c(rnorm(360,mean = 1, sd = 0.001)),
-    polar.pos = seq(0,360,by=1),
-    clockwise = TRUE,
-    cex=.01,
-    show.grid.labels=0,
-    line.col=myramp)
-}
-
-# Zoom to the Mediterranean for contrast with 10.1126/science.1210288
-{
-  layout(matrix(c(1,1,1,2), nrow = 1, ncol = 4, byrow=T))
-  plot(rast(crop(raster::raster((gVelAngle + 180) %% 360), c(-10,40,30,71))),
-       col = myramp)
-  # plot(lns, add = TRUE, arrows = 1)
-  plotrix::polar.plot(
-    start = 90,
-    lengths = c(rnorm(360,mean = 1, sd = 0.001)),
-    polar.pos = seq(0,360,by=1),
-    clockwise = TRUE,
-    cex=.01,
-    show.grid.labels=0,
-    line.col=myramp)
-}
-
-```
 

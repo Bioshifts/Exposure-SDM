@@ -16,10 +16,15 @@ sapply(list.of.packages, require, character.only = TRUE)
 
 ########################
 # set computer
-computer = "muse"
+computer = "matrics"
 
 if(computer == "muse"){
     setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
+    work_dir <- getwd()
+}
+if(computer == "matrics"){
+    setwd("/users/boliveira/Exposure-SDM")
+    work_dir <- getwd()
 }
 
 # source settings
@@ -111,15 +116,16 @@ if(ECO=="Ter"){
     spgrad_ele = spatial_grad(elevation)
     
     # Convert angle to radians
-    initial_angle_rad <- .rad(spgrad$angle) # angle of the spatial gradient 
-    target_angle_rad <- .rad(spgrad_ele$angle) # angle of the elevation up slope
+    initial_angle_rad <- deg_to_rad(spgrad$angle) # angle of the spatial gradient 
+    target_angle_rad <- deg_to_rad(spgrad_ele$angle) # angle of the elevation up slope
+    conversion_rate <- cos(initial_angle_rad - target_angle_rad) 
     
     # Apply conversion >> What is the environmental gradient up slope? 
-    spgrad$angle_ele <- spgrad_ele$angle
-    spgrad$Grad_ele <- spgrad$Grad * cos(initial_angle_rad - target_angle_rad) 
+    spgrad$Grad_ele <- spgrad$Grad * conversion_rate
     
     #######
     ## calculate gradient-based climate velocity:
+    
     ## Across latitude
     cat("calculate velocity across latitude\n")
     gVelLat <- gVelocity(grad = spgrad, slope = ttrend, 
@@ -134,7 +140,7 @@ if(ECO=="Ter"){
     cat("calculate velocity undirectional\n")
     gVel <- gVelocity(grad = spgrad, slope = ttrend, truncate = TRUE)
     
-    ## Angle
+    ## Angle gradient
     gVelAngle <- gVel
     gVelAngle[spgrad$icell] <- spgrad$angle
     

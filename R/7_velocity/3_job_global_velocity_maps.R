@@ -11,11 +11,14 @@ library(here)
 
 ########################
 # set computer
-computer = "muse"
+computer = "matrics"
 
 if(computer == "muse"){
     setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
-    
+    work_dir <- getwd()
+}
+if(computer == "matrics"){
+    setwd("/users/boliveira/Exposure-SDM")
     work_dir <- getwd()
 }
 
@@ -49,9 +52,6 @@ jobs_data <- data.frame(ECO = c("Ter","Ter","Mar"),
 N_Nodes = 1
 tasks_per_core = 1
 cores = 1 # this is not a parallel job
-# for the big jobs
-time = "2-20:00:00"
-memory = "120G"
 
 
 for(i in 1:nrow(jobs_data)){
@@ -77,21 +77,25 @@ for(i in 1:nrow(jobs_data)){
     cat("#SBATCH -N",N_Nodes,"\n")
     cat("#SBATCH -n",tasks_per_core,"\n")
     cat("#SBATCH -c",cores,"\n")
-    cat("#SBATCH --mem=",memory,"\n", sep="")
+    cat("#SBATCH --mem=",ifelse(ECO == "Ter", "400G", "120G"),"\n", sep="")
+    
+    ifelse(ECO=="Ter",
+        cat("#SBATCH --partition=bigmem\n"),
+        cat("#SBATCH --partition=normal\n"))
     
     cat("#SBATCH --job-name=",job_name,"\n", sep="")
     cat("#SBATCH --output=",here::here(logdir,paste0(job_name,".out")),"\n", sep="")
     cat("#SBATCH --error=",here::here(logdir,paste0(job_name,".err")),"\n", sep="")
-    cat("#SBATCH --time=",time,"\n", sep="")
+    cat("#SBATCH --time=",ifelse(ECO == "Ter", "2-20:00:00", "24:00:00"),"\n", sep="")
     cat("#SBATCH --mail-type=ALL\n")
     cat("#SBATCH --mail-user=brunno.oliveira@fondationbiodiversite.fr\n")
     
-    cat("IMG_DIR='/storage/simple/projects/t_cesab/brunno'\n")
+    cat(paste0("IMG_DIR='",singularity_image,"'\n"))
     
     cat("module purge\n")
-    cat("module load singularity/3.5\n")
+    cat("module load singularity\n")
     
-    cat("singularity exec --disable-cache $IMG_DIR/brunnospatial.sif Rscript",Rscript_file, args,"\n", sep=" ")
+    cat("singularity exec --disable-cache $IMG_DIR Rscript",Rscript_file, args,"\n", sep=" ")
     
     # Close the sink!
     sink()

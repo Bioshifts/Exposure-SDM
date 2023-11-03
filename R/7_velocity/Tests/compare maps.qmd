@@ -1,0 +1,170 @@
+---
+title: "Compare velocity maps with previously published patterns"
+author: "Brunno Oliveira"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+format:
+  html:
+    toc: true
+    toc_float: true
+    number-sections: true
+    code-fold: false
+    code-tools: true
+---
+
+Here we test if the metric of velocity calculated in Bioshifts v3 matches with velocity patterns shown in previous studies. This is crucial for us to test if we can trust the metric. Therefore, we calculated velocity at global scale at the marine realm and compare with a published global map.
+
+```{r message=FALSE,warning=FALSE}
+# setup
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(terra)
+library(RColorBrewer)
+
+# source settings
+source(here::here("R/settings.R"))
+
+# Global continental lines
+globe_lines <- vect(rnaturalearth::ne_countries(scale = "small"))
+globe_lines <- terra::aggregate(globe_lines)
+```
+
+
+# v3 vs Woolway & Maberly 2020 Nat Eco Evo
+
+```{r}
+# Velocity
+
+gVel <- terra::rast(here::here("Data/Mar_mean_gVel_1979-2018.tif"))
+gVelrange <- range(gVel[],na.rm = TRUE)
+the_palette_fc <- leaflet::colorNumeric(
+  palette = "RdBu", 
+  domain = c(-max(abs(gVelrange)),max(abs(gVelrange))),
+  reverse = TRUE)
+
+the_colors <- the_palette_fc(seq(min(gVelrange), max(gVelrange), length.out = 50))
+
+plot(gVel, col = the_colors, main = "Climate velocity")
+
+# Trend
+
+ttrend <- terra::rast(here::here("Data/Mar_mean_trend_1979-2018.tif"))
+ttrendrange <- range(ttrend[],na.rm = TRUE)
+
+the_palette_fc <- leaflet::colorNumeric(
+  palette = "RdBu", 
+  domain = c(-max(abs(ttrendrange)),max(abs(ttrendrange))),
+  reverse = TRUE)
+
+the_colors <- the_palette_fc(seq(min(ttrendrange), max(ttrendrange), length.out = 50))
+
+plot(ttrend, col = the_colors, main = "Trend")
+
+
+```
+
+The velocity and trend patterns identified here (using our function based on the VoCC package) are very similar to what has been presented in a previous study -- see Fig 2a and c from [Woolway & Maberly 2020 Nat Eco Evo](https://www.nature.com/articles/s41558-020-0889-7).
+
+# v3 vs Garcia-Molinos et al. 2019 Meth Eco Evo
+
+```{r}
+# Velocity
+
+gVel <- terra::rast(here::here("Data/Mar_mean_gVel_1960-2009.tif"))
+
+gVelrange <- range(gVel[],na.rm = TRUE)
+
+the_palette_fc <- leaflet::colorNumeric(
+  palette = "RdBu", 
+  domain = c(-max(abs(gVelrange)),max(abs(gVelrange))),
+  reverse = TRUE)
+
+the_colors <- the_palette_fc(seq(min(gVelrange), max(gVelrange), length.out = 15))
+
+plot(gVel, col = the_colors, main = "Climate velocity")
+
+plot(crop(gVel,c(90,180,-30,30)), col = the_colors)
+```
+
+The velocity pattern is very similar to what has been presented in a previous study from [Garcia-Molinos et al. 2019 Meth Eco Evo](https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.13295) (see Fig 2a and 3a).
+
+# Latitude
+
+In order to retrieve a climate velocity across the latitudinal gradient, we calculated the resulting velocity away from the tropics (direction North for study areas at the North hemisphere, and direction South for study areas at the South hemisphere). Note that velocity values become quite different if compared to multidirectional velocity gradient showed above.
+
+```{r}
+# Latitude 
+
+gVelLat <- terra::rast(here::here("Data/Mar_mean_gVelLat_1979-2018.tif"))
+
+# velocity angles have opposite direction to the spatial climatic gradient if warming and same direction (cold to warm) if cooling
+
+ind <- cells(gVel > 0)
+
+gVelLat[ind] <- gVelLat[ind]*-1
+
+gVelLatrange <- range(gVelLat[], na.rm = TRUE)
+
+the_palette_fc <- leaflet::colorNumeric(
+  palette = "RdBu", 
+  domain = c(-max(abs(gVelLatrange)),max(abs(gVelLatrange))),
+  reverse = TRUE)
+
+the_colors <- the_palette_fc(seq(min(gVelLatrange), max(gVelLatrange), length.out = 50))
+
+plot(gVelLat, col = the_colors)
+```
+
+The difference is due to the direction (angle) of the gradient. Take a closer look to the direction of climate change.
+
+# Angle
+
+```{r}
+SouthCells <- terra::as.data.frame(gVelLat, xy = TRUE, cell = TRUE)
+
+SouthCells <- SouthCells %>% filter(y<0)
+
+SouthCells <- SouthCells$cell
+
+gVelAngle <- terra::rast(here::here("Data/Mar_mean_gVelAngle_1960-2009.tif"))
+
+gVelAngle <- (gVelAngle + 180) %% 360
+
+myramp <- colorRampPalette(colors = c("red","green","blue","yellow","red"))(360)
+
+{
+  layout(matrix(c(1,1,1,2), nrow = 1, ncol = 4, byrow=T))
+
+  plot(gVelAngle, 
+       col = myramp)
+
+  plotrix::polar.plot(
+    start = 90,
+    lengths = c(rnorm(360,mean = 1, sd = 0.001)),
+    polar.pos = seq(0,360,by=1),
+    clockwise = TRUE,
+    cex=.01,
+    show.grid.labels=0,
+    line.col=myramp)
+}
+
+# zoom to australia
+
+{
+  layout(matrix(c(1,1,1,2), nrow = 1, ncol = 4, byrow=T))
+
+  plot(crop(gVelAngle,c(90,180,-30,30)), col = myramp)
+
+  plotrix::polar.plot(
+    start = 90,
+    lengths = c(rnorm(360,mean = 1, sd = 0.001)),
+    polar.pos = seq(0,360,by=1),
+    clockwise = TRUE,
+    cex=.01,
+    show.grid.labels=0,
+    line.col=myramp)
+}
+```
+
+The angles are very similar to what has been presented in a previous study from [Garcia-Molinos et al. 2019 Meth Eco Evo](https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.13295) (see Fig3b).

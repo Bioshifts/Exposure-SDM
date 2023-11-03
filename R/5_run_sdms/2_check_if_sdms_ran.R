@@ -2,7 +2,18 @@
 rm(list=ls())
 gc()
 
-setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
+
+# set computer
+computer = "matrics"
+
+if(computer == "muse"){
+    setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
+    work_dir <- getwd()
+}
+if(computer == "matrics"){
+    setwd("/users/boliveira/Exposure-SDM")
+    work_dir <- getwd()
+}
 
 work_dir <- getwd()
 sps.dir <- here::here(work_dir,"Data/Env_data")

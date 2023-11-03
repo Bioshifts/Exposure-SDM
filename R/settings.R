@@ -1,7 +1,9 @@
 require("here")
 
 # -----------------------------
-## Seetings
+## Settings
+
+computer = "matrics"
 
 # set resolution terrestrial environmental data
 # must be 1km or 5km
@@ -36,10 +38,22 @@ Eckt <- "+proj=eck4 +lon_0=0 +x_0=0 +y_0=0 +ellps=WGS84 +datum=WGS84 +units=m +n
 ## Directories 
 
 # Working directory
-work_dir <- "/storage/simple/projects/t_cesab/brunno/Exposure-SDM"
+work_dir <- if(computer == "muse"){
+    "/storage/simple/projects/t_cesab/brunno/Exposure-SDM"
+}else{
+    if(computer=="matrics"){
+        "/users/boliveira/Exposure-SDM"
+    }
+}
 
 # Scratch data
-scratch_dir <- "/lustre/oliveirab"
+scratch_dir <- if(computer == "muse"){
+    "/lustre/oliveirab"
+}else{
+    if(computer=="matrics"){
+        "/scratch/boliveira"
+    }
+}
 
 # Bioshifts dir
 Bioshifts_dir <- here::here(work_dir,"Data/Bioshifts")
@@ -51,15 +65,15 @@ env_data_dir <- function(realm){here::here(work_dir,"Data/Env_data",realm)}
 vars_dir <- function(realm){
     if(realm == "Ter"){
         if(ter_data == "cruts"){
-            here::here("/lustre/oliveirab/Data/Land/cruts")
+            here::here(scratch_dir,"Data/Land/cruts")
         } else {
-            here::here("/lustre/oliveirab/Data/Land/chelsa")
+            here::here(scratch_dir,"Data/Land/chelsa")
         }
     } else {
         if(mar_data == "oras"){
-            here::here("/lustre/oliveirab/Data/Marine/oras")
+            here::here(scratch_dir,"Data/Marine/oras")
         } else {
-            here::here("/lustre/oliveirab/Data/Marine/copernicus")
+            here::here(scratch_dir,"Data/Marine/copernicus")
         }
     }
 }
@@ -102,6 +116,15 @@ sdm_dir <- function(realm){here::here(scratch_dir,"SDMs",realm)}
 
 # SDMs scripts dir
 sdm_script_dir <- here::here("R/5_run_sdms")
+
+# Singularity image
+singularity_image <- if(computer == "muse"){
+    "/storage/simple/projects/t_cesab/brunno/brunnospatial.sif"
+}else{
+    if(computer=="matrics"){
+        "/users/boliveira/brunnospatial.sif"
+    }
+}
 
 # -------------------------------
 ## Functions

@@ -11,11 +11,14 @@ library(here)
 
 ########################
 # set computer
-computer = "muse"
+computer = "matrics"
 
 if(computer == "muse"){
     setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
-    
+    work_dir <- getwd()
+}
+if(computer == "matrics"){
+    setwd("/users/boliveira/Exposure-SDM")
     work_dir <- getwd()
 }
 
@@ -42,9 +45,6 @@ Rscript_file = here::here(script.dir,"1_get_velocity.R")
 v3_polygons <- gsub(".shp","",list.files(SA_shps_dir,pattern = ".shp"))
 
 
-##############################
-# Rerun just for marines
-
 Bioshifts_DB_v1 <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v1))
 Bioshifts_DB_v2 <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v2))
 Bioshifts_DB_v2$ID <- paste0("B",Bioshifts_DB_v2$Paper.ID,"_",Bioshifts_DB_v2$Study.Period)
@@ -57,7 +57,10 @@ Bioshifts_DB <- rbind(Bioshifts_DB_v1,
                       Bioshifts_DB_v2)
 Bioshifts_DB <- Bioshifts_DB[-which(duplicated(Bioshifts_DB$ID)),]
 
-Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$ECO=="M"),]
+##############################
+# Rerun just for marines
+# Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$ECO=="M"),]
+##############################
 
 # Filter Polygons in Study areas v3
 v3_polygons <- v3_polygons[v3_polygons %in% Bioshifts_DB$ID]
@@ -70,7 +73,7 @@ N_jobs_at_a_time = 50
 
 N_Nodes = 1
 tasks_per_core = 1
-cores = 5 # this is not a parallel job
+cores = 1 # this is not a parallel job
 time = "10:00:00"
 memory = "64G"
 
@@ -117,12 +120,12 @@ for(i in 1:length(v3_polygons)){
         cat("#SBATCH --mail-type=ALL\n")
         cat("#SBATCH --mail-user=brunno.oliveira@fondationbiodiversite.fr\n")
         
-        cat("IMG_DIR='/storage/simple/projects/t_cesab/brunno'\n")
+        cat(paste0("IMG_DIR='",singularity_image,"'\n"))
         
         cat("module purge\n")
-        cat("module load singularity/3.5\n")
+        cat("module load singularity\n")
         
-        cat("singularity exec --disable-cache $IMG_DIR/brunnospatial.sif Rscript",Rscript_file, args,"\n", sep=" ")
+        cat("singularity exec --disable-cache $IMG_DIR Rscript",Rscript_file, args,"\n", sep=" ")
         
         # Close the sink!
         sink()

@@ -12,25 +12,24 @@ temp_gradFun <- function(x, th) {
         s$coefficients[2]
     } else NA
 }
-#--------------
 temp_grad <- function(x, th, ncores=NULL, tempfile="",overwrite=TRUE) {
-  if(is.null(ncores)){
-    tmp <- terra::app(x,temp_gradFun,th=th,filename=tempfile,overwrite=overwrite)
-  } else {
-    tmp <- terra::app(x,temp_gradFun,th=th,cores=ncores,filename=tempfile,overwrite=overwrite)
-  }
+    if(is.null(ncores)){
+        tmp <- terra::app(x,temp_gradFun,th=th,filename=tempfile,overwrite=overwrite)
+    } else {
+        tmp <- terra::app(x,temp_gradFun,th=th,cores=ncores,filename=tempfile,overwrite=overwrite)
+    }
     names(tmp) <- "Trend"
     return(tmp)
 }
 
 #--------------
-
+# spatial gradient
 spatial_grad <- function(rx, y_diff = 1) {
     
     if(nlyr(rx) > 1){ rx <- mean(rx,na.rm = TRUE) }
     
     if (.getProj(rx) == 'longlat') {
-        y_dist <- res(rx) * c(111.325, 111.325) # from degrees to km
+        y_dist <- d2km(res(rx)) # from degrees to km
     } else {
         y_dist <- res(rx) / 1000 # from meters to km
         y_diff <- NA
@@ -65,9 +64,9 @@ spatial_grad <- function(rx, y_diff = 1) {
     
     if(!is.na(y_diff)) {
         y3b <- eval(parse(text="dplyr::mutate(y3b,
-                         latpos = cos(.rad(LAT + y_diff)),
-                         latneg = cos(.rad(LAT - y_diff)),
-                         latfocal = cos(.rad(LAT)))"),envir =environment())
+                         latpos = cos(deg_to_rad(LAT + y_diff)),
+                         latneg = cos(deg_to_rad(LAT - y_diff)),
+                         latfocal = cos(deg_to_rad(LAT)))"),envir =environment())
     } else {
         
         y3b <- eval(parse(text="dplyr::mutate(y3b,
@@ -115,12 +114,18 @@ spatial_grad <- function(rx, y_diff = 1) {
 # truncate is for bounding max and min values to upper (95%) and lower (5%) quantiles, respectively
 gVelocity <- function(grad, slope, grad_col = NULL, truncate=FALSE) {
     
-    v <- rast(slope)
+    v <- slope
+    v_ang <- slope
+    v_ang[grad$icell] <- grad$angle
+    # velocity angles have opposite direction to the spatial climatic gradient if warming and same direction (cold to warm) if cooling
+    ind <- cells(v > 0)
+    v_ang[ind] <- (v_ang[ind] + 180) %% 360
     
     if(is.null(grad_col)){
         v[grad$icell] <- slope[grad$icell] / grad$Grad
     } else {
         v[grad$icell] <- slope[grad$icell] / grad[,grad_col]
+        v[ind] <- v[ind] * -1 # velocity of the trajectory is the opposite of the velocity in the direction of the gradient 
     }
     
     if(truncate){
@@ -129,14 +134,14 @@ gVelocity <- function(grad, slope, grad_col = NULL, truncate=FALSE) {
         v[v > .o[2]] <- .o[2] 
     }
     
-    names(v) <- "GradVel"
-    return(v)
+    output <- c(v,v_ang)
+    names(output) <- c("GradVel", "GradAng")
+    return(output)
 }
 
 
-###########################
-# Utils
 #----
+# Utils
 .is_package_installed <- function(n) {
     names(n) <- n
     sapply(n, function(x) length(unlist(lapply(.libPaths(), function(lib) find.package(x, lib, quiet=TRUE, verbose=FALSE)))) > 0)
@@ -164,9 +169,9 @@ gVelocity <- function(grad, slope, grad_col = NULL, truncate=FALSE) {
     return(X/w)
 }
 #-----
-.ang <- function(dx, dy){ # transforms trigonometric angles to bearings
-    ifelse(dy < 0, 180 + .deg(atan(dx/dy)),
-           ifelse(dx < 0, 360 + .deg(atan(dx /dy )), .deg(atan(dx/dy))))
+.ang <- function(dx, dy){
+    ifelse(dy < 0, 180 + rad_to_deg(atan(dx/dy)),
+           ifelse(dx < 0, 360 + rad_to_deg(atan(dx /dy )), rad_to_deg(atan(dx/dy))))
 }
 #---
 .is.projected <- function(x) {
@@ -177,10 +182,58 @@ gVelocity <- function(grad, slope, grad_col = NULL, truncate=FALSE) {
     !all(e >= -180 & e <= 180)
 }
 #---
-.rad <- function (degree) {
+deg_to_rad <- function (degree) {
     (degree * pi) / 180
 }
 #---
-.deg <-  function (radian) {
+rad_to_deg <-  function (radian) {
     (radian * 180) / pi
+}
+#---
+d2km <- function (d, base.latitude = 1) 
+{
+    if (!requireNamespace("fields")) 
+        stop("Required fields package is missing.")
+    onerad_to_degree.dist <- fields::rdist.earth(matrix(c(0, base.latitude), ncol = 2), 
+                                                 matrix(c(1, base.latitude), ncol = 2), 
+                                                 miles = FALSE)[,1]
+    out <- d * onerad_to_degree.dist
+    return(out)
+}
+#---
+angle_map <- function(x, main = ""){
+    
+    myramp1 <- colorRampPalette(colors = c("red","green","blue","yellow","red"))(360)
+    
+    the_palette_fc <- leaflet::colorNumeric(
+        palette = myramp1, 
+        domain = c(0,360),
+        reverse = FALSE)
+    
+    myramp <- the_palette_fc(seq(0, 360, length.out = 50))
+    
+    layout(matrix(c(1,1,1,2), nrow = 1, ncol = 4, byrow=T))
+    plot(x, col = myramp, main = main)
+    plotrix::polar.plot(
+        start = 90,
+        lengths = c(rnorm(360,mean = 1, sd = 0.001)),
+        polar.pos = seq(0,360,by=1),
+        clockwise = TRUE,
+        cex=.1,
+        show.grid.labels=0,
+        line.col=myramp1)
+}
+#---
+velocity_map <- function(x, main = ""){
+    
+    x_range <- range(x[],na.rm = TRUE)
+    the_palette_fc <- leaflet::colorNumeric(
+        palette = "RdBu", 
+        domain = c(-max(abs(x_range)),max(abs(x_range))),
+        reverse = TRUE)
+    
+    the_colors <- the_palette_fc(seq(min(x_range), max(x_range), length.out = 50))
+    
+    plot(x, main = main, col = the_colors)
+    
 }
