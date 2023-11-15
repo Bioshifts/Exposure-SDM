@@ -1177,7 +1177,9 @@ bioshifts_interpCoordFromQuantile <- compiler::cmpfun(
     })
 
 # function shift plot
-shift_plot <- function(r1, r2, quants = c(0.01, 0.05, 0.1, 0.25, 0.50, 0.75, 0.9, 0.95, 0.99), times = NULL){
+shift_plot <- function(r1, r2, quants = c(0.01, 0.05, 0.1, 0.25, 0.50, 0.75, 0.9, 0.95, 0.99), times = NULL, shiftdata = NULL){
+    
+    require("shape","RColorBrewer")
     
     if(is.null(times)){
         timesNames <- paste0("t",1:2)
@@ -1193,29 +1195,31 @@ shift_plot <- function(r1, r2, quants = c(0.01, 0.05, 0.1, 0.25, 0.50, 0.75, 0.9
     
     
     ## calculate shift
+    if(is.null(shiftdata)){
+        shiftdata <- bioshifts(
+            x = myseries,
+            times = times,
+            quants = quants,
+            cores = 2,
+            metrics = c("centroid","nsCentroid","nsQuants")
+        )
+    }
     
-    tmp <- bioshifts(
-        x = myseries,
-        times = times,
-        quants = quants,
-        cores = 2,
-        metrics = c("centroid","nsCentroid","nsQuants")
-    )
     
     vars_vel <- paste("nsQuantVelocity_quant",
                       gsub("[.]","p",quants), sep = "")
     
-    velocities <- as.numeric(tmp[,vars_vel])
+    velocities <- as.numeric(shiftdata[,vars_vel])
     
     vars_lat1 <- paste("nsQuantLat1_quant",
                        gsub("[.]","p",quants), sep = "")
     
-    Lat1_Quant <- as.numeric(tmp[,vars_lat1])
+    Lat1_Quant <- as.numeric(shiftdata[,vars_lat1])
     
     vars_lat2 <- paste("nsQuantLat2_quant",
                        gsub("[.]","p",quants), sep = "")
     
-    Lat2_Quant <- as.numeric(tmp[,vars_lat2])
+    Lat2_Quant <- as.numeric(shiftdata[,vars_lat2])
     
     offset <- ext(r1)[1:2]
     offset <- abs(offset[2]-offset[1])
@@ -1223,36 +1227,46 @@ shift_plot <- function(r1, r2, quants = c(0.01, 0.05, 0.1, 0.25, 0.50, 0.75, 0.9
     
     par(mfrow=c(2,2))
     
-    plot(r1,main = timesNames[1], col = the_colors)
-    points(data.frame(x = tmp$centroidLong,
-                      y = as.numeric(tmp[,vars_lat1])))
-    text(data.frame(x = as.numeric(tmp$centroidLong+offset),
-                    y = as.numeric(tmp[,vars_lat1])),
-         labels = quants)
-    
-    plot(r2,main = timesNames[2], col = the_colors)
-    points(data.frame(x = tmp$centroidLong,
-                      y = Lat2_Quant))
-    text(data.frame(x = as.numeric(tmp$centroidLong+offset),
-                    y = Lat2_Quant),
-         labels = quants)
-    
-    
-    vecs <- data.frame(x0=c(rep(tmp$centroidLong,length(quants))),
-                       y0=Lat1_Quant, 
-                       x1=c(rep(tmp$centroidLong,length(quants))),
-                       y1=Lat2_Quant)
-    plot(r2-r1,main=paste0("Difference ", timesNames[1],"-",timesNames[2]), col = the_colors)
-    with( vecs, mapply("arrows", x0, y0, x1, y1, length = .1) )
-    
+    # Velocity over latitude
     plot(velocities,
          Lat1_Quant,
          main = "Velocity over latitude",
-         xlab = "latitude",
-         ylab = "velocity", 
+         xlab = "Velocity (km/year)",
+         ylab = "Latitude", 
          cex.axis=.8, 
-         mar=c(4, 3, 4, 3),
          cex.main=.8)
+    
+    # vectors
+    vecs <- data.frame(x0=c(rep(shiftdata$centroidLong,length(quants))),
+                       y0=Lat1_Quant, 
+                       x1=c(rep(shiftdata$centroidLong,length(quants))),
+                       y1=Lat2_Quant)
+    plot(r2-r1,main=paste0("Difference ", timesNames[2],"-",timesNames[1]), col = the_colors)
+    with( vecs, mapply("Arrows", x0, y0, x1, y1, 
+                       lwd = 2,
+                       arr.type="triangle",
+                       col = "white",
+                       arr.length = .3) )
+    with( vecs, mapply("Arrows", x0, y0, x1, y1, 
+                       lwd = .5,
+                       arr.type="triangle",
+                       arr.length = .3) )
+    
+    # t1
+    plot(r1,main = paste("Suitability", timesNames[1]), col = blue_colors)
+    points(data.frame(x = shiftdata$centroidLong,
+                      y = as.numeric(shiftdata[,vars_lat1])))
+    text(data.frame(x = as.numeric(shiftdata$centroidLong+offset),
+                    y = as.numeric(shiftdata[,vars_lat1])),
+         labels = quants)
+    
+    # t2
+    plot(r2,main = paste("Suitability", timesNames[2]), col = red_colors)
+    points(data.frame(x = shiftdata$centroidLong,
+                      y = Lat2_Quant))
+    text(data.frame(x = as.numeric(shiftdata$centroidLong+offset),
+                    y = Lat2_Quant),
+         labels = quants)
     
 }
 
@@ -1267,5 +1281,14 @@ range01raster <- function(x){
 the_palette_fc <- leaflet::colorNumeric(palette = "RdBu", 
                                         domain = c(0, 1),
                                         reverse = TRUE)
-
 the_colors <- the_palette_fc(seq(0, 1, length.out = 50))
+
+the_palette_fc <- leaflet::colorNumeric(palette = "Blues", 
+                                        domain = c(0, 1))
+blue_colors <- the_palette_fc(seq(0, 1, length.out = 50))
+
+the_palette_fc <- leaflet::colorNumeric(palette = "Reds", 
+                                        domain = c(0, 1))
+red_colors <- the_palette_fc(seq(0, 1, length.out = 50))
+
+

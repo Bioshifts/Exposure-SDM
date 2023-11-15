@@ -39,7 +39,7 @@ if(!dir.exists(jobdir)){
     dir.create(jobdir,recursive = TRUE)
 }
 
-Rscript_file = here::here(script.dir,"1_get_velocity.R")
+Rscript_file = here::here(script.dir,"1_get_velocity_SA.R")
 
 # Load study areas v3
 v3_polygons <- gsub(".shp","",list.files(SA_shps_dir,pattern = ".shp"))
@@ -65,29 +65,22 @@ Bioshifts_DB <- Bioshifts_DB[-which(duplicated(Bioshifts_DB$ID)),]
 # Filter Polygons in Study areas v3
 v3_polygons <- v3_polygons[v3_polygons %in% Bioshifts_DB$ID]
 
+# Get polygons metadata
+v3_polygons_metadata <- read.csv(here::here(Bioshifts_dir,"Geodatabase_Bioshiftsv3_metadata.csv"))
+v3_polygons_metadata <- v3_polygons_metadata[v3_polygons_metadata$Name %in% v3_polygons,]
 
 ########################
 # submit jobs
 
 N_jobs_at_a_time = 50
 
-N_Nodes = 1
-tasks_per_core = 1
-cores = 1 # this is not a parallel job
-time = "10:00:00"
-memory = "64G"
-
-# for the big jobs
-# time = "2-20:00:00"
-# memory = "120G"
-
-
 # Check if file exists
-check_if_file_exists <- FALSE
+check_if_file_exists <- TRUE
 
-for(i in 1:length(v3_polygons)){
+for(i in 1:nrow(v3_polygons_metadata)){
     
-    SAtogo <- v3_polygons[i]
+    SAtogo <- v3_polygons_metadata$Name[i]
+    ECO <- ifelse(is.na(v3_polygons_metadata$EleExtentm[i]),"Mar","Ter")
     
     args = SAtogo
     
@@ -108,17 +101,26 @@ for(i in 1:length(v3_polygons)){
         # the basic job submission script is a bash script
         cat("#!/bin/bash\n")
         
-        cat("#SBATCH -N",N_Nodes,"\n")
-        cat("#SBATCH -n",tasks_per_core,"\n")
-        cat("#SBATCH -c",cores,"\n")
-        cat("#SBATCH --mem=",memory,"\n", sep="")
+        cat("#SBATCH -N 1\n")
+        cat("#SBATCH -n 1\n")
+        
+        if(ECO=="Ter"){
+            cat("#SBATCH --partition=bigmem-amd\n")
+            cat("#SBATCH --mem=400G\n")
+            cat("#SBATCH --time=2-20:00:00\n")
+            cat("#SBATCH -c 4\n")
+        } else {
+            cat("#SBATCH --partition=normal\n")
+            cat("#SBATCH --mem=50G\n")
+            cat("#SBATCH --time=1-24:00:00\n")
+            cat("#SBATCH -c 1\n")
+        }
         
         cat("#SBATCH --job-name=",SAtogo,"\n", sep="")
         cat("#SBATCH --output=",here::here(logdir,paste0(SAtogo,".out")),"\n", sep="")
         cat("#SBATCH --error=",here::here(logdir,paste0(SAtogo,".err")),"\n", sep="")
-        cat("#SBATCH --time=",time,"\n", sep="")
-        cat("#SBATCH --mail-type=ALL\n")
-        cat("#SBATCH --mail-user=brunno.oliveira@fondationbiodiversite.fr\n")
+        # cat("#SBATCH --mail-type=ALL\n")
+        # cat("#SBATCH --mail-user=brunno.oliveira@fondationbiodiversite.fr\n")
         
         cat(paste0("IMG_DIR='",singularity_image,"'\n"))
         

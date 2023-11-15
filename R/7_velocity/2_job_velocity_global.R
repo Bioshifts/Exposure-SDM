@@ -39,7 +39,7 @@ if(!dir.exists(jobdir)){
     dir.create(jobdir,recursive = TRUE)
 }
 
-Rscript_file = here::here(script.dir,"3_global_velocity_maps.R")
+Rscript_file = here::here(script.dir,"2_get_velocity_global.R")
 
 
 # jobs dataframe
@@ -49,13 +49,7 @@ jobs_data <- data.frame(ECO = c("Ter","Ter","Mar"),
 ########################
 # submit jobs
 
-N_Nodes = 1
-tasks_per_core = 1
-cores = 1 # this is not a parallel job
-
-
 for(i in 1:nrow(jobs_data)){
-    
     
     # velocity variables
     velocity_variable <- jobs_data$velocity_variables[i]
@@ -74,19 +68,25 @@ for(i in 1:nrow(jobs_data)){
     # the basic job submission script is a bash script
     cat("#!/bin/bash\n")
     
-    cat("#SBATCH -N",N_Nodes,"\n")
-    cat("#SBATCH -n",tasks_per_core,"\n")
-    cat("#SBATCH -c",cores,"\n")
-    cat("#SBATCH --mem=",ifelse(ECO == "Ter", "400G", "120G"),"\n", sep="")
+    cat("#SBATCH -N 1\n")
+    cat("#SBATCH -n 1\n")
     
-    ifelse(ECO=="Ter",
-        cat("#SBATCH --partition=bigmem\n"),
-        cat("#SBATCH --partition=normal\n"))
+    if(ECO=="Ter"){
+        cat("#SBATCH --partition=bigmem\n")
+        cat("#SBATCH --mem=500G\n")
+        cat("#SBATCH --time=2-20:00:00\n")
+        cat("#SBATCH -c 5\n")
+    } 
+    if(ECO=="Mar"){
+        cat("#SBATCH --partition=normal\n")
+        cat("#SBATCH --mem=50G\n")
+        cat("#SBATCH --time=24:00:00\n")
+        cat("#SBATCH -c 1\n")
+    }
     
     cat("#SBATCH --job-name=",job_name,"\n", sep="")
     cat("#SBATCH --output=",here::here(logdir,paste0(job_name,".out")),"\n", sep="")
     cat("#SBATCH --error=",here::here(logdir,paste0(job_name,".err")),"\n", sep="")
-    cat("#SBATCH --time=",ifelse(ECO == "Ter", "2-20:00:00", "24:00:00"),"\n", sep="")
     cat("#SBATCH --mail-type=ALL\n")
     cat("#SBATCH --mail-user=brunno.oliveira@fondationbiodiversite.fr\n")
     

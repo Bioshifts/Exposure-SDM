@@ -114,6 +114,7 @@ spatial_grad <- function(rx, y_diff = 1) {
 # truncate is for bounding max and min values to upper (95%) and lower (5%) quantiles, respectively
 gVelocity <- function(grad, slope, grad_col = NULL, truncate=FALSE) {
     
+    grad <- as.data.frame(grad)
     v <- slope
     v_ang <- slope
     v_ang[grad$icell] <- grad$angle

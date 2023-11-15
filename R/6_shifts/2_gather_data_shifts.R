@@ -1,39 +1,41 @@
 # Setup
 # remotes::install_github("hughjonesd/ggmagnify")
+# devtools::install_github(c("yihui/servr", "hafen/rmote")) 
 
 rm(list=ls())
 gc()
 
-library(dplyr)
-library(ggplot2)
-library(tune)
-library(GGally)
-library(ggmagnify)
-library(lme4)
-library(terra)
-library(rgdal)
-library(maps)
-library(readr)
+list.of.packages <- c("dplyr","ggplot2","tune","GGally","ggmagnify","lme4","terra", "rgdal","maps","readr","rmote")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+sapply(list.of.packages, require, character.only = TRUE)
+
 
 ###
-# computer = "muse"
-computer = "personal"
+# set computer
+computer = "matrics"
 
 if(computer == "muse"){
     setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
+}
+if(computer == "matrics"){
+    setwd("/users/boliveira/Exposure-SDM")
 }
 
 work_dir <- getwd()
 shift_dir <- here::here(work_dir,"Data/SHIFT")
 sdm_dir <- here::here(work_dir,"Data/SDMs")
 
+source("R/settings.R")
+
 ###
 ### Load in Bioshifts ----
-biov1 <- read.csv("Data/Bioshifts/biov1_fixednames.csv", header = T)
+biov1 <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v1), header = T)
 
 # N species
 length(unique(biov1$sp_name_std_v1))
 
+# Lat only
 biov1 <- biov1 %>% 
     mutate(
         Type = case_when(
@@ -52,7 +54,7 @@ biov1$new_ID <- paste(biov1$ID,
                       biov1$Type,
                       biov1$Param)
 
-any(duplicated(biov1$new_ID))
+# any(duplicated(biov1$new_ID))
 # test = which(duplicated(biov1$new_ID))
 # biov1$new_ID[test][1]
 # biov1[which(biov1$new_ID == biov1$new_ID[test][1]),]
@@ -65,12 +67,12 @@ dim(biov1)
 ###
 ### Load occ data ----
 # add group
-n_occ <- read_csv("Data/n_occ2.csv")
+n_occ <- read_csv("Data/n_occ.csv")
 n_occ$scientificName <- gsub(" ","_",n_occ$scientificName)
 
 ###
 ### Load in SDM CV ----
-sdms_CV <- read.csv(here::here(sdm_dir,"sdms_CV.csv"))
+sdms_CV <- read.csv(here::here(scratch_dir,"SDMs","sdms_CV.csv"))
 sdms_CV <- sdms_CV %>% dplyr::filter(metric.eval == "TSS")
 # sdms_CV <- sdms_CV %>% dplyr::filter(validation > 0)
 
@@ -85,16 +87,23 @@ all(sdms_CV$Species %in% n_occ$scientificName)
 # N species
 length(unique(sdms_CV$Species))
 
+# N Marine
+length(unique(sdms_CV$Species[which(sdms_CV$ECO=="Marine")]))
+# N Terrestrial
+length(unique(sdms_CV$Species[which(sdms_CV$ECO=="Terrestrial")]))
+
 # add Taxonomic group and N occ
 sdms_CV <- merge(sdms_CV, n_occ[,c("scientificName","Group","n_occ")], 
                  by.x = "Species", 
                  by.y = "scientificName",
                  all.x = TRUE)
 
+par(mfrow=c(2,2))
 plot(log(sdms_CV$n_occ),sdms_CV$validation)
 plot(log(sdms_CV$n_occ),sdms_CV$calibration)
 plot(sdms_CV$calibration,sdms_CV$validation)
 plot(log(sdms_CV$n_occ),sdms_CV$sensitivity)
+# dev.off()
 
 sdms_CV_plot <- sdms_CV[,c("algo","calibration","validation","Group","ECO")] %>%
     tidyr::gather("Type", "TSS", -c(algo,Group,ECO)) 

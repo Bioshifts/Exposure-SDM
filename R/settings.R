@@ -55,6 +55,9 @@ scratch_dir <- if(computer == "muse"){
     }
 }
 
+# Temporary data
+tmp_dir <- here::here(scratch_dir,"tmp")
+
 # Bioshifts dir
 Bioshifts_dir <- here::here(work_dir,"Data/Bioshifts")
 
@@ -105,17 +108,20 @@ velocity_SA_scrit_dir <- here::here(work_dir,"R/7_velocity")
 # SA shapefiles dir
 SA_shps_dir <- here::here(Bioshifts_dir,"ShapefilesBioShiftsv3")
 
-# Range shifts dir
-shift_dir <- function(realm){here::here("Data/SHIFT",realm)}
+# Range shift dir
+shift_dir <- function(realm){here::here(work_dir,"Data/SHIFT",realm)}
+
+# Range shift plot
+shiftplot_dir <- function(realm){here::here(work_dir,"Data/SHIFTplot",realm)}
 
 # Range shift scripts dir
-shift_script_dir <- here::here("R/6_shifts")
+shift_script_dir <- here::here(work_dir,"R/6_shifts")
 
 # SDMs dir
 sdm_dir <- function(realm){here::here(scratch_dir,"SDMs",realm)}
 
 # SDMs scripts dir
-sdm_script_dir <- here::here("R/5_run_sdms")
+sdm_script_dir <- here::here(work_dir,"R/5_sdms")
 
 # Singularity image
 singularity_image <- if(computer == "muse"){

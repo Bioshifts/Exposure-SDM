@@ -11,23 +11,21 @@ library(here)
 
 ########################
 # set computer
-computer = "muse"
+computer = "matrics"
 
 for(j in c("Mar","Ter")){
     
     
     if(computer == "muse"){
         setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
-        
-        realm = j
-        
         work_dir <- getwd()
-        
-        shift_dir <- here::here(work_dir,"Data/SHIFT",realm)
-        scratch_dir <- "/lustre/oliveirab"
-        sdm_dir <- here::here(scratch_dir,"SDMs",realm)
-        script.dir <- here::here(work_dir,"R/6_shifts")
     }
+    if(computer == "matrics"){
+        setwd("/users/boliveira/Exposure-SDM")
+        work_dir <- getwd()
+    }
+    
+    script.dir <- here::here(work_dir,"R/6_shifts")
     
     # create dir for log files
     logdir <- here::here(script.dir,"slurm-log")
@@ -51,40 +49,15 @@ for(j in c("Mar","Ter")){
     source("R/settings.R")
     
     # create dirs
-    if(!dir.exists(shift_dir)){
-        dir.create(shift_dir,recursive = TRUE)
+    realm <- j
+    if(!dir.exists(shift_dir(realm))){
+        dir.create(shift_dir(realm),recursive = TRUE)
     }
     
     ########################
     # sp list
-    all_sps <- list.dirs(here::here(sdm_dir), recursive = FALSE, full.names = FALSE)
+    all_sps <- list.dirs(here::here(sdm_dir(realm)), recursive = FALSE, full.names = FALSE)
     all_sps <- gsub("_"," ",all_sps)
-    
-    length(all_sps)
-    
-    # select species SDMs worked out
-    check <- sapply(1:length(all_sps), function(i) {
-        
-        # check if dir exists
-        tmp = dir.exists(here::here(sdm_dir,
-                                    gsub(" ","_",all_sps[i]),
-                                    gsub(" ",".",all_sps[i])))
-        
-        if(!tmp){
-            FALSE
-        } else {
-            # check if there a file with ensemble model outputs
-            tmp = list.files(here::here(sdm_dir,
-                                        gsub(" ","_",all_sps[i]),
-                                        gsub(" ",".",all_sps[i])))
-            tmp = any(grepl("SA start ens",tmp))
-        }
-        
-        return(tmp)
-        
-    })
-    table(check)
-    all_sps <- all_sps[check]
     
     length(all_sps)
     
@@ -96,35 +69,6 @@ for(j in c("Mar","Ter")){
     
     all_sps <- all_sps[all_sps %in% biov1_sps]
     
-    length(all_sps)
-    
-    # Run for species from which shift was not calculated yet or with errors in shift
-    # species shift were calculated
-    tmp <- list.files(shift_dir, recursive = T, pattern = " ens shift SA.csv")
-    tmp <- gsub(" ens shift SA.csv","",tmp)
-    tmp <- gsub("_"," ",tmp)
-    # missing 1
-    miss1 <- all_sps[!all_sps %in% tmp]
-    # Find the ones with errors
-    tmp <- list.files(shift_dir, recursive = T, pattern = " ens shift SA.csv")
-    tmp <- gsub(" ens shift SA.csv","",tmp)
-    tmp <- gsub("_"," ",tmp)
-    tmp2 <- sapply(tmp, function(x){
-        try({
-            test <- read.csv(here::here(shift_dir,paste0(gsub(" ","_",x)," ens shift SA.csv")))
-        is.na(test[1,1])
-        },silent = TRUE)
-    })
-    # missing 2
-    miss2 <- tmp[tmp2]
-    # group
-    miss <- na.omit(unique(c(miss1,miss2)))
-    
-    all_sps <- miss
-    
-    length(all_sps)
-    
-    
     ########################
     # submit jobs
     
@@ -134,9 +78,11 @@ for(j in c("Mar","Ter")){
     tasks_per_core = 1
     cores = 1
     time = "40:00"
-    memory = "64G"
+    memory = "16G"
     
     cat("Running for", length(all_sps), realm, "species\n")
+    
+    # all_sps = missing_sps
     
     for(i in 1:length(all_sps)){
         
@@ -154,6 +100,9 @@ for(j in c("Mar","Ter")){
         cat("#SBATCH -N",N_Nodes,"\n")
         cat("#SBATCH -n",tasks_per_core,"\n")
         cat("#SBATCH -c",cores,"\n")
+        if(computer == "matrics"){
+            cat("#SBATCH --partition=normal\n")
+        }
         
         cat("#SBATCH --job-name=",sptogo,"\n", sep="")
         cat("#SBATCH --output=",here::here(logdir,paste0(sptogo,".out")),"\n", sep="")
@@ -163,12 +112,22 @@ for(j in c("Mar","Ter")){
         # cat("#SBATCH --mail-type=ALL\n")
         # cat("#SBATCH --mail-user=brunno.oliveira@fondationbiodiversite.fr\n")
         
-        cat("IMG_DIR='/storage/simple/projects/t_cesab/brunno'\n")
-        
-        cat("module purge\n")
-        cat("module load singularity/3.5\n")
-        
-        cat("singularity exec --disable-cache $IMG_DIR/brunnospatial.sif Rscript",Rscript_file, args,"\n", sep=" ")
+        if(computer == "muse"){
+            cat("IMG_DIR='/storage/simple/projects/t_cesab/brunno'\n")
+            
+            cat("module purge\n")
+            cat("module load singularity/3.5\n")
+            
+            cat("singularity exec --disable-cache $IMG_DIR/brunnospatial.sif Rscript",Rscript_file, args,"\n", sep=" ")
+        }
+        if(computer == "matrics"){
+            cat(paste0("IMG_DIR='",singularity_image,"'\n"))
+            
+            cat("module purge\n")
+            cat("module load singularity\n")
+            
+            cat("singularity exec --disable-cache $IMG_DIR Rscript",Rscript_file, args,"\n", sep=" ")
+        }
         
         # Close the sink!
         sink()
@@ -190,3 +149,11 @@ for(j in c("Mar","Ter")){
     
 }
 
+
+# check if everything run
+test <- list.files(shiftplot_dir(realm))
+test <- sapply(test, function(x) strsplit(x," ")[[1]][1])
+test <- gsub("_"," ",test)
+# missing
+missing_sps <- all_sps[!all_sps %in% test]
+missing_sps
