@@ -1,5 +1,5 @@
 # load ecoregions
-get_ecoregions <- function(realm, PresAbs, mask.ras, return.shp = TRUE, return.raster = TRUE, varsdir, check_if_exists = TRUE){
+get_ecoregions <- function(realm, sptogo, PresAbs, mask.ras, return.shp = TRUE, return.raster = TRUE, varsdir, check_if_exists = TRUE, output_dir){
     
     if(all(!return.shp,!return.raster)){
         stop("Use return.shp = TRUE or return.raster = TRUE.\nAt least one type of file should be returned.")
@@ -16,11 +16,11 @@ get_ecoregions <- function(realm, PresAbs, mask.ras, return.shp = TRUE, return.r
                 ecoreg_shp <- terra::vect(shptosave)
             } else { # if not, create the BA
                 ecoreg_shp <- get_BA_shp(varsdir, realm, PresAbs)
-                terra::writeVector(ecoreg_shp,shptosave)
+                terra::writeVector(ecoreg_shp,shptosave,overwrite=TRUE)
             }
         } else {
             ecoreg_shp <- get_BA_shp(varsdir, realm, PresAbs)
-            terra::writeVector(ecoreg_shp,shptosave)
+            terra::writeVector(ecoreg_shp,shptosave,overwrite=TRUE)
         }
         
         
