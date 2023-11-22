@@ -632,3 +632,38 @@ fix.spnames <- function(x){
     }
     return(tmp)
 }
+
+# delete duplicated SDM generated from biomod
+delete_duplicated_models <- function(realm,species){
+    # models
+    files_sdms <- list.files(
+        here::here(sdm_dir(realm),species,gsub("_",".",species),"models"), 
+        full.names = TRUE)  
+    
+    if(length(files_sdms) > 1){ # if there are > 1 model, keep the most recent one
+        del <- order(file.info(files_sdms)$ctime,decreasing = TRUE)[-1]
+        
+        unlink(files_sdms[del],recursive = TRUE)
+    }
+    
+    # link to models
+    files_sdms_model <- list.files(
+        here::here(sdm_dir(realm),species,gsub("_",".",species)), 
+        pattern = "models.out",
+        full.names = TRUE)  
+    
+    if(length(files_sdms)==0){ # if there are mo models, delete all
+        unlink(files_sdms_model)
+    }
+    
+    if(length(files_sdms_model) > 2){ # if there are > 2 (simple + ensemble)
+        
+        which_sdm <- strsplit(files_sdms,split = "/")[[1]]
+        which_sdm <- which_sdm[length(which_sdm)]
+        
+        del <- files_sdms_model[!grepl(which_sdm, files_sdms_model)]
+        
+        unlink(del)
+        
+    }
+}
