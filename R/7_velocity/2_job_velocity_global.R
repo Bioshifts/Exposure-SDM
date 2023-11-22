@@ -87,8 +87,8 @@ for(i in 1:nrow(jobs_data)){
     cat("#SBATCH --job-name=",job_name,"\n", sep="")
     cat("#SBATCH --output=",here::here(logdir,paste0(job_name,".out")),"\n", sep="")
     cat("#SBATCH --error=",here::here(logdir,paste0(job_name,".err")),"\n", sep="")
-    cat("#SBATCH --mail-type=ALL\n")
-    cat("#SBATCH --mail-user=brunno.oliveira@fondationbiodiversite.fr\n")
+    # cat("#SBATCH --mail-type=ALL\n")
+    # cat("#SBATCH --mail-user=brunno.oliveira@fondationbiodiversite.fr\n")
     
     cat(paste0("IMG_DIR='",singularity_image,"'\n"))
     

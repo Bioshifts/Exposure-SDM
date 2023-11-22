@@ -67,17 +67,10 @@ env_data_dir <- function(realm){here::here(work_dir,"Data/Env_data",realm)}
 # Env variables dir
 vars_dir <- function(realm){
     if(realm == "Ter"){
-        if(ter_data == "cruts"){
-            here::here(scratch_dir,"Data/Land/cruts")
-        } else {
-            here::here(scratch_dir,"Data/Land/chelsa")
-        }
-    } else {
-        if(mar_data == "oras"){
-            here::here(scratch_dir,"Data/Marine/oras")
-        } else {
-            here::here(scratch_dir,"Data/Marine/copernicus")
-        }
+        return(here::here(scratch_dir,"Data/Land",ter_data))
+    }
+    if(realm == "Mar"){
+        return(here::here(scratch_dir,"Data/Marine",mar_data))
     }
 }
 

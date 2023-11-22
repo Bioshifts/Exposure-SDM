@@ -489,7 +489,7 @@ table(biov2$ECO)
 # 3) Registered after 1979 (limit is 2022)
 
 
-ncores = as.numeric(Sys.getenv("SLURM_CPUS_ON_NODE"))
+ncores = parallelly::availableCores()
 
 cl <- makeCluster(ncores)
 clusterExport(cl, c("splist","basisOfRecord","range_env_data"))

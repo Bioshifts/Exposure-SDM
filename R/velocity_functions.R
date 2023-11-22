@@ -175,14 +175,6 @@ gVelocity <- function(grad, slope, grad_col = NULL, truncate=FALSE) {
            ifelse(dx < 0, 360 + rad_to_deg(atan(dx /dy )), rad_to_deg(atan(dx/dy))))
 }
 #---
-.is.projected <- function(x) {
-    if (inherits(x,'SpatRaster')) {
-        e <- as.vector(terra::ext(x))
-    } else e <- as.vector(extent(x))
-    
-    !all(e >= -180 & e <= 180)
-}
-#---
 deg_to_rad <- function (degree) {
     (degree * pi) / 180
 }
@@ -237,4 +229,11 @@ velocity_map <- function(x, main = ""){
     
     plot(x, main = main, col = the_colors)
     
+}
+#---
+circ_mean <- function(x) { 
+  x=na.omit(x)
+  x = x * pi/180 
+  x = atan2(mean(sin(x)), mean(cos(x))) * 180/pi
+  return(ifelse(x < 0, x+360,x))
 }

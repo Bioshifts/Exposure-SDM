@@ -68,6 +68,7 @@ v3_polygons <- v3_polygons[v3_polygons %in% Bioshifts_DB$ID]
 # Get polygons metadata
 v3_polygons_metadata <- read.csv(here::here(Bioshifts_dir,"Geodatabase_Bioshiftsv3_metadata.csv"))
 v3_polygons_metadata <- v3_polygons_metadata[v3_polygons_metadata$Name %in% v3_polygons,]
+v3_polygons_metadata$ECO <- ifelse(is.na(v3_polygons_metadata$EleExtentm),"Mar","Ter")
 
 ########################
 # submit jobs
@@ -80,7 +81,7 @@ check_if_file_exists <- TRUE
 for(i in 1:nrow(v3_polygons_metadata)){
     
     SAtogo <- v3_polygons_metadata$Name[i]
-    ECO <- ifelse(is.na(v3_polygons_metadata$EleExtentm[i]),"Mar","Ter")
+    ECO <- v3_polygons_metadata$ECO[i]
     
     args = SAtogo
     
@@ -106,9 +107,9 @@ for(i in 1:nrow(v3_polygons_metadata)){
         
         if(ECO=="Ter"){
             cat("#SBATCH --partition=bigmem-amd\n")
-            cat("#SBATCH --mem=400G\n")
+            cat("#SBATCH --mem=100G\n")
             cat("#SBATCH --time=2-20:00:00\n")
-            cat("#SBATCH -c 4\n")
+            cat("#SBATCH -c 5\n")
         } else {
             cat("#SBATCH --partition=normal\n")
             cat("#SBATCH --mem=50G\n")
@@ -151,21 +152,22 @@ for(i in 1:nrow(v3_polygons_metadata)){
 }
 
 
-# # check if I got velocities for all SA
-# # list of SA we got data
-# SA_got <- list.files(velocity_SA_dir)
-# SA_got <- gsub(".csv","",SA_got)
-# missing_SA <- v3_polygons[!v3_polygons %in% SA_got]
-# length(missing_SA)
-# head(missing_SA)
-# 
-# v3_polygons <- missing_SA
-# 
-# # Check error file
-# error_f <- lapply(missing_SA, function(x){
-#     tmp <- read.csv(here::here(script.dir,"slurm-log",paste0(x,".err")))
-#     tmp[nrow(tmp),]
-# })
-# error_f
+# check if I got velocities for all SA
+# list of SA we got data
+SA_got <- list.files(velocity_SA_dir)
+SA_got <- gsub(".csv","",SA_got)
+missing_SA <- v3_polygons[!v3_polygons %in% SA_got]
+length(missing_SA)
+head(missing_SA)
+
+v3_polygons <- missing_SA
+v3_polygons_metadata <- v3_polygons_metadata[v3_polygons_metadata$Name %in% v3_polygons,]
+
+# Check error file
+error_f <- lapply(v3_polygons, function(x){
+    tmp <- read.csv(here::here(script.dir,"slurm-log",paste0(x,".err")))
+    tmp[nrow(tmp),]
+})
+error_f
 
 

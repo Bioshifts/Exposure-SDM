@@ -5,26 +5,42 @@
 rm(list=ls())
 gc()
 
-
 library(tictoc)
 library(here)
+
+# set computer
+computer = "matrics"
+
+if(computer == "muse"){
+    setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
+    work_dir <- getwd()
+}
+if(computer == "matrics"){
+    setwd("/users/boliveira/Exposure-SDM")
+    work_dir <- getwd()
+}
+
+# source settings
+source("R/settings.R")
 
 ########################
 # set computer
 computer = "matrics"
 
-for(j in c("Mar","Ter")){
+realms = c("Mar","Ter")
+
+for(j in 1:length(realms)){
     
+    realm <- realms[j]
     
     if(computer == "muse"){
         setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
-        work_dir <- getwd()
     }
     if(computer == "matrics"){
         setwd("/users/boliveira/Exposure-SDM")
-        work_dir <- getwd()
     }
     
+    work_dir <- getwd()
     script.dir <- here::here(work_dir,"R/6_shifts")
     
     # create dir for log files
@@ -49,25 +65,64 @@ for(j in c("Mar","Ter")){
     source("R/settings.R")
     
     # create dirs
-    realm <- j
     if(!dir.exists(shift_dir(realm))){
         dir.create(shift_dir(realm),recursive = TRUE)
     }
     
     ########################
-    # sp list
+    # sp list I have sdms
     all_sps <- list.dirs(here::here(sdm_dir(realm)), recursive = FALSE, full.names = FALSE)
     all_sps <- gsub("_"," ",all_sps)
-    
     length(all_sps)
     
-    # select only v1 species for now
-    biov1 <- read.csv("Data/Bioshifts/biov1_fixednames.csv", header = T)
-    biov1 <- biov1[biov1$Type=="LAT",]
+    # get info from v1
+    biov1 <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v1), header = T)
+    # only LAT
+    biov1$Type[which(biov1$Type=="HOR")] <- "LAT"
+    biov1 <- biov1[which(biov1$Type=="LAT"),]
+    biov1 <- biov1[which(biov1$sp_name_std_v1 %in%  gsub(" ","_",all_sps)),]
     
-    biov1_sps <- unique(gsub("_"," ",biov1$sp_name_std_v1))
+    # sp list - Species with full sdms
+    I_have_sdms <- c()
+    for(i in 1:length(all_sps)) { cat(i, "from", length(all_sps),"\r")
+        sp_i <- gsub(" ","_",all_sps[i])
+        sp_i_realm <- realm
+        # get studies for species i
+        ID_i <- unique(biov1$ID[which(biov1$sp_name_std_v1 == sp_i)])
+        # for each ID_i, look if has projections for all years
+        I_have_sdms[i] <- all(sapply(ID_i, function(x){
+            bio_i <- biov1[which(biov1$ID == x),]
+            bio_i <- biov1[which(biov1$sp_name_std_v1 == sp_i),]
+            years_ID_i <- round(bio_i$START[1],0):round(bio_i$END[1],0)
+            # check
+            # Focus on SA for now
+            sdms_sp_i <- list.files(paste(sdm_dir(sp_i_realm),sp_i,gsub("_",".",sp_i),sep = "/"),pattern = "SA")
+            # get ensemble models
+            sdms_sp_i_ens <- sdms_sp_i[grep(" ens",sdms_sp_i)]
+            # get single algorithms
+            # sdms_sp_i <- sdms_sp_i[-grep(" ens",sdms_sp_i)]
+            # check if all years exist
+            sdms_sp_i_ens <- all(sapply(years_ID_i, function(x){any(grepl(x,sdms_sp_i_ens))}))
+            # sdms_sp_i <- all(sapply(years_ID_i, function(x){any(grepl(x,sdms_sp_i))}))
+            # all(sdms_sp_i,sdms_sp_i_ens)
+            sdms_sp_i_ens
+        }))
+    }
+    I_have_sdms <- all_sps[which(I_have_sdms)]
+    length(I_have_sdms)
     
-    all_sps <- all_sps[all_sps %in% biov1_sps]
+    # select from the list of species I have sdms the ones which we still did not have shift calculated
+    I_have_shift <- list.files(shift_dir(realm))
+    I_have_shift <- I_have_shift[grep(" ens SA",I_have_shift)]
+    I_have_shift <- gsub(" shift ens SA.csv","",I_have_shift)
+    length(I_have_shift)
+    
+    # missing
+    missing <- I_have_sdms[!I_have_sdms %in% gsub("_"," ",I_have_shift)]
+    length(missing)
+    
+    # species to go
+    all_sps <- missing
     
     ########################
     # submit jobs
@@ -82,7 +137,6 @@ for(j in c("Mar","Ter")){
     
     cat("Running for", length(all_sps), realm, "species\n")
     
-    # all_sps = missing_sps
     
     for(i in 1:length(all_sps)){
         
@@ -101,7 +155,7 @@ for(j in c("Mar","Ter")){
         cat("#SBATCH -n",tasks_per_core,"\n")
         cat("#SBATCH -c",cores,"\n")
         if(computer == "matrics"){
-            cat("#SBATCH --partition=normal\n")
+            cat("#SBATCH --partition=normal-amd\n")
         }
         
         cat("#SBATCH --job-name=",sptogo,"\n", sep="")
@@ -149,11 +203,3 @@ for(j in c("Mar","Ter")){
     
 }
 
-
-# check if everything run
-test <- list.files(shiftplot_dir(realm))
-test <- sapply(test, function(x) strsplit(x," ")[[1]][1])
-test <- gsub("_"," ",test)
-# missing
-missing_sps <- all_sps[!all_sps %in% test]
-missing_sps

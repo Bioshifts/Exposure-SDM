@@ -78,6 +78,9 @@ if(ECO=="Ter"){
     # get elevation
     elevation <- terra::rast(here::here(work_dir,"Data/elevation_1km.tif"))
     
+    # get elevation slope
+    elevation_slope <- terra::rast(here::here(work_dir,"Data/elevation_slp_1km.tif"))
+    
     # select the climate variable
     climate_layers <- climate_layers[[which(names(climate_layers)==velocity_variable)]]
     
@@ -184,8 +187,10 @@ if(ECO=="Ter"){
     
     # force rasters to pair
     elevation <- terra::project(elevation,avg_climate_layers)
+    elevation_slope <- terra::project(elevation_slope,avg_climate_layers)
     # remove oceans
     elevation[is.na(avg_climate_layers)] <- NA
+    elevation_slope[is.na(avg_climate_layers)] <- NA
     
     spgrad_ele_file <- here::here(work_dir,"Data",
                                   paste(ECO,velocity_variable,"spgrad_ele",paste0(S_time_name,".qs"), sep = "_"))
@@ -249,6 +254,8 @@ if(ECO=="Ter"){
     
     # Apply conversion >> What is the environmental gradient up slope? (C/km up slope)
     spgrad_ele$Grad_ele <- spgrad_ele$Grad * conversion_rate
+    # Apply conversion >> What is the distance upslope needed to cover the same distance in the flat terrain? (C/km up slope)
+    spgrad_ele$Grad_ele <- spgrad_ele$Grad_ele / cos(deg_to_rad(elevation_slope[spgrad_ele$icell]))
     
     #######
     ## calculate gradient-based climate velocity:
@@ -268,7 +275,7 @@ if(ECO=="Ter"){
     gVel <- gVelocity(grad = spgrad, slope = ttrend, truncate = TRUE)
     
     ## Angle gradient
-    gVelAngle <- gVel
+    gVelAngle <- gVel$GradAng
     gVelAngle[spgrad$icell] <- spgrad$angle
     
     ## Angle upslope
@@ -277,18 +284,18 @@ if(ECO=="Ter"){
     
     #######
     ## change sign of gVelLat if in the south hemisphere to reflect a velocity away of the tropics
-    SouthCells <- terra::as.data.frame(gVelLat, xy = TRUE, cell = TRUE) 
+    SouthCells <- terra::as.data.frame(gVelLat$GradVel, xy = TRUE, cell = TRUE) 
     SouthCells <- SouthCells %>% filter(y<0)
     SouthCells <- SouthCells$cell
     if(length(SouthCells)>0){
-        gVelLat[SouthCells] <- gVelLat[SouthCells] * -1
+        gVelLat$GradVel[SouthCells] <- gVelLat$GradVel[SouthCells] * -1
     }
     
     # in CHELSA, temperature is *10
     if(velocity_variable=="mat"){
-        gVelLat <- gVelLat/10
-        gVelEle <- gVelEle/10
-        gVel <- gVel/10
+        gVelLat$GradVel <- gVelLat$GradVel/10
+        gVelEle$GradVel <- gVelEle$GradVel/10
+        gVel$GradVel <- gVel$GradVel/10
     }
     
     #######
@@ -308,7 +315,7 @@ if(ECO=="Ter"){
         filename = here::here("Data",paste(ECO,velocity_variable,"gVel",paste0(S_time_name,".tif"), sep = "_")),
         overwrite = TRUE)
     terra::writeRaster(
-        gVelAngle,
+        gVel$GradAng,
         filename = here::here("Data",paste(ECO,velocity_variable,"gVelAngle",paste0(S_time_name,".tif"), sep = "_")),
         overwrite = TRUE)
     terra::writeRaster(
@@ -373,17 +380,13 @@ if(ECO=="Ter"){
     cat("calculate velocity undirectional\n")
     gVel <- gVelocity(grad = spgrad, slope = ttrend, truncate = TRUE)
     
-    ## Angle
-    gVelAngle <- gVel
-    gVelAngle[spgrad$icell] <- spgrad$angle
-    
     #######
     ## change sign of gVelLat if in the south hemisphere to reflect a velocity away of the tropics
-    SouthCells <- terra::as.data.frame(gVelLat, xy = TRUE, cell = TRUE) 
+    SouthCells <- terra::as.data.frame(gVelLat$GradVel, xy = TRUE, cell = TRUE) 
     SouthCells <- SouthCells %>% filter(y<0)
     SouthCells <- SouthCells$cell
     if(length(SouthCells)>0){
-        gVelLat[SouthCells] <- gVelLat[SouthCells] * -1
+        gVelLat$GradVel[SouthCells] <- gVelLat$GradVel[SouthCells] * -1
     }
     
     #######
@@ -398,7 +401,7 @@ if(ECO=="Ter"){
         filename = here::here("Data",paste(ECO,velocity_variable,"gVel",paste0(S_time_name,".tif"), sep = "_")),
         overwrite = TRUE)
     terra::writeRaster(
-        gVelAngle,
+        gVel$GradAng,
         filename = here::here("Data",paste(ECO,velocity_variable,"gVelAngle",paste0(S_time_name,".tif"), sep = "_")),
         overwrite = TRUE)
     

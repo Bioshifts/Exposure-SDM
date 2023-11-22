@@ -21,5 +21,5 @@ for year in range(1958, 2020):
             ],
             'format': 'zip',
         },
-        '/lustre/oliveirab/Data/SST_ORAS_downloads/download_'+str(year)+'.zip')
+        '/scratch/boliveira/Data/Marine/oras/SST_ORAS_downloads/download_'+str(year)+'.zip')
                 

@@ -2,7 +2,7 @@
 rm(list=ls())
 gc()
 
-list.of.packages <- c("terra","elevatr","raster","sf","rgdal","Hmisc","dplyr", "data.table","enmSdmX","biomod2")
+list.of.packages <- c("terra","elevatr","raster","sf","rgdal","Hmisc","dplyr", "data.table","enmSdmX","biomod2","shape")
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
 if(length(new.packages)) install.packages(new.packages)
 sapply(list.of.packages, require, character.only = TRUE)
@@ -40,12 +40,12 @@ print(sptogo)
 print(realm)
 
 # sptogo="Anoplopoma_fimbria" # example of species with multiple shifts
-# sptogo="Abra_alba"
+# sptogo="Aplodactylus_arctidens"
 # realm <- "Mar"
 
 # sptogo="Amphipoea_oculea"
 # sptogo="Myrmus_miriformis"
-# sptogo="Allophyes_oxyacanthae"
+# sptogo="Carex_extensa"
 # realm <- "Ter"
 
 sptogo <- gsub(" ","_",sptogo)
@@ -95,18 +95,18 @@ sdms_names <- list.files(here::here(sdm_dir,sptogo,gsub("_",".",sptogo)),
 sdms_names <- gsub("proj_","",sdms_names)
 
 # ensemble models
-pos <- grep("ens",sdms)
+pos <- grep(" ens",sdms)
 sdms_ens <- sdms[pos]
 sdms_ens_names <- sdms_names[pos]
 
 # single models
-pos <- !grepl("ens",sdms)
+pos <- !grepl(" ens",sdms)
 sdms <- sdms[pos]
 sdms_names <- sdms_names[pos]
 
 # check if have projection for all years
 test_sdms_names <- sapply(1:nrow(shift_info), function(i){
-    tmp <- sdms_names[grep(shift_info$ID[i],sdms_names)]
+    tmp <- sdms_ens_names[grep(shift_info$ID[i],sdms_ens_names)]
     all(sapply(round(shift_info$START[i],0):round(shift_info$END[i],0), function(x){
         any(grepl(x,tmp))
     }))
@@ -142,6 +142,7 @@ sdms_ens_SA <- lapply(1:nrow(shift_info), function(i) {
     tmp <- sdms_ens[grep(shift_info$ID[i],sdms_ens)]
     
     tmp_tif = list.files(tmp,full.names = T,pattern = ".tif")
+    
     tmp <- lapply(tmp_tif, function(x) mean(rast(x)))
     names(tmp) <- round(shift_info$START[i],0):round(shift_info$END[i],0)
     return(rast(tmp))
@@ -152,58 +153,62 @@ shifts_SA_ens <- list()
 
 for(i in 1:length(sdms_ens_SA)){ # loop across shifts
     
-    # shift info
-    info_i <- shift_info[i,]
-    
-    # sdms
-    sdms_i <- sdms_ens_SA[[i]]
-    
-    # project to equal-area
-    sdms_i <- terra::project(sdms_i,Eckt)
-    
-    # range 0-1
-    sdms_i <- rast(lapply(sdms_i, range01raster))
-    
-    # quantiles
-    quants <- c(0.01, 0.05, 0.1, 0.5, 0.9, 0.95, 0.99)
-    
-    names(sdms_i) <- paste0("t",1:nlyr(sdms_i))
-    times <- round(shift_info$START[1],0):round(shift_info$END[1],0)
-    
-    # remove if all cells are unsuitable
-    rem <- data.frame(minmax(sdms_i))
-    rem <- apply(rem,2,function(x) all(is.na(x)))
-    if(any(rem)){
-        sdms_i <- sdms_i[[!rem]]
-        times <- times[!rem]
+    test <- try({
+        # shift info
+        info_i <- shift_info[i,]
+        
+        # sdms
+        sdms_i <- sdms_ens_SA[[i]]
+        
+        # project to equal-area
+        sdms_i <- terra::project(sdms_i,Eckt)
+        
+        # range 0-1
+        sdms_i <- rast(lapply(sdms_i, range01raster))
+        
+        # quantiles
+        quants <- c(0.01, 0.05, 0.1, 0.5, 0.9, 0.95, 0.99)
+        
+        names(sdms_i) <- paste0("t",1:nlyr(sdms_i))
+        times <- round(shift_info$START[i],0):round(shift_info$END[i],0)
+        
+        # remove if all cells are unsuitable
+        rem <- data.frame(minmax(sdms_i))
+        rem <- apply(rem,2,function(x) all(is.na(x)))
+        if(any(rem)){
+            sdms_i <- sdms_i[[!rem]]
+            times <- times[!rem]
+        }
+        
+        tmp <- bioshifts(
+            x = sdms_i,
+            times = times,
+            quants = quants,
+            cores = 2,
+            metrics = c("centroid","nsCentroid","nsQuants")
+        )
+        tmp <- tmp[,-2]
+        names(tmp)[1:3] <- c("START","END","DUR")
+        # add info
+        tmp$ID <- info_i$ID
+        tmp$Type <- info_i$Type
+        tmp$Species <- info_i$Species
+        tmp$time_period = info_i$time_period
+        tmp$model = "ENSEMBLE"
+        
+        shifts_SA_ens[[i]] <- tmp
+        
+        pdf(here::here(shiftplot_dir,
+                       paste(sptogo, info_i$ID, info_i$Type, info_i$time_period, tmp$model[1], "shiftplot SA.pdf")))
+        shift_plot(r1 = sdms_i[[1]], 
+                   r2 = sdms_i[[nlyr(sdms_i)]], 
+                   quants = quants,
+                   times = c(tmp$START[1], tmp$END[nrow(tmp)]))
+        dev.off()
+    },silent = TRUE)
+    if(class(test)=="try-error"){
+        shifts_SA_ens[[i]] <- NULL
     }
-    
-    tmp <- bioshifts(
-        x = sdms_i,
-        times = times,
-        quants = quants,
-        cores = 2,
-        metrics = c("centroid","nsCentroid","nsQuants")
-    )
-    tmp <- tmp[,-2]
-    names(tmp)[1:3] <- c("START","END","DUR")
-    # add info
-    tmp$ID <- info_i$ID
-    tmp$Type <- info_i$Type
-    tmp$Species <- info_i$Species
-    tmp$time_period = info_i$time_period
-    tmp$model = "ENSEMBLE"
-    
-    shifts_SA_ens[[i]] <- tmp
-    
-    pdf(here::here(shiftplot_dir,
-                   paste(sptogo, info_i$ID, info_i$Type, info_i$time_period, tmp$model[1], "shiftplot SA.pdf")))
-    shift_plot(r1 = sdms_i[[1]], 
-               r2 = sdms_i[[nlyr(sdms_i)]], 
-               quants = quants,
-               times = c(tmp$START[1], tmp$END[nrow(tmp)]))
-    dev.off()
-    
 }
 
 
@@ -252,58 +257,64 @@ shifts_SA <- list()
 
 for(i in 1:length(sdms_SA)){ # loop across shifts
     
-    # shift info
-    info_i <- shift_info[i,]
-    
-    # sdms
-    sdms_i <- sdms_SA[[i]]
-    
-    shifts_SA_algo <- list()
-    # run for each algorithm
-    for(j in 1:length(sdm_algo)){ # loop across shifts
+    test <- try({
+        # shift info
+        info_i <- shift_info[i,]
         
-        algo_j <- sdm_algo[j]
+        # sdms
+        sdms_i <- sdms_SA[[i]]
         
-        sdms_i_j <- sdms_i[[grep(algo_j,names(sdms_i))]]
-        
-        # project to equal-area
-        sdms_i_j <- terra::project(sdms_i_j,Eckt)
-        
-        # range 0-1
-        sdms_i_j <- rast(lapply(sdms_i_j, range01raster))
-        
-        # quantiles
-        quants <- c(0.01, 0.05, 0.1, 0.5, 0.9, 0.95, 0.99)
-        
-        names(sdms_i_j) <- paste0("t",1:nlyr(sdms_i_j))
-        times <- round(shift_info$START[1],0):round(shift_info$END[1],0)
-        
-        # remove if all cells are unsuitable
-        rem <- data.frame(minmax(sdms_i_j))
-        rem <- apply(rem,2,function(x) all(is.na(x)))
-        if(any(rem)){
-            sdms_i_j <- sdms_i_j[[!rem]]
-            times <- times[!rem]
+        shifts_SA_algo <- list()
+        # run for each algorithm
+        for(j in 1:length(sdm_algo)){ # loop across shifts
+            
+            algo_j <- sdm_algo[j]
+            
+            sdms_i_j <- sdms_i[[grep(algo_j,names(sdms_i))]]
+            
+            # project to equal-area
+            sdms_i_j <- terra::project(sdms_i_j,Eckt)
+            
+            # range 0-1
+            sdms_i_j <- rast(lapply(sdms_i_j, range01raster))
+            
+            # quantiles
+            quants <- c(0.01, 0.05, 0.1, 0.5, 0.9, 0.95, 0.99)
+            
+            names(sdms_i_j) <- paste0("t",1:nlyr(sdms_i_j))
+            times <- round(shift_info$START[1],0):round(shift_info$END[1],0)
+            
+            # remove if all cells are unsuitable
+            rem <- data.frame(minmax(sdms_i_j))
+            rem <- apply(rem,2,function(x) all(is.na(x)))
+            if(any(rem)){
+                sdms_i_j <- sdms_i_j[[!rem]]
+                times <- times[!rem]
+            }
+            
+            tmp <- bioshifts(
+                x = sdms_i_j,
+                times = times,
+                quants = quants,
+                cores = 2,
+                metrics = c("centroid","nsCentroid","nsQuants")
+            )
+            tmp <- tmp[,-2]
+            names(tmp)[1:3] <- c("START","END","DUR")
+            # add info
+            tmp$ID <- info_i$ID
+            tmp$Type <- info_i$Type
+            tmp$Species <- info_i$Species
+            tmp$time_period = info_i$time_period
+            tmp$model = "ENSEMBLE"
+            tmp$algo = algo_j
+            
+            shifts_SA_algo[[j]] <- tmp
         }
         
-        tmp <- bioshifts(
-            x = sdms_i_j,
-            times = times,
-            quants = quants,
-            cores = 2,
-            metrics = c("centroid","nsCentroid","nsQuants")
-        )
-        tmp <- tmp[,-2]
-        names(tmp)[1:3] <- c("START","END","DUR")
-        # add info
-        tmp$ID <- info_i$ID
-        tmp$Type <- info_i$Type
-        tmp$Species <- info_i$Species
-        tmp$time_period = info_i$time_period
-        tmp$model = "ENSEMBLE"
-        tmp$algo = algo_j
-        
-        shifts_SA_algo[[j]] <- tmp
+    },silent = TRUE)
+    if(class(test)=="try-error"){
+        shifts_SA_algo[[j]] <- NULL
     }
     
     

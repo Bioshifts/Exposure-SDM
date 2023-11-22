@@ -11,14 +11,17 @@ library(here)
 
 ########################
 # set computer
-computer = "muse"
+computer = "matrics"
 
 if(computer == "muse"){
     setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
-    
-    work_dir <- getwd()
-    script.dir <- here::here(work_dir,"R/4_create_PA")
 }
+if(computer == "matrics"){
+    setwd("/users/boliveira/Exposure-SDM")
+}
+work_dir <- getwd()
+
+script.dir <- here::here(work_dir,"R/4_create_PA")
 
 # source settings
 source("R/settings.R")
@@ -43,46 +46,58 @@ Rscript_file = here::here(script.dir,"get_sdm_data_sps.R")
 all_sps <- list.files(here::here(occ_dir), pattern = '.qs')
 all_sps <- gsub("_"," ",all_sps)
 all_sps <- gsub(".qs","",all_sps)
+length(all_sps)
 
-N_OCC <- read.csv("Data/n_occ.csv")
+# get info from v1
+biov1 <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v1), header = T)
+# only LAT
+biov1$Type[which(biov1$Type=="HOR")] <- "LAT"
+biov1 <- biov1[which(biov1$Type=="LAT"),]
+nrow(biov1)
 
-terrestrials <- N_OCC$scientificName[which(N_OCC$ECO == "T")]
-marines <- N_OCC$scientificName[which(N_OCC$ECO == "M")]
+biov1 <- biov1[which(biov1$sp_name_std_v1 %in% gsub(" ","_",all_sps)),]
 
-mar_sps <- all_sps[which(all_sps %in% marines)]
-mar_sps <- data.frame(sps = mar_sps, realm = "Mar")
+all_sps <- data.frame(sps = biov1$sp_name_std_v1,
+                      realm = biov1$ECO)
+all_sps <- all_sps[-which(duplicated(all_sps$sps)),]
 
-ter_sps <- all_sps[which(all_sps %in% terrestrials)]
-ter_sps <- data.frame(sps = ter_sps, realm = "Ter")
+all_sps$realm[which(all_sps$realm == "T")] = "Ter"
+all_sps$realm[which(all_sps$realm == "M")] = "Mar"
 
 
-# pipe line of species: first marines (because they run faster due to coarser resolution data) then terrestrials
-# all_sps <- rbind(mar_sps, ter_sps)
-all_sps <- mar_sps # running only for terrestrials
+
+# ECO
+ter_sps <- all_sps[which(all_sps$realm == "Ter"),]
+mar_sps <- all_sps[which(all_sps$realm == "Mar"),]
+
+all_sps <- rbind(mar_sps,
+                 ter_sps)
+
+table(all_sps$realm)
+
+# all_sps <- ter_sps # running only for terrestrials
+
+nrow(all_sps)
 
 ########################
 # submit jobs
 
 N_jobs_at_a_time = 100
-
 N_Nodes = 1
 tasks_per_core = 1
-cores = 28
-time = "20:00:00"
-memory = "64G"
 
 # Check if file exists
 check_if_file_exists <- TRUE
 
-# for(i in 1:nrow(all_sps)){
-for(i in 1:nrow(missing_ter)){
+for(i in 1:nrow(all_sps)){
+    # for(i in 1:nrow(missing_ter)){
     
-    # sptogo <- all_sps$sps[i]
-    # sptogo <- gsub(" ","_",sptogo)
-    # realm <- all_sps$realm[i]
-    sptogo <- missing_ter$sps[i]
+    sptogo <- all_sps$sps[i]
     sptogo <- gsub(" ","_",sptogo)
-    realm <- missing_ter$realm[i]
+    realm <- all_sps$realm[i]
+    # sptogo <- missing_ter$sps[i]
+    # sptogo <- gsub(" ","_",sptogo)
+    # realm <- missing_ter$realm[i]
     
     args = paste(sptogo, realm)
     
@@ -105,22 +120,37 @@ for(i in 1:nrow(missing_ter)){
         
         cat("#SBATCH -N",N_Nodes,"\n")
         cat("#SBATCH -n",tasks_per_core,"\n")
+        
+        if(realm == "Mar"){ # for the Marine use this
+            cores = 20
+            time = "24:00:00"
+            memory = "8G"
+            partition = "normal-amd"
+        }
+        if(realm == "Ter"){ # for the Terrestrial use this (bigger jobs) 
+            cores = 10 # reduce N cores because of out-of-memory issue
+            time = "1-24:00:00"
+            memory = "32G"
+            partition = "bigmem"
+        }
+        
         cat("#SBATCH -c",cores,"\n")
+        cat("#SBATCH --partition",partition,"\n")
+        cat("#SBATCH --mem=",memory,"\n", sep="")
+        cat("#SBATCH --time=",time,"\n", sep="")
         
         cat("#SBATCH --job-name=",sptogo,"\n", sep="")
         cat("#SBATCH --output=",here::here(logdir,paste0(sptogo,".out")),"\n", sep="")
         cat("#SBATCH --error=",here::here(logdir,paste0(sptogo,".err")),"\n", sep="")
-        cat("#SBATCH --time=",time,"\n", sep="")
-        cat("#SBATCH --mem=",memory,"\n", sep="")
-        cat("#SBATCH --mail-type=ALL\n")
-        cat("#SBATCH --mail-user=brunno.oliveira@fondationbiodiversite.fr\n")
+        # cat("#SBATCH --mail-type=ALL\n")
+        # cat("#SBATCH --mail-user=brunno.oliveira@fondationbiodiversite.fr\n")
         
-        cat("IMG_DIR='/storage/simple/projects/t_cesab/brunno'\n")
+        cat(paste0("IMG_DIR='",singularity_image,"'\n"))
         
         cat("module purge\n")
-        cat("module load singularity/3.5\n")
+        cat("module load singularity\n")
         
-        cat("singularity exec --disable-cache $IMG_DIR/brunnospatial.sif Rscript",Rscript_file, args,"\n", sep=" ")
+        cat("singularity exec --disable-cache $IMG_DIR Rscript",Rscript_file, args,"\n", sep=" ")
         
         # Close the sink!
         sink()
@@ -146,9 +176,13 @@ for(i in 1:nrow(missing_ter)){
 
 # # check if I got env data for all species
 # # list of species we got data
-sps_got_ter <- list.files(env_data_dir("Mar"))
-sps_got_ter <- gsub("_Mar.qs","",sps_got_ter)
-sps_got_ter <- gsub("_"," ",sps_got_ter)
-missing_ter <- all_sps[!all_sps$sps %in% sps_got_ter,]
-nrow(missing_ter)
-head(missing_ter)
+# sps_got_ter <- list.files(env_data_dir("Mar"))
+# sps_got_ter <- gsub("_Mar.qs","",sps_got_ter)
+# sps_got_ter <- gsub("_"," ",sps_got_ter)
+# missing_ter <- all_sps[!all_sps$sps %in% sps_got_ter,]
+# nrow(missing_ter)
+# head(missing_ter)
+# 
+# 
+# "Centrostephanus rodgersii" %in% N_OCC$scientificName
+# N_OCC[N_OCC$scientificName=="Centrostephanus rodgersii",]

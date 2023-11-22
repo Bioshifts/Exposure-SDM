@@ -1,8 +1,4 @@
 
-
-
-
-
 ########################
 # Setup
 rm(list=ls())
@@ -22,33 +18,35 @@ sapply(list.of.packages, require, character.only = TRUE)
 # Args
 command_args <- commandArgs(trailingOnly = TRUE)
 sptogo <- as.character(paste(command_args[1], collapse = " "))
-sptogo <- gsub("_"," ",sptogo)
 realm <- as.character(paste(command_args[2], collapse = " "))
 print(sptogo)
 print(realm)
 
 # run test with terrestrial
 # sptogo <- "Caltha_palustris"
-# sptogo <- gsub("_"," ",sptogo)
+# sptogo="Formica_sanguinea"
 # realm = "Ter"
 
 # run test with marine
-# sptogo <- "Zaprora_silenus"
-# sptogo <- gsub("_"," ",sptogo)
+# sptogo <- "Centrostephanus_rodgersii"
 # realm = "Mar"
 
-N_cores = as.numeric(Sys.getenv("SLURM_CPUS_ON_NODE"))
+N_cores = parallelly::availableCores()
 # N_cores = 3
 
 cat("N cores = ", N_cores)
 
 ########################
 # set computer
-computer = "muse"
+computer = "matrics"
 
 if(computer == "muse"){
     setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
 }
+if(computer == "matrics"){
+    setwd("/users/boliveira/Exposure-SDM")
+}
+work_dir <- getwd()
 
 ########################
 # load functions
@@ -85,7 +83,7 @@ start_time <- Sys.time()
 ########################
 # Load occurrences for species i
 
-sp_occ <- qs::qread(here::here(occ_dir, paste0(gsub(" ","_",sptogo), ".qs")))
+sp_occ <- qs::qread(here::here(occ_dir, paste0(sptogo, ".qs")))
 sp_occ$pa <- 1
 sp_occ <- sp_occ %>%
     mutate(x = decimalLongitude,
@@ -96,14 +94,23 @@ nrow(sp_occ)
 
 ########################
 # Load ecoregions
+output_dir <- here::here(sdm_dir(realm), sptogo)
+if(!dir.exists(output_dir)){
+    dir.create(output_dir,recursive = TRUE)
+}
+
 BA <- get_ecoregions(realm = realm, 
-                     PresAbs = sp_occ, 
+                     sptogo = sptogo,
+                     PresAbs = data.frame(sp_occ[,c("x","y")]), 
                      varsdir = vars_dir, 
                      mask.ras = mask.ras,
-                     return.shp = FALSE,
-                     return.raster = TRUE)
-BA <- BA$raster_file
-# plot(BA);dev.off()
+                     return.shp = TRUE,
+                     return.raster = FALSE,
+                     check_if_exists = FALSE,
+                     output_dir = output_dir)
+
+BA <- BA$shape_file
+BA <- rasterize(BA, mask.ras)
 
 ########################
 # Create random pseudo-absences
@@ -147,7 +154,7 @@ PA_occ <- cbind(PA_occ, PA_xy)
 # sp_coords <- vect(data.frame(sp_occ), geom = c('x','y'))
 # plot(BA)
 # plot(back_coords,add=T,cex=.5)
-# plot(sp_coords,add=T,col = "red",cex=.5)
+# plot(sp_coords,add=T,col = "red",cex=.2)
 # dev.off()
 
 # Add PA to occ
@@ -172,16 +179,16 @@ length(possibledates)
 
 # 2) calculate bioclimatics for occurrences
 if(realm == "Ter"){
-    all_layers <- list.files(here::here(vars_dir,paste0("cruts_",my_res)), pattern = ".tif", full.names = TRUE, recursive = TRUE)
-    all_layers_names <- list.files(here::here(vars_dir,paste0("cruts_",my_res)), pattern = ".tif", recursive = TRUE)
+    all_layers <- list.files(here::here(vars_dir,my_res), pattern = ".tif", full.names = TRUE, recursive = TRUE)
+    all_layers_names <- list.files(here::here(vars_dir,my_res), pattern = ".tif", recursive = TRUE)
+    all_layers_names <- gsub('.tif','',all_layers_names)
+    all_layers_names <- sapply(all_layers_names, function(x) strsplit(x,"/")[[1]][2])
 }
 if(realm == "Mar"){
     all_layers <- list.files(here::here(vars_dir,"SST"), pattern = ".tif", full.names = TRUE, recursive = TRUE)
     all_layers_names <- list.files(here::here(vars_dir,"SST"), pattern = ".tif", recursive = TRUE)
-    
+    all_layers_names <- gsub('.tif','',all_layers_names)
 }
-all_layers_names <- gsub('.tif','',all_layers_names)
-all_layers_names <- sapply(all_layers_names, function(x) strsplit(x,"/")[[1]][2])
 
 # 3) Create ID for merge bioclimatics with occ
 sp_occ$ID <- paste(sp_occ$cell,sp_occ$date,sep = "_")
@@ -219,11 +226,15 @@ for(j in 1:length(chunks)){
         
         tmp <- parallel::mclapply(1:length(possibledates_j), function(i) {
             
+            
             # date i
             date_i <- possibledates_j[i]
             
             # subset occ data for date i
             sub_occ <- sp_occ %>% dplyr::filter(date == date_i)
+            
+            # get spatvect from data.frame
+            occ_vect <- vect(data.frame(sub_occ[,c("x","y")]),geom=c("x","y"))
             
             # get range of dates to get the bioclimatics
             periods_i <- paste0("01_",date_i)
@@ -242,8 +253,12 @@ for(j in 1:length(chunks)){
             layers_i_names <- all_layers_names[layers_i_pos]
             names(layers_i) <- layers_i_names
             
+            if(nrow(sub_occ) > 10){
+                terra::window(layers_i) <- terra::ext(terra::buffer(occ_vect,1))
+            }
+            
             # extract data
-            layers_i <- layers_i[sub_occ$cell]
+            layers_i <- terra::extract(layers_i,occ_vect)
             
             # calculate bioclimatics
             if(realm == "Ter"){
@@ -263,7 +278,6 @@ for(j in 1:length(chunks)){
     }
     
     tmp <- data.table::rbindlist(tmp)
-    
     biosclim <- rbind(biosclim, tmp)
     
 }
@@ -277,7 +291,7 @@ sp_occ <- sp_occ[,-"ID"]
 table(sp_occ$pa)
 
 # save
-qs::qsave(sp_occ, here::here(env_data_dir,paste0(gsub(" ","_",sptogo),"_",realm,".qs")))
+qs::qsave(sp_occ, here::here(env_data_dir,paste0(sptogo,"_",realm,".qs")))
 
 ########################
 # Stop the clock

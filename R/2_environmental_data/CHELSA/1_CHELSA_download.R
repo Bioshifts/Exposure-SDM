@@ -38,15 +38,17 @@ sapply(list.of.packages, require, character.only = TRUE)
 # increase default timeout (=60s) prevents downloads to stop before finishing
 options(timeout=3000) 
 
+########################
 # set computer
-computer = "muse"
+computer = "matrics"
 
-# working directory
-work_dir <- 
-    if(computer == "muse"){
-        "/storage/simple/projects/t_cesab/brunno/Exposure-SDM"
-    }
-setwd(work_dir)
+if(computer == "muse"){
+    setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
+}
+if(computer == "matrics"){
+    setwd("/users/boliveira/Exposure-SDM")
+}
+work_dir <- getwd()
 
 # source settings
 source("R/settings.R")
@@ -61,14 +63,13 @@ t.period <- temporal_range_env_data(realm = "Ter") # Limits of the CHELSA databa
 realm = "Ter"
 
 # path to save model raster
-nc_path <- vars_dir(realm = realm) 
+nc_path <- here::here(vars_dir(realm = realm),my_res)
 if(!dir.exists(here::here(nc_path))){
     dir.create(here::here(nc_path), recursive = TRUE)
 }
 
 # raw CHELSE data are save here
-scratch_dir_1km <- here::here(scratch_dir,"Data/cruts_1km")
-scratch_dir_5km <- here::here(scratch_dir,"Data/cruts_5km")
+vars_dir <- vars_dir(realm)
 
 periods <- format(
     seq.Date(from = as.Date(paste0(t.period[1],"/01/01")), 
@@ -81,11 +82,8 @@ vars <- c("tmax", "tmin", "prec")
 
 # create folders to store variables
 for (i in 1:length(vars)){
-    if(!dir.exists(here::here(scratch_dir_1km,vars[i]))){
-        dir.create(here::here(scratch_dir_1km,vars[i]),recursive = TRUE)
-    }
-    if(!dir.exists(here::here(scratch_dir_5km,vars[i]))){
-        dir.create(here::here(scratch_dir_5km,vars[i]),recursive = TRUE)
+    if(!dir.exists(here::here(nc_path,vars[i]))){
+        dir.create(here::here(nc_path,vars[i]),recursive = TRUE)
     }
 }
 
@@ -93,7 +91,7 @@ for (i in 1:length(vars)){
 # Create land mask
 # -32768 is the value that represents ocean in cruts rasters
 
-if(!file.exists(here::here(nc_path,"model_raster_ter_1km.tif"))){
+if(!file.exists(here::here(vars_dir,"model_raster_ter_1km.tif"))){
     
     # download any temp data from CHELSA
     getChelsa_cruts(myvar = vars[1], 
@@ -132,23 +130,12 @@ if(!file.exists(here::here(nc_path,"model_raster_ter_1km.tif"))){
     
     # save
     terra::writeRaster(my_mask, 
-                       here::here(nc_path,"model_raster_ter_1km.tif"), 
-                       overwrite = TRUE)
-    
-    # get land mask at 5 km
-    my_mask <- terra::rast(here::here(nc_path,"model_raster_ter_1km.tif"))
-    my_mask <- terra::aggregate(my_mask, fact = 5)
-    my_mask <- terra::ifel(my_mask == 1, 1, 0)
-    
-    # save
-    terra::writeRaster(my_mask, 
-                       here::here(nc_path,"model_raster_ter_5km.tif"), 
+                       here::here(vars_dir,"model_raster_ter_1km.tif"), 
                        overwrite = TRUE)
     
 }
 
-my_mask_1km <- rast(here::here(nc_path,"model_raster_ter_1km.tif"))
-my_mask_5km <- rast(here::here(nc_path,"model_raster_ter_5km.tif"))
+my_mask_1km <- rast(here::here(vars_dir,"model_raster_ter_1km.tif"))
 
 #############################
 ### DOWNLOAD raw cruts data
@@ -170,7 +157,7 @@ for (v in 1:length(vars)){
     
     cat("\rDownloading", var_going)
     
-    ncores = as.numeric(Sys.getenv("SLURM_CPUS_ON_NODE"))
+    ncores = parallelly::availableCores()
     cat("N of cores is", ncores)
     
     # loop trough periods
@@ -179,32 +166,14 @@ for (v in 1:length(vars)){
                        function(i){
                            
                            try({
-                               myfile_1km <- here::here(scratch_dir_1km, var_going, paste0(var_going,"_",periods[i],".tif"))
-                               myfile_5km <- here::here(scratch_dir_5km, var_going, paste0(var_going,"_",periods[i],".tif"))
+                               myfile_1km <- here::here(nc_path, var_going, paste0(var_going,"_",periods[i],".tif"))
                                
                                if(!file.exists(myfile_1km)){
                                    getChelsa_cruts(myvar = var_going, 
                                                    period = periods[i], 
-                                                   dest.folder = scratch_dir_1km, 
+                                                   dest.folder = nc_path, 
                                                    over.write = TRUE)
-                                   
                                }
-                               
-                               
-                               if(!file.exists(myfile_5km)){
-                                   # load in
-                                   tmp <- terra::rast(myfile_1km)
-                                   
-                                   # convert to 5km
-                                   tmp <- terra::aggregate(tmp, fact = 5)
-                                   
-                                   # save
-                                   terra::writeRaster(
-                                       tmp, 
-                                       myfile_5km, 
-                                       overwrite = TRUE)
-                               }
-                               
                            }, 
                            silent = TRUE)
                            
@@ -224,9 +193,9 @@ for (v in 1:length(vars)){
 my.test <- list()
 for(i in 1:length(vars)){
     # Files should look  like this 
-    myfiles <- here::here(scratch_dir_1km, vars[i], paste0(vars[i],"_",periods,".tif"))
+    myfiles <- here::here(nc_path, vars[i], paste0(vars[i],"_",periods,".tif"))
     # downloaded files
-    mydowns <- list.files(here::here(scratch_dir_1km,vars[i]), full.names = TRUE)
+    mydowns <- list.files(here::here(nc_path,vars[i]), full.names = TRUE)
     # test
     my.test[[i]] <- myfiles[which(!myfiles %in% mydowns)]
 }
@@ -247,7 +216,7 @@ for(v in 1:length(my.test)){
             
             var_going <- vars[v]
             
-            period_i <- gsub(scratch_dir,"",tmp_file)
+            period_i <- gsub(nc_path,"",tmp_file)
             period_i <- gsub(paste0("/",var_going,"/",var_going,"_"),"",period_i)
             period_i <- gsub(".tif","",period_i)
             
@@ -255,7 +224,7 @@ for(v in 1:length(my.test)){
             
             getChelsa_cruts(myvar = var_going, 
                             period = period_i, 
-                            dest.folder = scratch_dir, 
+                            dest.folder = nc_path, 
                             over.write = TRUE)
         }
     }
@@ -263,7 +232,7 @@ for(v in 1:length(my.test)){
 
 
 # Second test: Check if all files open correctly
-for(v in 1:length(vars)){
+for(v in 2:length(vars)){
     
     var_going <- vars[v]
     
@@ -273,7 +242,7 @@ for(v in 1:length(vars)){
         
         cat("\rperiod",i,"from",length(periods),"..... period", periods[i])
         
-        filetosave <- here::here(scratch_dir_1km, var_going, paste0(var_going,"_",periods[i],".tif"))
+        filetosave <- here::here(nc_path, var_going, paste0(var_going,"_",periods[i],".tif"))
         
         tmp <- try(rast(filetosave), silent = TRUE)
         
@@ -283,75 +252,12 @@ for(v in 1:length(vars)){
             
             getChelsa_cruts(myvar = var_going, 
                             period = periods[i], 
-                            dest.folder = scratch_dir_1km, 
+                            dest.folder = nc_path, 
                             over.write = TRUE)
         }
-    }
-}
-
-
-
-
-
-##########
-# 5km ----
-
-# First test: Check if all periods were downloaded
-my.test <- list()
-for(i in 1:length(vars)){
-    # Files should look  like this 
-    myfiles <- here::here(scratch_dir_5km, vars[i], paste0(vars[i],"_",periods,".tif"))
-    # downloaded files
-    mydowns <- list.files(here::here(scratch_dir_5km,vars[i]), full.names = TRUE)
-    # test
-    my.test[[i]] <- myfiles[which(!myfiles %in% mydowns)]
-}
-names(my.test) <- vars
-# my.test[[3]]
-
-for(v in 1:length(my.test)){
-    
-    tmp <- my.test[[v]]
-    
-    # check if there is any missing
-    if(length(tmp)>0){ 
-        
-        # if yes, try downloading again...
-        for(i in 1:length(tmp)){
-            
-            tmp_file <- tmp[i]
-            
-            var_going <- vars[v]
-            
-            period_i <- gsub(scratch_dir,"",tmp_file)
-            period_i <- gsub(paste0("/",var_going,"/",var_going,"_"),"",period_i)
-            period_i <- gsub(".tif","",period_i)
-            
-            cat("\rDownloading", var_going)
-            
-            getChelsa_cruts(myvar = var_going, 
-                            period = period_i, 
-                            dest.folder = scratch_dir, 
-                            over.write = TRUE)
-        }
-    }
-}
-
-########################################################################
-# Second test: Check if all files open correctly
-for(v in 1:length(vars)){
-    
-    var_going <- vars[v]
-    
-    cat("\rChecking", var_going,"\n")
-    
-    for(i in 1:length(periods)){
-        
-        cat("\rperiod",i,"from",length(periods),"..... period", periods[i])
-        
-        filetosave <- here::here(scratch_dir_5km, var_going, paste0(var_going,"_",periods[i],".tif"))
         
         tmp <- try(rast(filetosave), silent = TRUE)
+        tmp <- try(tmp[ncell(tmp)])
         
         if(class(tmp)=='try-error'){ # download again
             
@@ -359,14 +265,23 @@ for(v in 1:length(vars)){
             
             getChelsa_cruts(myvar = var_going, 
                             period = periods[i], 
-                            dest.folder = scratch_dir_5km, 
+                            dest.folder = nc_path, 
                             over.write = TRUE)
         }
     }
 }
+
+
+
+
 
 ########################################################################
 # Visual inspection
-# plot all
 
-png("test")
+par(mfrow=c(1,length(vars)))
+for(i in 1:length(vars)){
+    var_going=vars[i]
+    tmp <- rast(here::here(vars_dir, var_going, paste0(var_going,"_",periods[1],".tif")))
+    plot(tmp,main=paste(var_going,periods[1]))
+}
+dev.off()

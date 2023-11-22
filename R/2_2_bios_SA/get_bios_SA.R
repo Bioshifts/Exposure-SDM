@@ -19,7 +19,7 @@ print(command_args)
 polygontogo <- command_args
 # polygontogo <- "A112_P1" # Mar # South
 # polygontogo <- "A43_P1" # Mar # North
-# polygontogo <- "A102_P2" # Ter
+# polygontogo <- "A1_P1" # Ter
 
 print(polygontogo)
 
@@ -27,11 +27,15 @@ cat("\rrunning polygon", polygontogo)
 
 ########################
 # set computer
-computer = "muse"
+computer = "matrics"
 
 if(computer == "muse"){
     setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
 }
+if(computer == "matrics"){
+    setwd("/users/boliveira/Exposure-SDM")
+}
+work_dir <- getwd()
 
 # source settings
 source("R/settings.R")
@@ -49,27 +53,27 @@ my_test <- if(any(is.na(SA_poly_i$EleExtentm))){
 
 # create dir to store results
 if(!dir.exists(here::here(bios_SA_dir(realm),polygontogo))){
-    dir.create(here::here(bios_SA_dir(realm),polygontogo))
+    dir.create(here::here(bios_SA_dir(realm),polygontogo),recursive = TRUE)
 }
 
 # get time period
 if(grepl("A",polygontogo)){ # if v1
-    biov <- read.csv(here::here(Bioshifts_dir,"biov1_fixednames.csv"))   
+    biov <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v1))   
 }
 if(grepl("B",polygontogo)){ # if v1
-    biov <- read.csv(here::here(Bioshifts_dir,"biov2_fixednames.csv"))
+    biov <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v2))
     biov$ID <- paste0("B",biov$Paper.ID,"_",biov$Study.Period)
     biov$START <- biov$Start.Year
     biov$END <- biov$End.Year   
 }
 period <- biov %>% 
     filter(ID == polygontogo) %>%
-    select(START,END) %>%
+    dplyr::select(START,END) %>%
     round(digits = 0) %>%
     unique 
 period = period$START:period$END
 
-# select bioclimatics
+# select bioclimatics for perid
 bioclima <- list.files(bios_dir(realm))
 bioclima <- bioclima[grep(paste0(period,collapse = "|"),bioclima)]
 
@@ -81,7 +85,7 @@ bioclima <- lapply(bioclima, function(x){
 # mask to the SA
 bioclima <- lapply(bioclima, function(x){
     terra::window(x) <- terra::ext(SA_poly_i)
-    terra::mask(bios_year_i, SA_poly_i)
+    terra::mask(x, SA_poly_i)
 })
 
 # save

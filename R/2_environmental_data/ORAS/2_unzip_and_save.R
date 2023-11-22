@@ -8,14 +8,16 @@ library(parallel)
 library(sf)
 library(ggplot2)
 
-
 # set computer
-computer = "muse"
+computer = "matrics"
 
 if(computer == "muse"){
     setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
 }
-
+if(computer == "matrics"){
+    setwd("/users/boliveira/Exposure-SDM")
+}
+work_dir <- getwd()
 # load functions
 source("R/my_functions.R")
 source("R/settings.R")
@@ -24,10 +26,10 @@ realm = "Mar"
 nc_path <- vars_dir(realm = realm) 
 
 # raw files will be saved to scratch dir
-zipdir <- here::here(scratch_dir,"Data/SST_ORAS_downloads")
+zipdir <- here::here(nc_path,"SST_ORAS_downloads")
     
 # create folder to store rasters
-scratch_dir <- here::here(scratch_dir,"Data/SST")
+scratch_dir <- here::here(nc_path,"SST")
 
 if(!dir.exists(scratch_dir)){
     dir.create(scratch_dir)
@@ -133,13 +135,14 @@ file.rename(here::here(scratch_dir,my_vars),here::here(scratch_dir,rename_vars))
 # Save model raster
 # To be used for extracting cell ID
 
-tmp <- list.files(here::here(nc_path))[1]
-tmp <- rast(here::here(nc_path,tmp))
+tmp <- list.files(here::here(scratch_dir))[1]
+tmp <- rast(here::here(scratch_dir,tmp))
 
 tmp <- is.na(tmp)
 tmp <- ifel(tmp,0,1)
 names(tmp) <- "model_raster_mar"
 plot(tmp)
+dev.off()
 
 writeRaster(tmp, here::here(nc_path,"model_raster_mar.tif"), overwrite = TRUE)
 
