@@ -7,7 +7,7 @@ library(here)
 
 ########################
 # set computer
-computer = "muse"
+computer = "matrics"
 
 if(computer == "muse"){
     setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")

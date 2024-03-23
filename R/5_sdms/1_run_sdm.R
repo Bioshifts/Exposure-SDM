@@ -26,14 +26,14 @@ print(realm)
 
 # sptogo="Abra_alba"
 # realm <- "Mar"
-# sptogo="Arnoglossus_laterna"
+# sptogo="Calanus_helgolandicus"
 # realm <- "Mar"
 # 
 # sptogo="Abies_alba"
 # realm <- "Ter"
 # sptogo="Abies_concolor"
 # realm <- "Ter"
-# sptogo="Formica_sanguinea"
+# sptogo="Hypericum_humifusum"
 # realm <- "Ter"
 
 
@@ -84,8 +84,8 @@ PresAbs <- na.omit(PresAbs)
 
 table(PresAbs$pa)
 
-PresAbs <- PresAbs %>%
-    filter(mat < 400 & mat > -400)
+# PresAbs <- PresAbs %>%
+#     filter(mat < 400 & mat > -400)
 
 # filter presences
 sp_occ <- PresAbs %>% filter(pa == 1)
@@ -96,10 +96,11 @@ back_occ <- PresAbs %>% filter(pa == 0)
 # Study info
 
 biov1 <- read.csv(here::here(Bioshifts_dir,"biov1_fixednames.csv"))
-# v1 from which we have shape files
-shp_files <- list.files(SA_shps_dir,pattern = ".shp")
-shp_files <- gsub(".shp","",shp_files)
-biov1 <- biov1[biov1$ID %in% shp_files,]
+# v1 from IDs we have selected for v3
+v3_selected <- unique(c(
+    list.files(bios_SA_dir("Ter")),
+    list.files(bios_SA_dir("Mar"))))
+biov1 <- biov1[biov1$ID %in% v3_selected,]
 # only LAT
 biov1$Type[which(biov1$Type=="HOR")] <- "LAT"
 biov1 <- biov1[which(biov1$Type=="LAT"),]
@@ -109,6 +110,7 @@ biov1 <- biov1 %>% filter(sp_name_std_v1 == sptogo)
 # Use LAT ELE shifts
 biov1$Type[which(!is.na(biov1$Azimuth))] <- "LAT" # All obs type == HOR contain Azimuth value
 biov1 <- biov1[which(biov1$Type=="ELE" | biov1$Type=="LAT"),]
+biov1[,c("ID","START")]
 
 # Use temporal period from the environmental data
 biov1 <- biov1 %>% filter(START >= temporal_range_env_data(realm)[1] + n_yr_bioclimatic)
@@ -242,7 +244,14 @@ new_data <- PCA_env(sptogo = sptogo,
                     bioclimatics_SA = bioclimatics_SA,
                     output_dir = output_dir,
                     shift_info = shift_info,
-                    PresAbs = PresAbs)
+                    PresAbs = PresAbs,
+                    check_if_PCA_model_exists = TRUE)
+names(new_data)
+
+# save PCA results
+saveRDS(new_data$PCA_model, here::here(output_dir,"PCA_model.RDS"))
+write.csv(new_data$coefficients, here::here(output_dir,"PCA_coefficients.csv"), row.names = FALSE)
+write.csv(new_data$cumulative_variance, here::here(output_dir,"PCA_cumulative_variance.csv"), row.names = FALSE)
 
 # Update data
 # BG
@@ -268,7 +277,6 @@ cat("Fitting SDMs\n")
 # Fit SDMs
 
 table(PresAbsFull$pa)
-PresAbsFull <- PresAbsFull[which(PresAbs$mat < 400 & PresAbs$mat > -400),]
 
 resp <- as.vector(PresAbsFull$pa)
 resp[resp==0] <- NA
@@ -359,6 +367,44 @@ basicD <- data.frame(Species = sptogo,
 write.csv(basicD,
           here::here(output_dir,paste0(sptogo,"_SDM_info.csv")),
           row.names = FALSE)
+
+########################
+### Project to the BG at t1
+
+projname <- paste(sptogo,
+                  names(bioclimatics_BG)[[1]],
+                  "BG")
+
+file_proj <- here::here(output_dir,gsub("_",".",sptogo),
+                        paste0("proj_",projname),
+                        paste0(gsub("_",".",sptogo),".",projname,".projection.out"))
+
+projname_ens <- paste(projname,"ens")
+
+file_ens <- gsub("BG","BG ens",file_proj)
+file_ens <- gsub(".projection.out",".ensemble.projection.out",file_ens)
+
+
+if(!file.exists(file_proj)){
+    m <- BIOMOD_Projection(
+        bm.mod = model_sp,
+        proj.name = projname,
+        new.env = bioclimatics_BG[[1]],
+        nb.cpu = N_cpus,
+        keep.in.memory = FALSE)
+}
+
+if(!file.exists(file_ens)){
+    ens_m <- BIOMOD_EnsembleForecasting(
+        bm.em = ens_model_sp,
+        bm.proj = m,
+        proj.name = projname_ens,
+        nb.cpu = N_cpus,
+        keep.in.memory = FALSE)
+}
+
+gc()
+
 
 ########################
 ### Project to the BG at each time period

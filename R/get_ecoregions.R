@@ -138,12 +138,20 @@ get_BA_shp <- function(varsdir,realm,PresAbs){
         ecoreg_shp <- terra::subset(ecoreg_shp, ecoreg_shp$EcoRealm %in% ecoreg)
     }
     if(realm=="Mar"){
-        ecoreg_shp <- get_meow_shp(varsdir)
+        meow_shp <- get_meow_shp(varsdir)
         # At which ecoregions/realms the species occur?
-        ecoreg <- terra::extract(ecoreg_shp, PresAbs)
-        ecoreg <- na.omit(unique(ecoreg$PROVINC))
+        subdata <- terra::extract(meow_shp, PresAbs)
         # Subset shape file to the ecoregions
-        ecoreg_shp <- terra::subset(ecoreg_shp, ecoreg_shp$PROVINC %in% ecoreg)
+        ecoreg <- na.omit(unique(subdata$ECOREGION))
+        ecoreg_shp <- terra::subset(meow_shp, meow_shp$ECOREGION %in% ecoreg)
+        if(any(is.na(subdata$ECOREGION))){
+            more_shp <- terra::buffer(vect(PresAbs,geom=c("x","y")), 5)
+            ecoreg_shp <- rbind(ecoreg_shp, more_shp)
+        } 
+        # plot(ecoreg_shp,col="black")
+        # plot(vect(PresAbs,geom=c("x","y")),col="red",add=TRUE)
+        # dev.off()
+        
     }
     return(ecoreg_shp)
 }

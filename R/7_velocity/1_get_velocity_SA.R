@@ -26,8 +26,8 @@ polygontogo <- command_args
 # polygontogo <- "A1_P1" # Ter # North
 # polygontogo <- "A10_P1" # Ter # Big # North
 # polygontogo <- "A31_P1" # Ter # North # Elevation
-# polygontogo <- "A30_P1" # random test
-
+# polygontogo <- "A67_P1" # Ter # North
+# polygontogo <-"A116_P1"# Ter # very Big # North
 
 cat("\rrunning polygon", polygontogo)
 
@@ -112,7 +112,7 @@ if(grepl("A",polygontogo)){
     S_start <- round(Bioshifts_DB$Start.Year,0)
     S_end <- round(Bioshifts_DB$End.Year,0)
 }
-S_time <- S_start[1]:S_end[1]
+S_time <- min(S_start):max(S_end)
 
 
 # get layers within time period of shift
@@ -136,13 +136,17 @@ cat(ECO,"\n")
 # Calculate velocity for LAT and ELE and for each climatic variable
 if(ECO=="Ter"){
     
-    # crop elevation to the study area
-    terra::window(elevation) <- ext(SA_i)
-    elevation <- terra::mask(elevation, SA_i)
+    # Big area test
+    area_i <- SA_i$Areakm2
+    big <- area_i > 10^4
     
-    # crop elevation slp to the study area
-    terra::window(elevation_slope) <- ext(SA_i)
-    elevation_slope <- terra::mask(elevation_slope, SA_i)
+    # # crop elevation to the study area
+    # terra::window(elevation) <- ext(SA_i)
+    # elevation <- terra::mask(elevation, SA_i)
+    # 
+    # # crop elevation slp to the study area
+    # terra::window(elevation_slope) <- ext(SA_i)
+    # elevation_slope <- terra::mask(elevation_slope, SA_i)
     
     gVelSA <- list()
     
@@ -161,12 +165,7 @@ if(ECO=="Ter"){
         # project to equal-area
         climate_layers_i <- terra::project(climate_layers_i,Eckt)
         
-        # in CHELSA, temperature is *10
-        if(velocity_variable=="mat"){
-            climate_layers_i <- climate_layers_i/10
-        }
-        
-        # if study area is two small (there are less then 8 cells), there is no way climate gradients can be calculated.
+        # if study area is two small (< 8 cells), there is no way climate gradients can be calculated.
         # A possible solution is to disaggregate the raster to a finer resolution
         if(ncell(climate_layers_i) < 12){
             # Force smaller resolution
@@ -176,191 +175,212 @@ if(ECO=="Ter"){
                 method = "bilinear")
         }
         
+        # force raster to pair
+        # elevation <- terra::project(elevation,climate_layers_i)
+        # elevation_slope <- terra::project(elevation_slope,climate_layers_i)
+        
+        # in CHELSA, temperature is *10
+        if(velocity_variable=="mat"){
+            climate_layers_i <- climate_layers_i/10
+        }
+        
         
         #######
         # calculate the trend (C/year)
-        # parallelize for big areas
         cat("Trend\n")
         
+        ttrend_file <- here::here(work_dir,"Data",
+                                  paste(ECO,velocity_variable,"trend",paste0(polygontogo,".tif"), sep = "_"))
+        ttrend <- try(terra::rast(ttrend_file),silent = TRUE)
+        if(class(ttrend)=="try-error"){
+            ttrend = temp_grad(
+                climate_layers,
+                th = 0.25*nlyr(climate_layers), ## set minimum N obs. to 1/4 time series length
+                tempfile = ttrend_file,
+                overwrite = TRUE,
+                ncores = ncores)
+        }
         
-        ttrend = temp_grad(
-            climate_layers_i,
-            th = 0.25*nlyr(climate_layers_i), 
-            overwrite = TRUE,
-            ncores = ncores)
+        #######
+        # Get averaged climate layers
+        avg_climate_layers_file <- here::here(work_dir,"Data",
+                                              paste(ECO,velocity_variable,"avg_climate_layers",paste0(polygontogo,".tif"), sep = "_"))
+        avg_climate_layers <- try(terra::rast(avg_climate_layers_file),silent = TRUE)
+        if(class(avg_climate_layers)=="try-error"){
+            avg_climate_layers <- terra::app(
+                climate_layers, 
+                fun = mean, na.rm = TRUE, 
+                filename=avg_climate_layers_file,
+                overwrite=TRUE,
+                cores = ncores)
+        }
         
-        
+        rm(climate_layers);gc()
         
         #######
         # Get the spatial gradient (C/km)
-        cat("spatial gradient\n")
+        cat("Spatial gradient\n")
         
+        spgrad_file <- here::here(work_dir,"Data",
+                                  paste(ECO,velocity_variable,"spgrad",paste0(S_time_name,".qs"), sep = "_"))
+        spgrad <- try(qs::qread(spgrad_file,nthreads = ncores),silent = TRUE)
         
-        ## calculate averaged climate layers
-        avg_climate_layers <- terra::app(
-            climate_layers_i, 
-            fun = mean, na.rm = TRUE, 
-            overwrite=TRUE,
-            cores = ncores)
-        
-        
-        gc()
-        
-        rm(climate_layers_i)
-        
-        ## calculate the spatial gradient
-        
-        # Parallel for big areas
-        area_i <- SA_i$Areakm2
-        
-        if(area_i > 10^4){
+        if(any(class(spgrad)=="try-error")){
             
-            avg_climate_layers_tiles <- avg_climate_layers
-            # define tile resolution 
-            nrow(avg_climate_layers_tiles) <- 10
-            ncol(avg_climate_layers_tiles) <- 20
-            avg_climate_layers_tiles[] <- 1:ncell(avg_climate_layers_tiles)
-            # mask raster
-            SA_i_Eck <- terra::project(SA_i,avg_climate_layers_tiles)
-            avg_climate_layers_tiles <- terra::mask(avg_climate_layers_tiles, SA_i_Eck)
+            if(big){
+                
+                avg_climate_layers_tiles <- avg_climate_layers
+                # define tile resolution 
+                nrow(avg_climate_layers_tiles) <- round(nrow(avg_climate_layers)/100,0)
+                ncol(avg_climate_layers_tiles) <- round(ncol(avg_climate_layers)/100,0)
+                avg_climate_layers_tiles[] <- 1:ncell(avg_climate_layers_tiles)
+                # mask raster
+                SA_i_Eck <- terra::project(SA_i,avg_climate_layers_tiles)
+                avg_climate_layers_tiles <- terra::mask(avg_climate_layers_tiles, SA_i_Eck)
+                
+                # plot(avg_climate_layers_tiles);dev.off()
+                
+                parallel::mclapply(terra::cells(avg_climate_layers_tiles), function(x) {
+                    tmp_file <- here::here(tmp_dir,
+                                           paste(ECO,velocity_variable,"spgrad_tile",x,paste0(polygontogo,".qs"), sep = "_"))
+                    test <- try(qs::qread(tmp_file),silent = TRUE)
+                    if(any(class(test)=="try-error")){
+                        tmp_ext <- ext(avg_climate_layers_tiles, x)
+                        terra::window(avg_climate_layers) <- tmp_ext
+                        tmp_data <- spatial_grad(avg_climate_layers)
+                        terra::window(avg_climate_layers) <- NULL
+                        # plug in "real" icells
+                        real_cells <- terra::cells(avg_climate_layers, tmp_ext)
+                        tmp_data$icell <- real_cells
+                        qs::qsave(tmp_data, tmp_file)
+                    }
+                }, mc.cores = ncores)
+                
+                spgrad <- lapply(terra::cells(avg_climate_layers_tiles), function(x) {
+                    tmp_file <- here::here(tmp_dir,
+                                           paste(ECO,velocity_variable,"spgrad_tile",x,paste0(polygontogo,".qs"), sep = "_"))
+                    qs::qread(tmp_file)
+                })
+                
+                spgrad <- data.frame(data.table::rbindlist(spgrad))
+                
+                # delete temporary files
+                del_files <- lapply(terra::cells(avg_climate_layers_tiles), function(x) {
+                    tmp_file <- here::here(tmp_dir,
+                                           paste(ECO,velocity_variable,"spgrad_tile",x,paste0(S_time_name,".qs"), sep = "_"))
+                    unlink(tmp_file)
+                })
+                
+            } else {
+                spgrad = spatial_grad(avg_climate_layers)
+            }
             
-            # plot(avg_climate_layers_tiles);dev.off()
-            
-            parallel::mclapply(terra::cells(avg_climate_layers_tiles), function(x) {
-                tmp_file <- here::here(tmp_dir,
-                                       paste(ECO,velocity_variable,"spgrad_tile",x,paste0(polygontogo,".qs"), sep = "_"))
-                test <- try(qs::qread(tmp_file),silent = TRUE)
-                if(any(class(test)=="try-error")){
-                    tmp_ext <- terra::ext(avg_climate_layers_tiles, cells = x)
-                    real_cells <- terra::cells(avg_climate_layers, tmp_ext)
-                    terra::window(avg_climate_layers) <- tmp_ext
-                    tmp_data <- spatial_grad(avg_climate_layers)
-                    terra::window(avg_climate_layers) <- NULL
-                    # plug in "real" icells
-                    tmp_data$icell <- real_cells
-                    qs::qsave(tmp_data, tmp_file)
-                }
-            }, mc.cores = ncores)
-            
-            spgrad <- lapply(terra::cells(avg_climate_layers_tiles), function(x) {
-                tmp_file <- here::here(tmp_dir,
-                                       paste(ECO,velocity_variable,"spgrad_tile",x,paste0(polygontogo,".qs"), sep = "_"))
-                try(qs::qread(tmp_file),silent = TRUE)
-            })
-            
-            spgrad <- data.frame(data.table::rbindlist(spgrad))
-            
-            # delete temporary files
-            del_files <- lapply(terra::cells(avg_climate_layers_tiles), function(x) {
-                tmp_file <- here::here(tmp_dir,
-                                       paste(ECO,velocity_variable,"spgrad_tile",x,paste0(polygontogo,".qs"), sep = "_"))
-                unlink(tmp_file)
-            })
-        } else {
-            spgrad = spatial_grad(avg_climate_layers)
+            qs::qsave(spgrad, spgrad_file)
         }
         
         
-        
-        
-        
-        
-        
-        #######
-        # Get the spatial gradient up slope (elevation/km)
-        cat("spatial gradient up slope\n")
-        
-        
-        
-        ## calculate the spatial gradient
-        
-        # Parallel for big areas
-        area_i <- SA_i$Areakm2
-        
-        if(area_i > 10^4){
-            
-            avg_climate_layers_tiles <- avg_climate_layers
-            # define tile resolution 
-            nrow(avg_climate_layers_tiles) <- 10
-            ncol(avg_climate_layers_tiles) <- 20
-            avg_climate_layers_tiles[] <- 1:ncell(avg_climate_layers_tiles)
-            # mask raster
-            SA_i_Eck <- terra::project(SA_i,avg_climate_layers_tiles)
-            avg_climate_layers_tiles <- terra::mask(avg_climate_layers_tiles, SA_i_Eck)
-            
-            # plot(avg_climate_layers_tiles);dev.off()
-            
-            parallel::mclapply(terra::cells(avg_climate_layers_tiles), function(x) {
-                tmp_file <- here::here(tmp_dir,
-                                       paste(ECO,velocity_variable,"spgrad_ele_tile",x,paste0(polygontogo,".qs"), sep = "_"))
-                test <- try(qs::qread(tmp_file),silent = TRUE)
-                if(any(class(test)=="try-error")){
-                    tmp_ext <- terra::ext(avg_climate_layers_tiles, cells = x)
-                    real_cells <- terra::cells(elevation, tmp_ext)
-                    terra::window(elevation) <- tmp_ext
-                    tmp_data <- spatial_grad(elevation)
-                    terra::window(elevation) <- NULL
-                    # plug in "real" icells
-                    tmp_data$icell <- real_cells
-                    qs::qsave(tmp_data, tmp_file)
-                }
-            }, mc.cores = ncores)
-            
-            spgrad_ele <- lapply(terra::cells(avg_climate_layers_tiles), function(x) {
-                tmp_file <- here::here(tmp_dir,
-                                       paste(ECO,velocity_variable,"spgrad_ele_tile",x,paste0(polygontogo,".qs"), sep = "_"))
-                try(qs::qread(tmp_file),silent = TRUE)
-            })
-            
-            spgrad_ele <- data.frame(data.table::rbindlist(spgrad_ele))
-            
-            
-            # delete temporary files
-            del_files <- lapply(terra::cells(avg_climate_layers_tiles), function(x) {
-                tmp_file <- here::here(tmp_dir,
-                                       paste(ECO,velocity_variable,"spgrad_ele_tile",x,paste0(polygontogo,".qs"), sep = "_"))
-                unlink(tmp_file)
-            })
-        } else {
-            spgrad_ele = spatial_grad(elevation)
-        }
-        
-        
-        
-        
-        # Convert angle to radians
-        initial_angle_rad <- deg_to_rad(spgrad$angle) # angle of the spatial gradient 
-        target_angle_rad <- deg_to_rad(spgrad_ele$angle) # angle of the elevation up slope
-        conversion_rate <- cos(initial_angle_rad - target_angle_rad) 
-        
-        # Apply conversion >> What is the environmental gradient up slope? (C/km up slope)
-        spgrad_ele$Grad_ele <- spgrad_ele$Grad * conversion_rate
-        # Apply conversion >> What is the distance upslope needed to cover the same distance in the flat terrain? (C/km up slope)
-        spgrad_ele$Grad_ele <- spgrad_ele$Grad_ele / cos(deg_to_rad(elevation_slope[spgrad_ele$icell]))
+        # #######
+        # # Get the spatial gradient up slope (elevation/km)
+        # cat("Spatial gradient up slope\n")
+        # 
+        # spgrad_ele_file <- here::here(tmp_dir,
+        #                               paste(ECO,velocity_variable,"spgrad_ele",paste0(polygontogo,".qs"), sep = "_"))
+        # spgrad_ele <- try(qs::qread(spgrad_ele_file,nthreads = ncores),silent = TRUE)
+        # if(any(class(spgrad_ele)=="try-error")){
+        #     
+        #     if(big){
+        #         
+        #         avg_climate_layers_tiles <- avg_climate_layers
+        #         # define tile resolution 
+        #         nrow(avg_climate_layers_tiles) <- round(nrow(avg_climate_layers)/100,0)
+        #         ncol(avg_climate_layers_tiles) <- round(ncol(avg_climate_layers)/100,0)
+        #         avg_climate_layers_tiles[] <- 1:ncell(avg_climate_layers_tiles)
+        #         # mask raster
+        #         SA_i_Eck <- terra::project(SA_i,avg_climate_layers_tiles)
+        #         avg_climate_layers_tiles <- terra::mask(avg_climate_layers_tiles, SA_i_Eck)
+        #         
+        #         # plot(avg_climate_layers_tiles);dev.off()
+        #         
+        #         parallel::mclapply(terra::cells(avg_climate_layers_tiles), function(x) {
+        #             tmp_file <- here::here(tmp_dir,
+        #                                    paste(ECO,velocity_variable,"spgrad_ele_tile",x,paste0(polygontogo,".qs"), sep = "_"))
+        #             test <- try(qs::qread(tmp_file),silent = TRUE)
+        #             if(any(class(test)=="try-error")){
+        #                 tmp_ext <- terra::ext(avg_climate_layers_tiles, cells = x)
+        #                 real_cells <- terra::cells(elevation, tmp_ext)
+        #                 terra::window(elevation) <- tmp_ext
+        #                 tmp_data <- spatial_grad(elevation)
+        #                 terra::window(elevation) <- NULL
+        #                 # plug in "real" icells
+        #                 tmp_data$icell <- real_cells
+        #                 qs::qsave(tmp_data, tmp_file)
+        #             }
+        #         }, mc.cores = ncores)
+        #         
+        #         spgrad_ele <- lapply(terra::cells(avg_climate_layers_tiles), function(x) {
+        #             tmp_file <- here::here(tmp_dir,
+        #                                    paste(ECO,velocity_variable,"spgrad_ele_tile",x,paste0(polygontogo,".qs"), sep = "_"))
+        #             try(qs::qread(tmp_file),silent = TRUE)
+        #         })
+        #         
+        #         spgrad_ele <- lapply(terra::cells(avg_climate_layers_tiles), function(x) {
+        #             tmp_file <- here::here(tmp_dir,
+        #                                    paste(ECO,velocity_variable,"spgrad_ele_tile",x,paste0(polygontogo,".qs"), sep = "_"))
+        #             qs::qread(tmp_file)
+        #         })
+        #         
+        #         spgrad_ele <- data.frame(data.table::rbindlist(spgrad_ele))
+        #         
+        #         qs::qsave(spgrad_ele, spgrad_ele_file)
+        #         
+        #         # delete temporary files
+        #         del_files <- lapply(terra::cells(avg_climate_layers_tiles), function(x) {
+        #             tmp_file <- here::here(tmp_dir,
+        #                                    paste(ECO,velocity_variable,"spgrad_ele_tile",x,paste0(polygontogo,".qs"), sep = "_"))
+        #             unlink(tmp_file)
+        #         })
+        #     } else {
+        #         spgrad_ele = spatial_grad(elevation)
+        #     }
+        # }
+        # 
+        # 
+        # # What is the environmental gradient up slope? (C/Elev)
+        # # Divide the environmental gradient (C/km) by the elevation gradient (Elev/km)
+        # spgrad_ele$Grad_ele <- spgrad$Grad / spgrad_ele$Grad
+        # 
+        # # What is the distance upslope needed to cover the same distance in the flat terrain? (C/km up slope)
+        # # Divide the environmental gradient by the cosine of the elevation slope 
+        # # This is the same as the formula to find the hypotenuse if provided the basis (gradient C/km) and the angle (elevation slope) of the triangle.
+        # spgrad_ele$Grad_ele_dist <- spgrad$Grad / cos(deg_to_rad(elevation_slope[spgrad_ele$icell]))
         
         #######
         ## calculate gradient-based climate velocity:
-        ## Across latitude
-        cat("calculate velocity across latitude\n")
-        gVelLat <- gVelocity(grad = spgrad, slope = ttrend, 
-                             grad_col = "NS", truncate = TRUE)
+        cat("Calculate Velocities\n")
         
-        ## Across elevation
-        cat("calculate velocity across elevation\n")
-        gVelEle <- gVelocity(grad = spgrad_ele, slope = ttrend, 
-                             grad_col = "Grad_ele", truncate = TRUE)
-        
-        ## Undirectional
-        cat("calculate velocity undirectional\n")
+        ## Unprojected
+        cat("Velocity Unprojected\n")
         gVel <- gVelocity(grad = spgrad, slope = ttrend, truncate = TRUE)
         
-        #######
-        ## change sign of gVelLat if in the south hemisphere to reflect a velocity away of the tropics
-        SouthCells <- terra::as.data.frame(gVelLat$GradVel, xy = TRUE, cell = TRUE) 
+        # ## Across elevation 
+        # cat("Velocity across elevation (method elevation)\n")
+        # gVelEleUp <- gVelocity(grad = spgrad_ele, slope = ttrend, 
+        #                        grad_col = "Grad_ele", truncate = TRUE)
+        # 
+        # cat("Velocity across elevation (method distance)\n")
+        # gVelEleDist <- gVelocity(grad = spgrad_ele, slope = ttrend, 
+        #                          grad_col = "Grad_ele_dist", truncate = TRUE)
+        
+        ## Across latitude
+        cat("Velocity across latitude\n")
+        gVelLat <- gVel$Vel * cos(deg_to_rad(gVel$Ang))
+        
+        # change sign of gVelLat if in the south hemisphere to reflect a velocity away of the tropics
+        SouthCells <- terra::as.data.frame(gVelLat$Vel, xy = TRUE, cell = TRUE) 
         SouthCells <- SouthCells %>% filter(y<0)
         SouthCells <- SouthCells$cell
         if(length(SouthCells)>0){
-            gVelLat$GradVel[SouthCells] <- gVelLat$GradVel[SouthCells] * -1
+            gVelLat[SouthCells] <- gVelLat[SouthCells] * -1
         }
         
         #######
@@ -369,29 +389,65 @@ if(ECO=="Ter"){
         trend.mean <- as.numeric(global(ttrend,mean,na.rm = TRUE)[,1])
         trend.sd <- as.numeric(global(ttrend,sd,na.rm = TRUE)[,1])
         
-        v.mean <- terra::global(gVel$GradVel, mean, na.rm=TRUE)[,1]
-        v.median <- terra::global(gVel$GradVel, median, na.rm=TRUE)[,1]
-        v.sd <- terra::global(gVel$GradVel, sd, na.rm=TRUE)[,1]
+        v.mean <- terra::global(gVel$Vel, mean, na.rm=TRUE)[,1]
+        v.median <- terra::global(gVel$Vel, median, na.rm=TRUE)[,1]
+        v.sd <- terra::global(gVel$Vel, sd, na.rm=TRUE)[,1]
         
-        v.lat.mean <- terra::global(gVelLat$GradVel, mean, na.rm=TRUE)[,1]
-        v.lat.median <- terra::global(gVelLat$GradVel, median, na.rm=TRUE)[,1]
-        v.lat.sd <- terra::global(gVelLat$GradVel, sd, na.rm=TRUE)[,1]
+        v.lat.mean <- terra::global(gVelLat$Vel, mean, na.rm=TRUE)[,1]
+        v.lat.median <- terra::global(gVelLat$Vel, median, na.rm=TRUE)[,1]
+        v.lat.sd <- terra::global(gVelLat$Vel, sd, na.rm=TRUE)[,1]
         
-        v.ele.mean <- global(gVelEle$GradVel, mean, na.rm=TRUE)[,1]
-        v.ele.median <- global(gVelEle$GradVel, median, na.rm=TRUE)[,1]
-        v.ele.sd <- global(gVelEle$GradVel, sd, na.rm=TRUE)[,1]
+        # v.ele.mean <- global(gVelEleUp$Vel, mean, na.rm=TRUE)[,1]
+        # v.ele.median <- global(gVelEleUp$Vel, median, na.rm=TRUE)[,1]
+        # v.ele.sd <- global(gVelEleUp$Vel, sd, na.rm=TRUE)[,1]
+        # 
+        # v.ele2.mean <- global(gVelEleDist$Vel, mean, na.rm=TRUE)[,1]
+        # v.ele2.median <- global(gVelEleDist$Vel, median, na.rm=TRUE)[,1]
+        # v.ele2.sd <- global(gVelEleDist$Vel, sd, na.rm=TRUE)[,1]
         
         gVelSA_j <- data.frame(baseline, trend.mean, trend.sd, 
                                v.mean, v.median, v.sd, 
                                v.lat.mean, v.lat.median, v.lat.sd, 
-                               v.ele.mean, v.ele.median, v.ele.sd)
+                               # v.ele.mean, v.ele.median, v.ele.sd,
+                               # v.ele2.mean, v.ele2.median, v.ele2.sd
+                               )
         names(gVelSA_j) <- paste0(names(gVelSA_j),".",velocity_variable)
         
         gVelSA[[v]] <- gVelSA_j
+        
+        #######
+        cat("Save velocity maps\n")
+        # save velocity maps
+        terra::writeRaster(gVel$Vel, 
+                           here::here(velocity_SA_dir, 
+                                      paste(polygontogo,velocity_variable,"gVel.tif",sep="_")),
+                           overwrite=TRUE)
+        terra::writeRaster(gVelLat$Vel, 
+                           here::here(velocity_SA_dir, 
+                                      paste(polygontogo,velocity_variable,"gVelLat.tif",sep="_")),
+                           overwrite=TRUE)
+        
+        # terra::writeRaster(gVelEleUp$Vel, 
+        #                    here::here(velocity_SA_dir, 
+        #                               paste(polygontogo,velocity_variable,"gVelEleUp.tif",sep="_")),
+        #                    overwrite=TRUE) 
+        # terra::writeRaster(gVelEleDist$Vel, 
+        #                    here::here(velocity_SA_dir, 
+        #                               paste(polygontogo,velocity_variable,"gVelEleDist.tif",sep="_")),
+        #                    overwrite=TRUE) 
+        
     } 
     
     gVelSA <- do.call(cbind,gVelSA)
     gVelSA$ID=polygontogo
+    
+    #######
+    # save velocity results
+    write.csv(gVelSA, here::here(velocity_SA_dir, paste0(polygontogo,".csv")), row.names = FALSE)
+    
+    # delete temporary files
+    unlink(list.files(tmp_dir,pattern = polygontogo,full.names = TRUE))
+    
     
     
 } else {
@@ -412,7 +468,7 @@ if(ECO=="Ter"){
     # project to equal-area
     climate_layers_i <- terra::project(climate_layers_i,Eckt)
     
-    # if study area is two small (there are less then 8 cells), there is no way climate gradients can be calculated.
+    # if study area is two small (< 8 cells), there is no way climate gradients can be calculated.
     # A possible solution is to disaggregate the raster to a finer resolution
     if(ncell(climate_layers_i) < 12){
         # Force smaller resolution
@@ -431,25 +487,39 @@ if(ECO=="Ter"){
     
     #######
     # calculate the spatial gradient (C/km)
-    cat("spatial gradient\n")
-    spgrad = spatial_grad(climate_layers_i)
+    cat("Spatial gradient\n")
+    
+    ## calculate averaged climate layers
+    avg_climate_layers <- terra::app(
+        climate_layers_i, 
+        fun = mean, na.rm = TRUE, 
+        overwrite=TRUE,
+        cores = ncores)
+    
+    
+    gc()
+    
+    rm(climate_layers_i)
+    
+    spgrad = spatial_grad(avg_climate_layers)
     
     #######
     ## calculate gradient-based climate velocity:
-    cat("calculate gradient-based climate velocity\n")
-    gVel <- gVelocity(grad = spgrad, slope = ttrend,
-                      truncate = TRUE)
+    ## Unprojected
+    cat("Velocity Unprojected\n")
+    gVel <- gVelocity(grad = spgrad, slope = ttrend, truncate = TRUE)
     
-    gVelLat <- gVelocity(grad = spgrad, slope = ttrend, 
-                         grad_col = "NS", truncate = TRUE)
+    ## Across latitude
+    cat("Velocity across latitude\n")
+    gVelLat <- gVel$Vel * cos(deg_to_rad(gVel$Ang))
     
     #######
     ## change sign of gVelLat if in the south hemisphere to reflect a velocity away of the tropics
-    SouthCells <- terra::as.data.frame(gVelLat$GradVel, xy = TRUE, cell = TRUE) 
+    SouthCells <- terra::as.data.frame(gVelLat$Vel, xy = TRUE, cell = TRUE) 
     SouthCells <- SouthCells %>% filter(y<0)
     SouthCells <- SouthCells$cell
     if(length(SouthCells)>0){
-        gVelLat$GradVel[SouthCells] <- gVelLat[SouthCells] * -1
+        gVelLat[SouthCells] <- gVelLat[SouthCells] * -1
     }
     
     #######
@@ -458,31 +528,37 @@ if(ECO=="Ter"){
     trend.mean <- as.numeric(global(ttrend,mean,na.rm = TRUE)[,1])
     trend.sd <- as.numeric(global(ttrend,sd,na.rm = TRUE)[,1])
     
-    v.mean <- terra::global(gVel$GradVel, mean, na.rm=TRUE)[,1]
-    v.median <- terra::global(gVel$GradVel, median, na.rm=TRUE)[,1]
-    v.sd <- terra::global(gVel$GradVel, sd, na.rm=TRUE)[,1]
+    v.mean <- terra::global(gVel$Vel, mean, na.rm=TRUE)[,1]
+    v.median <- terra::global(gVel$Vel, median, na.rm=TRUE)[,1]
+    v.sd <- terra::global(gVel$Vel, sd, na.rm=TRUE)[,1]
     
-    v.lat.mean <- as.numeric(global(gVelLat$GradVel, mean, na.rm=TRUE))
-    v.lat.median <- as.numeric(global(gVelLat$GradVel, median, na.rm=TRUE))
-    v.lat.sd <- as.numeric(global(gVelLat$GradVel, sd, na.rm=TRUE))
+    v.lat.mean <- as.numeric(global(gVelLat$Vel, mean, na.rm=TRUE))
+    v.lat.median <- as.numeric(global(gVelLat$Vel, median, na.rm=TRUE))
+    v.lat.sd <- as.numeric(global(gVelLat$Vel, sd, na.rm=TRUE))
     
     gVelSA <- data.frame(baseline, trend.mean, trend.sd, 
                          v.mean, v.median, v.sd, 
                          v.lat.mean, v.lat.median, v.lat.sd)
     names(gVelSA) <- paste0(names(gVelSA),".",velocity_variable)
     gVelSA$ID=polygontogo
+    
+    #######
+    # save velocity results
+    write.csv(gVelSA, here::here(velocity_SA_dir, paste0(polygontogo,".csv")), row.names = FALSE)
+    
+    #######
+    # save velocity maps
+    cat("Save velocity maps\n")
+    terra::writeRaster(gVel$Vel, 
+                       here::here(velocity_SA_dir, 
+                                  paste(polygontogo,velocity_variable,"gVel.tif",sep="_")),
+                       overwrite=TRUE)
+    terra::writeRaster(gVelLat, 
+                       here::here(velocity_SA_dir, 
+                                  paste(polygontogo,velocity_variable,"gVelLat.tif",sep="_")),
+                       overwrite=TRUE)
+    
+    
 }
 
-# save velocity results
-write.csv(gVelSA, here::here(velocity_SA_dir, paste0(polygontogo,".csv")), row.names = FALSE)
 
-# save velocity maps
-terra::writeRaster(gVel$GradVel, here::here(velocity_SA_dir, paste0(polygontogo,"_gVel.tif")),overwrite=TRUE)
-terra::writeRaster(gVelLat$GradVel, here::here(velocity_SA_dir, paste0(polygontogo,"_gVelLat.tif")),overwrite=TRUE)
-if(ECO=="Ter"){
-    terra::writeRaster(gVelEle$GradVel, here::here(velocity_SA_dir, paste0(polygontogo,"_gVelEle.tif")),overwrite=TRUE) 
-    
-    # delete temporary files
-    unlink(list.files(tmp_dir,pattern = polygontogo,full.names = TRUE))
-    
-}

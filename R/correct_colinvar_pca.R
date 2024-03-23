@@ -7,20 +7,58 @@ correct_colinvar_pca <- function(
         bios_SA=NULL, 
         bios_PresAbs=NULL, 
         perc = 0.95, 
-        output_dir = ""){
+        output_dir = "",
+        check_if_PCA_model_exists = TRUE){
     
     # Calculate PCA
-    p <- stats::prcomp(env_layer, retx = TRUE, scale. = TRUE, center = TRUE)
-    means <- p$center
-    stds <- p$scale
-    cof <- p$rotation
-    cvar <- summary(p)$importance["Cumulative Proportion", ]
-    naxis <- Position(function(x) {
-        x >= perc
-    }, cvar)
-    cvar <- data.frame(cvar)
     
-    p <- stats::prcomp(env_layer, retx = TRUE, scale. = TRUE, center = TRUE, rank. = naxis)
+    
+    if(check_if_PCA_model_exists){
+        if(file.exists(here::here(output_dir,"PCA_model.RDS"))){
+            p <- readRDS(here::here(output_dir,"PCA_model.RDS"))
+            coefficients <- read.csv(here::here(output_dir,"PCA_coefficients.csv"))
+            cumulative_variance <- read.csv(here::here(output_dir,"PCA_cumulative_variance.csv"))
+            
+        } else {
+            p <- stats::prcomp(env_layer, retx = TRUE, scale. = TRUE, center = TRUE)
+            means <- p$center
+            stds <- p$scale
+            cof <- p$rotation
+            cvar <- summary(p)$importance["Cumulative Proportion", ]
+            naxis <- Position(function(x) {
+                x >= perc
+            }, cvar)
+            cvar <- data.frame(cvar)
+            
+            coefficients = data.frame(cof) %>% 
+                dplyr::tibble(variable = rownames(.), .)
+            
+            cumulative_variance = dplyr::tibble(PC = 1:nrow(cvar), 
+                                                cvar)
+            
+            p <- stats::prcomp(env_layer, retx = TRUE, scale. = TRUE, center = TRUE, rank. = naxis)
+        }
+    } else {
+        
+        p <- stats::prcomp(env_layer, retx = TRUE, scale. = TRUE, center = TRUE)
+        means <- p$center
+        stds <- p$scale
+        cof <- p$rotation
+        cvar <- summary(p)$importance["Cumulative Proportion", ]
+        naxis <- Position(function(x) {
+            x >= perc
+        }, cvar)
+        cvar <- data.frame(cvar)
+        
+        coefficients = data.frame(cof) %>% 
+            dplyr::tibble(variable = rownames(.), .)
+        
+        cumulative_variance = dplyr::tibble(PC = 1:nrow(cvar), 
+                                            cvar)
+        
+        p <- stats::prcomp(env_layer, retx = TRUE, scale. = TRUE, center = TRUE, rank. = naxis)
+    }
+    
     
     # Predict to the PresAbs
     if (!is.null(bios_PresAbs)) {
@@ -97,13 +135,12 @@ correct_colinvar_pca <- function(
     }
     
     
-    result <- list(coefficients = data.frame(cof) %>% 
-                       dplyr::tibble(variable = rownames(.), .), 
-                   cumulative_variance = dplyr::tibble(PC = 1:nrow(cvar), 
-                                                       cvar),
+    result <- list(coefficients = coefficients, 
+                   cumulative_variance = cumulative_variance,
                    bios_PresAbs = bios_PresAbs,
                    bios_BG = bios_BG,
-                   bios_SA = bios_SA)
+                   bios_SA = bios_SA,
+                   PCA_model = p)
     return(result)
     
 }
@@ -115,7 +152,8 @@ PCA_env <- function(
         env_cap = 10^4, # Maximum size of dataset used to calculate the PCA
         output_dir,
         shift_info,
-        PresAbs
+        PresAbs,
+        check_if_PCA_model_exists = TRUE
 ){
     
     #########################
@@ -195,12 +233,17 @@ PCA_env <- function(
             bios_BG = my_test_BG, 
             bios_SA = my_test_SA, 
             bios_PresAbs = my_test_PresAbs,
-            output_dir = output_dir)
+            output_dir = output_dir,
+            check_if_PCA_model_exists = check_if_PCA_model_exists)
         
     } else {
         new_data <- list(bios_BG = my_test_BG, 
                          bios_SA = my_test_SA, 
-                         bios_PresAbs = my_test_PresAbs)
+                         bios_PresAbs = my_test_PresAbs,
+                         p = readRDS(here::here(output_dir,"PCA_model.RDS")),
+                         coefficients = read.csv(here::here(output_dir,"PCA_coefficients.csv")),
+                         cumulative_variance = read.csv(here::here(output_dir,"PCA_cumulative_variance.csv")))
+        
     }
     
     

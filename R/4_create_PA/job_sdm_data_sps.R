@@ -75,8 +75,31 @@ all_sps <- rbind(mar_sps,
 
 table(all_sps$realm)
 
-# all_sps <- ter_sps # running only for terrestrials
+########################
+all_sps <- ter_sps # running only for terrestrials
 
+# 2nd) get missing species
+# species we have env data but dont have sdms
+I_have <- sapply(1:nrow(all_sps), function(i){
+    
+    sp_i <- gsub(" ","_",all_sps$sps[i])
+    sp_i_realm <- gsub(" ","_",all_sps$realm[i])
+    
+    file_test <- here::here(env_data_dir(sp_i_realm),paste0(sp_i,"_",sp_i_realm,".qs"))
+    
+    file.exists(file_test)
+})
+
+
+missing_sps <- all_sps[!I_have,]
+nrow(missing_sps)
+
+# get missing species
+all_sps <- missing_sps
+nrow(all_sps)
+
+# sample 400 random species
+all_sps <- all_sps[sample(1:nrow(all_sps), 400),]
 nrow(all_sps)
 
 ########################

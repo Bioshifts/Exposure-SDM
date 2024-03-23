@@ -19,7 +19,7 @@ print(command_args)
 polygontogo <- command_args
 # polygontogo <- "A112_P1" # Mar # South
 # polygontogo <- "A43_P1" # Mar # North
-# polygontogo <- "A1_P1" # Ter
+# polygontogo <- "A187_P2" # Ter
 
 print(polygontogo)
 
@@ -39,7 +39,6 @@ work_dir <- getwd()
 
 # source settings
 source("R/settings.R")
-
 
 # load SA polygon i
 SA_poly_i <- terra::vect(here::here(SA_shps_dir,paste0(polygontogo,".shp")))
@@ -71,27 +70,24 @@ period <- biov %>%
     dplyr::select(START,END) %>%
     round(digits = 0) %>%
     unique 
-period = period$START:period$END
+period = min(period$START):max(period$END)
 
-# select bioclimatics for perid
+# select bioclimatics for period
 bioclima <- list.files(bios_dir(realm))
 bioclima <- bioclima[grep(paste0(period,collapse = "|"),bioclima)]
+bioclima <- data.frame(ID = polygontogo, bio = bioclima, year = period)
 
-# load in bioclimatics
-bioclima <- lapply(bioclima, function(x){
-    terra::rast(here::here(bios_dir(realm), x))
+lapply(1:nrow(bioclima), function(i){
+    # load in bioclimatics
+    tmp <- terra::rast(here::here(bios_dir(realm), bioclima$bio[i]))
+    tmp_name <- paste(bioclima$ID[i], "bios", bioclima$year[i])
+    # check if file exists
+    my_file <- here::here(bios_SA_dir(realm),polygontogo,paste0(tmp_name,".tif"))
+    tmp_try <- try(rast(my_file), silent = TRUE)
+    if(class(tmp_try)=='try-error'){ 
+        # mask to the SA
+        terra::window(tmp) <- terra::ext(SA_poly_i)
+        terra::mask(tmp, mask = SA_poly_i, filename = my_file)
+        terra::window(tmp) <- NULL
+    }
 })
-
-# mask to the SA
-bioclima <- lapply(bioclima, function(x){
-    terra::window(x) <- terra::ext(SA_poly_i)
-    terra::mask(x, SA_poly_i)
-})
-
-# save
-sapply(1:length(bioclima), function(x){
-    terra::writeRaster(bioclima[[x]], 
-                       here::here(bios_SA_dir(realm),polygontogo,paste0(polygontogo," bios ",period[x],".tif")), 
-                       overwrite = TRUE)
-})
-

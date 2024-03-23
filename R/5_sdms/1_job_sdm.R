@@ -55,13 +55,13 @@ length(all_sps)
 
 # select only v1 species for now
 biov1 <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v1), header = T)
-# v1 from which we have shape files
-shp_files <- list.files(SA_shps_dir,pattern = ".shp")
-shp_files <- gsub(".shp","",shp_files)
-biov1 <- biov1[biov1$ID %in% shp_files,]
+length(unique(biov1$ssp))
 
-all_sps <- all_sps[all_sps %in% gsub("_"," ",biov1$sp_name_std_v1)]
-length(all_sps)
+# v1 from IDs we have selected for v3
+v3_selected <- unique(c(
+    list.files(bios_SA_dir("Ter")),
+    list.files(bios_SA_dir("Mar"))))
+biov1 <- biov1[biov1$ID %in% v3_selected,]
 
 # only LAT
 biov1$Type[which(biov1$Type=="HOR")] <- "LAT"
@@ -74,23 +74,37 @@ length(all_sps)
 terrestrials <- gsub("_"," ",biov1$sp_name_std_v1[which(biov1$ECO == "T")])
 marines <- gsub("_"," ",biov1$sp_name_std_v1[which(biov1$ECO == "M")])
 
-mar_sps <- all_sps[which(all_sps %in% marines)]
-mar_sps <- data.frame(sps = mar_sps, realm = "Mar")
-nrow(mar_sps)
+# Use temporal period from the environmental data
+biov1_ter <- biov1 %>% filter(START >= temporal_range_env_data("Ter")[1] + n_yr_bioclimatic,
+                              sp_name_std_v1 %in% terrestrials)
+biov1_mar <- biov1 %>% filter(START >= temporal_range_env_data("Mar")[1] + n_yr_bioclimatic,
+                              sp_name_std_v1 %in% marines)
+
+biov1 <- rbind(biov1_ter,
+               biov1_mar)
+
+all_sps <- all_sps[all_sps %in% gsub("_"," ",biov1$sp_name_std_v1)]
+length(all_sps)
 
 ter_sps <- all_sps[which(all_sps %in% terrestrials)]
 ter_sps <- data.frame(sps = ter_sps, realm = "Ter")
 nrow(ter_sps)
 
+mar_sps <- all_sps[which(all_sps %in% marines)]
+mar_sps <- data.frame(sps = mar_sps, realm = "Mar")
+nrow(mar_sps)
+
 # pipe line of species: first marines (because they run faster due to coarser resolution data) then terrestrials
-# all_sps <- rbind(mar_sps, ter_sps)
-all_sps = ter_sps
+all_sps <- rbind(mar_sps, ter_sps)
+# all_sps = ter_sps
 # all_sps = mar_sps
 nrow(all_sps)
 
 #####################
 # 1st) delete all duplicated sdms
-for(i in 1:nrow(all_sps)){ cat("\r",i, "from", nrow(all_sps))
+for(i in 1:nrow(all_sps)){ 
+    
+    cat("\r",i, "from", nrow(all_sps))
     
     # models
     files_sdms <- list.files(
@@ -155,13 +169,19 @@ for(i in 1:nrow(all_sps)) { cat(i, "from", nrow(all_sps),"\r")
 
 missing_sps <- !I_have
 
-# get missing species
+# I have
+length(which(I_have))
+# 1079
+
+# missing species
 all_sps <- all_sps[missing_sps,]
 nrow(all_sps)
+# 670
+
 
 #####################
 # 3rd) submit jobs
-N_jobs_at_a_time = 100
+N_jobs_at_a_time = 30
 N_Nodes = 1
 tasks_per_core = 1
 
@@ -184,11 +204,13 @@ for(i in 1:nrow(all_sps)){
             cores = 10
             time = "24:00:00"
             memory = "20G"
+            partition= "normal"
         }
         if(realm == "Ter"){ # for the Terrestrial use this (bigger jobs) 
             cores = 5 # reduce N cores because of out-of-memory issue
             time = "1-24:00:00"
-            memory = "32G"
+            memory = "100G"
+            partition = "bigmem-amd"
         }
         
         # Start writing to this file
@@ -201,7 +223,7 @@ for(i in 1:nrow(all_sps)){
         cat("#SBATCH -n",tasks_per_core,"\n")
         cat("#SBATCH -c",cores,"\n")
         cat("#SBATCH --mem=",memory,"\n", sep="")
-        cat("#SBATCH --partition=normal\n")
+        cat("#SBATCH --partition=",partition,"\n", sep="")
         
         cat("#SBATCH --job-name=",sptogo,"\n", sep="")
         cat("#SBATCH --output=",here::here(logdir,paste0(sptogo,".out")),"\n", sep="")

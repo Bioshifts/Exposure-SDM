@@ -1,0 +1,1250 @@
+---
+title: "Get species data for SDMs"
+author: "Brunno F Oliveira & Bioshifts group"
+date: "Last compiled on `r Sys.Date()`"
+output:
+    html_document:
+        toc: true
+        toc_float: true
+        number_sections: true
+---
+
+# *Setup*
+
+```{r setup, message = FALSE, warning = FALSE}
+
+rm(list=ls())
+gc()
+
+list.of.packages <- c("stringr", "rgbif", "parallel", "pbapply", "raster", "dplyr", "here", "tidyr","ggrepel",
+                      "data.table", "ggplot2", "readxl", "knitr",
+                      "sqldf","RSQLite", "scales")
+
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+
+if(length(new.packages)) install.packages(new.packages)
+
+sapply(list.of.packages, require, character.only = TRUE)
+
+```
+
+# *Load parameters*
+
+```{r}
+
+source(here::here("R/settings.R"))
+
+range_env_data <- sapply(temporal_range_env_data, function(x){
+    c(min(x),max(x))
+})
+range_env_data <- c(min(range_env_data),max(range_env_data))
+
+```
+
+# *Load functions*
+
+```{r }
+
+source(here::here("R/my_functions.R"))
+
+```
+
+# *Load species list*
+
+```{r}
+
+splist <- read.csv(here::here("Data/splist.csv"), header = T)
+# remove duplicated sp_names
+splist <- splist %>%
+    dplyr::select(scientificName,kingdom,phylum,class,order,family,db) %>%
+    filter(!duplicated(scientificName))
+
+length(unique(splist$scientificName))
+
+```
+
+# *Load bioshifts*
+
+*While we dont have a v3, just add papers from v2 to v1*
+
+```{r }
+
+# Load v3
+biov3 <- read.csv(here::here("Data/bioshifts_v3_raw.csv"))
+biov3 <- biov3 %>%
+    filter(!is.na(sp_name)) %>%
+    mutate(sp_name=gsub("_"," ",sp_name))
+# add taxonomy
+tojoin <- splist %>%
+    dplyr::select(scientificName, kingdom, phylum, class, order, family) %>%
+    mutate(sp_name = scientificName) %>%
+    filter(!duplicated(sp_name))
+
+any(!biov3$sp_name %in% tojoin$sp_name)
+
+biov3 <- merge(biov3, tojoin, by = "sp_name", all.x = TRUE)
+
+length(unique(biov3$scientificName))
+
+# Load v1
+biov1 <- read.csv(here::here("Data/biov1_fixednames.csv"), header = T)
+# Fix references in biov1
+biov1$Article_ID <- gsub("[^0-9.-]", "", biov1$Article_ID)
+biov1$Article_ID <- as.numeric(biov1$Article_ID)
+biov1$sp_name_std_v1 <- gsub("_"," ",biov1$sp_name_std_v1)
+biov1 <- biov1 %>%
+    dplyr::select(ID,Study_ID,Type,Param,Trend,SHIFT,UNIT,DUR,
+                  START,END,group,ECO,
+                  Phylum,Class,Order,Family,Genus,sp_name_std_v1) %>% # select columns
+    mutate(
+        Type = case_when(
+            Type=="HOR" ~ "LAT",
+            TRUE ~ as.character(Type)),
+        Species = sp_name_std_v1) %>% 
+    mutate( # from m/year to km/year
+        kmyr = case_when(
+            UNIT == "m/year" ~ SHIFT/1000, 
+            UNIT == "km/year" ~ SHIFT, 
+            TRUE ~ NA_real_))
+
+biov1 <- biov1 %>%
+    filter(!is.na(sp_name_std_v1))
+
+all(biov1$sp_name_std_v1 %in% splist$scientificName[which(splist$v1==1)])
+
+# # "T" "M"
+# unique(biov1$group)
+# # "vertebrate"         "vascular.plant"     "other.animal"  
+# # "fungi"              "algae"              "virus" 
+# # "bacteria"           "non.vascular.plant"
+
+# Fishes are those from Class Actinopterygii
+# Class Actinopterygii + ECO T = freshwater fish
+# Class Actinopterygii + ECO M = marine fish
+# Sharks are those from Class Chondrichthyes
+
+# Load v2 
+biov2 <- read.csv(here::here("Data/biov2_fixednames.csv"), header = T)
+biov2$Scientific.Name <- gsub(" ","_",biov2$Scientific.Name)
+biov2$sp_name_std_v2 <- gsub("_"," ",biov2$sp_name_std_v2)
+biov2 <- biov2  %>%
+    dplyr::select(Paper.ID,Study.Period,Dimension,Parameter,Numeric.Change,Unit,Total.Years.Studied,
+                  Start.Year,End.Year,Taxonomic.Group,Ecosystem.Type,
+                  phylum,class,order,family,genus,sp_name_std_v2) %>% # select columns
+    filter(!Parameter == "west" | !Parameter == "east" | !is.na(Numeric.Change)) %>%
+    mutate(
+        Type = case_when(
+            Dimension=="latitude" ~ "LAT",
+            Dimension=="elevation" ~ "ELE",
+            TRUE ~ as.character(Dimension)),
+        ID=Paper.ID,
+        Study_ID=Study.Period,
+        Type=Type,
+        Param=Parameter,
+        Trend=Numeric.Change,
+        UNIT=Unit,
+        DUR=Total.Years.Studied,
+        START=Start.Year,
+        END=End.Year,
+        group=Taxonomic.Group,
+        ECO=case_when(
+            Ecosystem.Type=="terrestrial" ~ "T",
+            Ecosystem.Type=="marine" ~ "M",
+            Ecosystem.Type=="aquatic" ~ "A",
+            TRUE ~ as.character(Ecosystem.Type)),
+        Phylum=phylum,
+        Class=class,
+        Order=order,
+        Family=family,
+        Genus=genus,
+        Species=sp_name_std_v2) %>%
+    mutate(
+        Type = case_when(
+            Dimension=="latitude" ~ "LAT",
+            Dimension=="elevation" ~ "ELE",
+            TRUE ~ as.character(Dimension)),
+        Param = case_when(
+            Parameter=="leading edge" ~ "LE",
+            Parameter=="maximum/optimum" ~ "O",
+            Parameter=="trailing edge" ~ "TE",
+            Parameter=="mean" ~ "O",
+            TRUE ~ as.character(Parameter))) %>%
+    mutate(Total.Years.Studied=as.numeric(Total.Years.Studied)) %>% 
+    mutate(
+        kmyr = case_when(
+            UNIT == "ft" ~ Trend/3280.8 /Total.Years.Studied,
+            UNIT == 'degrees lat' ~ Trend*111/Total.Years.Studied,
+            UNIT =='degrees lat/year' ~ Trend*111,
+            UNIT=='degree latitude per decade'~ Trend*111/10,
+            UNIT=='km' ~ Trend/Total.Years.Studied,
+            UNIT=='km/decade' ~ Trend/10,
+            UNIT=='km/year' ~ Trend,
+            UNIT=='m' ~ Trend/1000/Total.Years.Studied,
+            UNIT=='m/year' ~ Trend/1000,
+            UNIT=='m/decade'~ Trend/1000/10,
+            TRUE ~ NA_real_
+        )
+    )
+
+biov2 <- biov2 %>%
+    filter(!is.na(sp_name_std_v2))
+
+all(biov2$biov2 %in% splist$scientificName[which(splist$v2==1)])
+
+# unique(biov2$ECO)
+# # "terrestrial" "marine"      "aquatic"
+# unique(biov2$group)
+# # "Bird"                                "Insect"                             
+# # "Amphibian"                           "Mammal"                             
+# # "Spider"                              "Plant"                              
+# # "Sea anemones and corals"             "Polychaetes"                        
+# # "Molluscs"                            "NA"                                 
+# # "Crustacean"                          "Starfish"                           
+# # "Ascidians tunicates and sea squirts" "Fish"                               
+# # "Sea urchin"                          "Crinoid"                            
+# # "Sea cucumber"                        "Reptile"                            
+# # "Brittle stars"                       "Centipedes"                         
+# # "Millipedes"                          "Hydrozoa" 
+
+```
+
+## *Remove species identified to the genus level or cf.*
+
+```{r }
+
+if(any(grep("sp[.]",biov1$sp_reported_name_v1))){
+    biov1 <- biov1 %>% filter(!grepl("sp[.]",sp_reported_name_v1))
+}
+if(any(grep("sp[.]",biov1$sp_name_std_v1))){
+    biov1 <- biov1 %>% filter(!grepl("sp[.]",sp_name_std_v1))
+}
+if(any(grep("cf[.]",biov1$sp_reported_name_v1))){
+    biov1 <- biov1 %>% filter(!grepl("cf[.]",sp_reported_name_v1))
+}
+if(any(grep("cf[.]",biov1$sp_name_std_v1))){
+    biov1 <- biov1 %>% filter(!grepl("cf[.]",sp_name_std_v1))
+}
+
+if(any(grep("sp[.]",biov2$sp_reported_name_v2))){
+    biov2 <- biov2 %>% filter(!grepl("sp[.]",sp_reported_name_v2))
+}
+if(any(grep("sp[.]",biov2$sp_name_std_v2))){
+    biov2 <- biov2 %>% filter(!grepl("sp[.]",sp_name_std_v2))
+}
+if(any(grep("cf[.]",biov2$sp_reported_name_v2))){
+    biov2 <- biov2 %>% filter(!grepl("cf[.]",sp_reported_name_v2))
+}
+if(any(grep("cf[.]",biov2$sp_name_std_v2))){
+    biov2 <- biov2 %>% filter(!grepl("cf[.]",sp_name_std_v2))
+}
+
+
+if(any(grep("sp[.]",biov3$sp_reported_name_v3))){
+    biov3 <- biov3 %>% filter(!grepl("sp[.]",sp_reported_name_v3))
+}
+if(any(grep("sp[.]",biov3$sp_name_std_v3))){
+    biov3 <- biov3 %>% filter(!grepl("sp[.]",sp_name_std_v3))
+}
+if(any(grep("cf[.]",biov3$sp_reported_name_v3))){
+    biov3 <- biov3 %>% filter(!grepl("cf[.]",sp_reported_name_v3))
+}
+if(any(grep("cf[.]",biov3$sp_name_std_v3))){
+    biov3 <- biov3 %>% filter(!grepl("cf[.]",sp_name_std_v3))
+}
+
+
+if(any(grep("sp[.]",splist$scientificName))){
+    splist <- splist %>% filter(!grepl("sp[.]",scientificName))
+}
+if(any(grep("sp[.]",splist$scientificName))){
+    splist <- splist %>% filter(!grepl("sp[.]",scientificName))
+}
+if(any(grep("cf[.]",splist$scientificName))){
+    splist <- splist %>% filter(!grepl("cf[.]",scientificName))
+}
+if(any(grep("cf[.]",splist$scientificName))){
+    splist <- splist %>% filter(!grepl("cf[.]",scientificName))
+}
+```
+
+## *Classify species*
+
+```{r }
+
+# Class species as Terrestrial, Marine or Freshwater
+Terv1 <- unique(biov1$sp_name_std_v1[which(biov1$ECO == "T")])
+Terv2 <- unique(biov2$sp_name_std_v2[which(biov2$ECO == "T")])
+Terrestrials = unique(c(Terv1,Terv2))
+
+Mar1 <- unique(biov1$sp_name_std_v1[which(biov1$ECO == "M")])
+Mar2 <- unique(biov2$sp_name_std_v2[which(biov2$ECO == "M")])
+Marine = unique(c(Mar1,Mar2))
+
+Aquatic = unique(biov2$sp_name_std_v2[which(biov2$ECO == "A")])
+
+# Freshwater fish
+FFishv1 <- unique(biov1$sp_name_std_v1[(biov1$Class == "Actinopterygii" | biov1$Class == "Cephalaspidomorphi") & biov1$ECO == "T"])
+FFishv2 <- unique(biov2$sp_name_std_v2[biov2$group == "Fish" & 
+                                           (biov2$ECO == "T" | biov2$ECO == "A")])
+FFish = unique(c(FFishv1,FFishv2))
+# Marine fish
+MFishv1 <- unique(biov1$sp_name_std_v1[biov1$Class == "Actinopterygii" & biov1$ECO == "M"])
+MFishv2 <- unique(biov2$sp_name_std_v2[biov2$group == "Fish" & biov2$ECO == "marine"])
+MFish = unique(c(MFishv1,MFishv2))
+
+splist$ECO = NA
+splist$ECO[which(splist$scientificName %in% Terrestrials)] <- "T"
+splist$ECO[which(splist$scientificName %in% Marine)] <- "M"
+splist$ECO[which(splist$scientificName %in% Aquatic)] <- "A"
+splist$ECO[which(splist$scientificName %in% MFish)] <- "M"
+splist$ECO[which(splist$scientificName %in% FFish)] <- "A"
+
+biov1$ECO = NA
+biov1$ECO[which(biov1$sp_name_std_v1 %in% Terrestrials)] <- "T"
+biov1$ECO[which(biov1$sp_name_std_v1 %in% Marine)] <- "M"
+biov1$ECO[which(biov1$sp_name_std_v1 %in% Aquatic)] <- "A"
+biov1$ECO[which(biov1$sp_name_std_v1 %in% MFish)] <- "M"
+biov1$ECO[which(biov1$sp_name_std_v1 %in% FFish)] <- "A"
+
+biov2$ECO = NA
+biov2$ECO[which(biov2$sp_name_std_v2 %in% Terrestrials)] <- "T"
+biov2$ECO[which(biov2$sp_name_std_v2 %in% Marine)] <- "M"
+biov2$ECO[which(biov2$sp_name_std_v2 %in% Aquatic)] <- "A"
+biov2$ECO[which(biov2$sp_name_std_v2 %in% MFish)] <- "M"
+biov2$ECO[which(biov2$sp_name_std_v2 %in% FFish)] <- "A"
+
+biov3$ECO = NA
+biov3$ECO[which(biov3$sp_name_std_v3 %in% Terrestrials)] <- "T"
+biov3$ECO[which(biov3$sp_name_std_v3 %in% Marine)] <- "M"
+biov3$ECO[which(biov3$sp_name_std_v3 %in% Aquatic)] <- "A"
+biov3$ECO[which(biov3$sp_name_std_v3 %in% MFish)] <- "M"
+biov3$ECO[which(biov3$sp_name_std_v3 %in% FFish)] <- "A"
+
+splist$Group = NA
+splist$Group[which(splist$class == "Phaeophyceae")] <- "Chromista"
+splist$kingdom[which(splist$class == "Phaeophyceae")] <- "Chromista"
+splist$Group[which(splist$phylum == "Rhodophyta")] <- "Seaweed"
+splist$kingdom[which(splist$phylum == "Rhodophyta")] <- "Plantae"
+splist$Group[which(splist$family == "Elminiidae")] <- "Barnacles"
+splist$Group[which(splist$kingdom == "Bacteria")] <- "Bacteria"
+splist$Group[which(splist$class == "Holothuroidea")] <- "Sea cucumber"
+splist$Group[which(splist$class == "Aves")] <- "Bird"
+splist$Group[which(splist$class == "Insecta")] <- "Insect"
+splist$Group[which(splist$class == "Mammalia")] <- "Mammal"
+splist$Group[which(splist$class == "Arachnida")] <- "Spider"
+splist$kingdom[which(splist$kingdom == "Viridiplantae")] <- "Plantae"
+splist$kingdom[which(splist$phylum == "Tracheophyta")] <- "Plantae"
+splist$Group[which(splist$kingdom == "Plantae")] <- "Plant"
+splist$Group[which(splist$class == "Hydrozoa")] <- "Hydrozoa"
+splist$Group[which(splist$class == "Anthozoa")] <- "Sea anemones and corals"
+splist$Group[which(splist$class == "Polychaeta")] <- "Polychaetes"
+splist$Group[which(splist$phylum == "Mollusca")] <- "Molluscs"
+splist$Group[which(splist$class == "Malacostraca")] <- "Crustacean"
+splist$Group[which(splist$class == "Hexanauplia")] <- "Crustacean"
+splist$Group[which(splist$class == "Maxillopoda")] <- "Crustacean"
+splist$Group[which(splist$class == "Ostracoda")] <- "Crustacean"
+splist$Group[which(splist$class == "Branchiopoda")] <- "Crustacean"
+splist$Group[which(splist$class == "Asteroidea")] <- "Starfish"
+splist$Group[which(splist$class == "Ascidiacea")] <- "Ascidians tunicates and sea squirts"
+splist$class[which(splist$class == "Actinopteri")] <- "Actinopterygii"
+splist$Group[which(splist$class == "Actinopterygii")] <- "Fish"
+splist$Group[which(splist$class == "Elasmobranchii")] <- "Fish"
+splist$Group[which(splist$order == "Perciformes")] <- "Fish"
+splist$Group[which(splist$class == "Chondrichthyes")] <- "Fish"
+splist$Group[which(splist$class == "Holocephali")] <- "Fish"
+splist$Group[which(splist$class == "Cephalaspidomorphi")] <- "Fish"
+splist$Group[which(splist$class == "Echinoidea")] <- "Sea urchin"
+splist$Group[which(splist$class == "Crinoidea")] <- "Crinoid"
+splist$Group[which(splist$class == "Holothuroidea")] <- "Sea cucumber"
+splist$Group[which(splist$class == "Reptilia")] <- "Reptile"
+splist$Group[which(splist$order == "Squamata")] <- "Reptile"
+splist$Group[which(splist$class == "Ophiuroidea")] <- "Brittle stars"
+splist$Group[which(splist$class == "Chilopoda")] <- "Centipedes"
+splist$Group[which(splist$class == "Diplopoda")] <- "Millipedes"
+splist$Group[which(splist$class == "Amphibia")] <- "Amphibian"
+splist$Group[which(splist$kingdom == "Fungi")] <- "Fungi"
+splist$Group[which(splist$order == "Balanomorpha")] <- "Barnacles"
+splist$Group[which(splist$phylum == "Nematoda")] <- "Nematodes"
+splist$Group[which(splist$class == "Myxini")] <- "Hagfish"
+splist$Group[which(splist$kingdom == "Chromista")] <- "Chromista"
+
+######################################
+biov1 <- merge(biov1[,-which(names(biov1) %in% c("Group","ECO"))], 
+               splist[,c("Group","ECO","scientificName")], 
+               by.x = "sp_name_std_v1", by.y = "scientificName", 
+               all.x = T)
+
+biov2 <- merge(biov2[,-which(names(biov2) %in% c("Group","ECO"))], splist[,c("Group","ECO","scientificName")], 
+               by.x = "sp_name_std_v2", by.y = "scientificName", 
+               all.x = T)
+
+biov3 <- merge(biov3[,-which(names(biov3) %in% c("Group","ECO"))], splist[,c("Group","ECO","scientificName")], 
+               by.x = "sp_name", by.y = "scientificName", 
+               all.x = T)
+
+```
+
+# *Populate v3 columns*
+
+```{r}
+
+# Trend
+biov3$Trend <- as.numeric(biov3$Trend_v1)
+pos <- which(is.na(biov3$Trend))
+biov3$Trend[pos] <- biov3$Trend_v2[pos]
+
+# Unit trend
+biov3$Unit.trend <- biov3$Unit.trend_v1
+pos <- which(is.na(biov3$Unit.trend))
+biov3$Unit.trend[pos] <- biov3$Unit.trend_v2[pos]
+
+# Start
+biov3$START <- biov3$START_v1
+pos <- which(is.na(biov3$START))
+biov3$START[pos] <- biov3$START_v2[pos]
+
+# End
+biov3$END <- biov3$END_v1
+pos <- which(is.na(biov3$END))
+biov3$END[pos] <- biov3$END_v2[pos]
+
+# Duration
+biov3$DUR <- biov3$END-biov3$START+1
+
+# Trend km (standardized)
+unique(biov3$Unit.trend)
+biov3 <- biov3 %>%
+    mutate(
+        Trend_km = as.numeric(Trend),
+        DUR = as.numeric(DUR),
+        Trend_km = case_when(
+            Unit.trend == "degree" ~ Trend_km*111,
+            Unit.trend == "degrees lat" ~ Trend_km*111,
+            Unit.trend =='degree/year' ~ (Trend_km*111)*DUR,
+            Unit.trend=='degrees lat/year'~ (Trend_km*111)*DUR,
+            Unit.trend=='degree/decade'~ (Trend_km*111/10)*DUR,
+            Unit.trend=='degree latitude per decade'~ (Trend_km*111/10)*DUR,
+            Unit.trend=='km' ~ Trend_km,
+            Unit.trend=='km/decade' ~ (Trend_km/10)*DUR,
+            Unit.trend=='km/year' ~ Trend_km*DUR,
+            Unit.trend=='m' ~ Trend_km/1000,
+            Unit.trend=='m/year' ~ (Trend_km/1000)*DUR,
+            Unit.trend=='m/decade'~ (Trend_km/1000/10)*DUR
+        )
+    )
+
+# SHIFT (shift values come standardized)
+biov3$SHIFT <- biov3$SHIFT_v1
+pos <- which(is.na(biov3$SHIFT))
+biov3$SHIFT[pos] <- biov3$SHIFT_v2[pos]
+
+# remove categorical shifts
+biov3 <- biov3 %>%
+    mutate(SHIFT=as.numeric(SHIFT)) %>%
+    filter(!is.na(SHIFT))
+
+```
+
+## *Filter LAT / ELE shifts*
+
+```{r}
+
+# v1
+biov1 <- biov1 %>%
+    filter(Type %in% c("ELE","LAT"))  # Use LAT ELE shifts
+# splist
+sps <- unique(biov1$sp_name)
+splist <- splist %>% filter(scientificName %in% sps)
+
+# v2
+biov2 <- biov2 %>%
+    filter(Type %in% c("ELE","LAT"))  # Use LAT ELE shifts
+# splist
+sps <- unique(biov2$sp_name)
+splist <- splist %>% filter(scientificName %in% sps)
+
+# v3
+biov3 <- biov3 %>%
+    filter(Type %in% c("ELE","LAT"))  # Use LAT ELE shifts
+# splist
+sps <- unique(biov3$sp_name)
+splist <- splist %>% filter(scientificName %in% sps)
+
+```
+
+# *Stats before subsetting*
+
+## *How many species in Bioshifts ?*
+
+```{r}
+
+# N species
+tmp <- data.frame(sps = biov3$sp_name,
+                  ECO = biov3$ECO,
+                  Group = biov3$Group)
+tmp$v1 <- NA
+tmp$v1 <- ifelse(is.na(biov3$SHIFT_v1),0,1)
+
+tmp$v2 <- NA
+tmp$v2 <- ifelse(is.na(biov3$SHIFT_v2),0,1)
+
+tmp$version <- NA
+tmp$version[which(tmp$v1==1 & tmp$v2==1)] <- "both"
+tmp$version[which(tmp$v1==1 & tmp$v2==0)] <- "v1"
+tmp$version[which(tmp$v1==0 & tmp$v2==1)] <- "v2"
+
+tmp %>% summarise(N = length(unique(sps))) 
+
+# N shifts
+nrow(tmp)
+
+nrow(biov1)
+
+# N species
+length(unique(tmp$sps))
+
+
+# N species by group
+toplot <- 
+    tmp %>%
+    group_by(Group) %>%
+    summarise(N = length(unique(sps)))  %>%
+    arrange(desc(N))
+
+nice_table(toplot)
+
+g_ord <- unique(toplot$Group[order(toplot$N)])
+toplot$Group <- factor(toplot$Group, levels = g_ord)
+
+ggplot(toplot, aes(x = Group, y = N)) +
+    geom_bar(stat="identity")+
+    geom_text(aes(y=N, label=N, 
+                  hjust = ifelse(N < max(toplot$N), -0.1, 1.1)), vjust=0.2, size=3, 
+              position = position_dodge(0.9))+
+    theme_classic()+
+    coord_flip()
+
+toplot <- 
+    tmp %>%
+    group_by(Group,version) %>%
+    summarise(N = length(unique(sps)))  %>%
+    arrange(desc(N))
+
+toplot$Group <- factor(toplot$Group, levels = g_ord)
+
+ggplot(toplot, aes(x = Group, y = N, fill=version)) +
+    geom_bar(position="stack", stat="identity")+
+    theme_classic()+
+    coord_flip()
+
+
+# N species by ECO
+tmp %>%
+    group_by(ECO) %>%
+    summarise(N = length(unique(sps)))  
+
+# N species by group
+toplot <- 
+    tmp %>%
+    group_by(Group, ECO) %>%
+    summarise(N = length(unique(sps)))  %>%
+    arrange(desc(N))
+
+nice_table(toplot)
+
+toplot$Group <- factor(toplot$Group, levels = unique(toplot$Group[order(toplot$N)]))
+ggplot(toplot, aes(x = Group, y = N, )) +
+    geom_bar(stat="identity")+
+    geom_text(aes(y=N, label=N, 
+                  hjust = ifelse(N < max(toplot$N), -0.1, 1.1)), vjust=0.2, size=3, 
+              position = position_dodge(0.9))+
+    theme_classic()+
+    coord_flip()+
+    facet_wrap(.~ECO)
+
+# N species
+tmp <- data.frame(sps = biov3$sp_name,
+                  Type = biov3$Type,
+                  Param = biov3$Param,
+                  ECO = biov3$ECO,
+                  Group = biov3$Group)
+
+# N species by group
+toplot <- 
+    tmp %>%
+    group_by(ECO, Group) %>%
+    summarise(N = length(unique(sps))) %>%
+    mutate(Group = factor(Group, levels = Group[order(N)]))
+
+ggplot(toplot, aes(x = ECO, y = N, fill = Group, label = N)) +
+    geom_bar(stat = "identity") +
+    geom_text(size = 3, position = position_stack(vjust = 0.5))+
+    facet_wrap(.~ECO, scales = "free")
+```
+
+## *How many shifts in Bioshifts ?*
+
+```{r}
+
+# N species
+tmp <- data.frame(sps = biov3$sp_name,
+                  ECO = biov3$ECO,
+                  Group = biov3$Group)
+tmp$v1 <- NA
+tmp$v1 <- ifelse(is.na(biov3$SHIFT_v1),0,1)
+
+tmp$v2 <- NA
+tmp$v2 <- ifelse(is.na(biov3$SHIFT_v2),0,1)
+
+tmp$version <- NA
+tmp$version[which(tmp$v1==1 & tmp$v2==1)] <- "both"
+tmp$version[which(tmp$v1==1 & tmp$v2==0)] <- "v1"
+tmp$version[which(tmp$v1==0 & tmp$v2==1)] <- "v2"
+
+tmp %>% summarise(N = length(unique(sps))) 
+
+# N shifts
+nrow(tmp)
+
+# N species by group
+toplot <- 
+    tmp %>%
+    group_by(Group) %>%
+    summarise(N = length((sps)))  %>%
+    arrange(desc(N))
+
+nice_table(toplot)
+
+g_ord <- unique(toplot$Group[order(toplot$N)])
+toplot$Group <- factor(toplot$Group, levels = g_ord)
+
+ggplot(toplot, aes(x = Group, y = N)) +
+    geom_bar(stat="identity")+
+    geom_text(aes(y=N, label=N, 
+                  hjust = ifelse(N < max(toplot$N), -0.1, 1.1)), vjust=0.2, size=3, 
+              position = position_dodge(0.9))+
+    theme_classic()+
+    coord_flip()
+
+# N species by ECO
+table(tmp$ECO)
+
+tmp %>%
+    filter(ECO=="T") %>%
+    group_by(Group) %>%
+    summarise(N = length(sps),
+              Perc = round(length(sps)/length(which(tmp$ECO=="T")),2))  %>%
+    arrange(desc(N)) %>%
+    nice_table()
+
+tmp %>%
+    filter(ECO=="M") %>%
+    group_by(Group) %>%
+    summarise(N = length(sps),
+              Perc = round(length(sps)/length(which(tmp$ECO=="M")),2))  %>%
+    arrange(desc(N)) %>%
+    nice_table()
+
+tmp %>%
+    filter(ECO=="T") %>%
+    group_by(Group) %>%
+    summarise(N = length(sps),
+              Perc = round(length(sps)/length(which(tmp$ECO=="A")),2))  %>%
+    arrange(desc(N)) %>%
+    nice_table()
+
+# by version
+toplot <- 
+    tmp %>%
+    group_by(Group,version) %>%
+    summarise(N = length(unique(sps)))  %>%
+    arrange(desc(N))
+
+toplot$Group <- factor(toplot$Group, levels = g_ord)
+
+ggplot(toplot, aes(x = Group, y = N, fill=version)) +
+    geom_bar(position="stack", stat="identity")+
+    theme_classic()+
+    coord_flip()
+
+
+# N species by ECO
+tmp %>%
+    group_by(ECO) %>%
+    summarise(N = length((sps)))  
+
+# N species by group
+toplot <- 
+    tmp %>%
+    group_by(Group, ECO) %>%
+    summarise(N = length((sps)))  %>%
+    arrange(desc(N))
+
+nice_table(toplot)
+
+toplot$Group <- factor(toplot$Group, levels = unique(toplot$Group[order(toplot$N)]))
+ggplot(toplot, aes(x = Group, y = N, )) +
+    geom_bar(stat="identity")+
+    geom_text(aes(y=N, label=N, 
+                  hjust = ifelse(N < max(toplot$N), -0.1, 1.1)), vjust=0.2, size=3, 
+              position = position_dodge(0.9))+
+    theme_classic()+
+    coord_flip()+
+    facet_wrap(.~ECO)
+
+# N species
+tmp <- data.frame(sps = biov3$sp_name,
+                  Type = biov3$Type,
+                  Param = biov3$Param,
+                  ECO = biov3$ECO,
+                  Group = biov3$Group)
+
+# N species by group
+toplot <- 
+    tmp %>%
+    group_by(ECO, Group) %>%
+    summarise(N = length(unique(sps))) %>%
+    mutate(Group = factor(Group, levels = Group[order(N)]))
+
+ggplot(toplot, aes(x = ECO, y = N, fill = Group, label = N)) +
+    geom_bar(stat = "identity") +
+    geom_text(size = 3, position = position_stack(vjust = 0.5))+
+    facet_wrap(.~ECO, scales = "free")
+```
+
+## *Shift types*
+
+```{r}
+
+# v1
+toplot <- biov1 %>%
+    group_by(Type) %>%
+    summarise(N = length(Type),
+              percent = N/nrow(biov1))
+
+df2 <- toplot %>% 
+    mutate(csum = rev(cumsum(rev(percent))), 
+           pos = percent/2 + lead(csum, 1),
+           pos = if_else(is.na(pos), percent/2, pos))
+
+ggplot(df2, aes(x = "", y = percent, fill = Type)) +
+    geom_col(width = 1, color = 1) +
+    coord_polar(theta = "y") +
+    scale_fill_brewer(palette = "Pastel1") +
+    geom_label_repel(data = df2,
+                     aes(y = pos, label = N),
+                     size = 4.5, nudge_x = 1, show.legend = FALSE) +
+    guides(fill = guide_legend(title = "Group")) +
+    theme_void()
+
+# v2
+toplot <- biov2 %>%
+    group_by(Type) %>%
+    summarise(N = length(Type),
+              percent = N/nrow(biov2))
+
+df2 <- toplot %>% 
+    mutate(csum = rev(cumsum(rev(percent))), 
+           pos = percent/2 + lead(csum, 1),
+           pos = if_else(is.na(pos), percent/2, pos))
+
+ggplot(df2, aes(x = "", y = percent, fill = Type)) +
+    geom_col(width = 1, color = 1) +
+    coord_polar(theta = "y") +
+    scale_fill_brewer(palette = "Pastel1") +
+    geom_label_repel(data = df2,
+                     aes(y = pos, label = N),
+                     size = 4.5, nudge_x = 1, show.legend = FALSE) +
+    guides(fill = guide_legend(title = "Group")) +
+    theme_void()
+
+# v3
+toplot <- biov3 %>%
+    group_by(Type) %>%
+    summarise(N = length(Type),
+              percent = N/nrow(biov3))
+
+df2 <- toplot %>% 
+    mutate(csum = rev(cumsum(rev(percent))), 
+           pos = percent/2 + lead(csum, 1),
+           pos = if_else(is.na(pos), percent/2, pos))
+
+ggplot(df2, aes(x = "", y = percent, fill = Type)) +
+    geom_col(width = 1, color = 1) +
+    coord_polar(theta = "y") +
+    scale_fill_brewer(palette = "Pastel1") +
+    geom_label_repel(data = df2,
+                     aes(y = pos, label = paste0(round(percent,2), "%")),
+                     size = 4.5, nudge_x = 1, show.legend = FALSE) +
+    guides(fill = guide_legend(title = "Group")) +
+    theme_void()
+
+# N species
+tmp <- data.frame(sps = biov3$sp_name,
+                  Type = biov3$Type,
+                  Param = biov3$Param,
+                  ECO = biov3$ECO,
+                  Group = biov3$Group)
+
+# N species by group
+toplot <- 
+    tmp %>%
+    group_by(Type, ECO, Group) %>%
+    summarise(N = length(unique(sps))) %>%
+    mutate(Group = factor(Group, levels = Group[order(N)]))
+
+ggplot(toplot, aes(x = Type, y = N, fill = Group, label = N)) +
+    geom_bar(stat = "identity") +
+    geom_text(size = 3, position = position_stack(vjust = 0.5))+
+    facet_wrap(.~ECO, scales = "free")
+
+
+
+
+```
+
+## *Shift parameters*
+
+```{r}
+
+# v1
+toplot <- biov1 %>%
+    group_by(Type,Param) %>%
+    summarise(N = length(Param))
+
+ggplot(toplot, aes(y=N,x=Type))+
+    geom_bar(stat = "identity")+
+    facet_wrap(.~Param)
+
+# v2
+toplot <- biov2 %>%
+    group_by(Type,Param) %>%
+    summarise(N = length(Param))
+
+ggplot(toplot, aes(y=N,x=Type))+
+    geom_bar(stat = "identity")+
+    facet_wrap(.~Param)
+
+# v3
+toplot <- biov3 %>%
+    group_by(Param) %>%
+    summarise(N = length(Param),
+              percent = N/nrow(biov3))
+
+df2 <- toplot %>% 
+    mutate(csum = rev(cumsum(rev(percent))), 
+           pos = percent/2 + lead(csum, 1),
+           pos = if_else(is.na(pos), percent/2, pos))
+
+ggplot(df2, aes(x = "", y = percent, fill = Param)) +
+    geom_col(width = 1, color = 1) +
+    coord_polar(theta = "y") +
+    scale_fill_brewer(palette = "Pastel1") +
+    geom_label_repel(data = df2,
+                     aes(y = pos, label = paste0(round(percent,2), "%")),
+                     size = 4.5, nudge_x = 1, show.legend = FALSE) +
+    guides(fill = guide_legend(title = "Group")) +
+    theme_void()
+
+# N species
+tmp <- data.frame(sps = biov3$sp_name,
+                  Param = biov3$Param,
+                  Type = biov3$Type,
+                  ECO = biov3$ECO,
+                  Group = biov3$Group)
+
+# N species by group
+toplot <- 
+    tmp %>%
+    group_by(Param, ECO, Group) %>%
+    summarise(N = length(unique(sps))) %>%
+    mutate(Group = factor(Group, levels = Group[order(N)]))
+
+ggplot(toplot, aes(x = Param, y = N, fill = Group, label = N)) +
+    geom_bar(stat = "identity") +
+    geom_text(size = 3, position = position_stack(vjust = 0.5))+
+    facet_wrap(.~ECO, scales = "free")
+
+
+
+
+```
+
+## *Shift values*
+
+```{r fig.width=4, fig.height=5}
+
+ggplot(biov3, aes(x=SHIFT))+
+    geom_histogram()+
+    facet_wrap(Param~Type, scales = "free", ncol = 2)+
+    xlab("Shift (km/yr)")
+
+ggplot(biov3, aes(x=Trend_km))+
+    geom_histogram()+
+    facet_wrap(Param~Type, scales = "free", ncol = 2)+
+    xlab("Trend (km)")
+
+
+```
+
+## *Shift periods*
+
+```{r fig.width=4, fig.height=5}
+
+ggplot(biov3, aes(x=SHIFT))+
+    geom_histogram()+
+    facet_wrap(Param~Type, scales = "free", ncol = 2)+
+    xlab("Shift (km/yr)")
+
+ggplot(biov3, aes(x=Trend_km))+
+    geom_histogram()+
+    facet_wrap(Param~Type, scales = "free", ncol = 2)+
+    xlab("Trend (km)")
+
+
+```
+### *Shifts across taxa*
+
+```{r fig.width=5, fig.height=5}
+ggplot(biov3, aes(x=SHIFT))+
+    geom_histogram()+
+    facet_wrap(.~Group, scales = "free")+
+    xlab("Shift (km/yr)")
+```
+
+### *Across studies*
+Within the same studies, how many shifts we have?
+
+```{r fig.width=5, fig.height=5}
+
+test <- biov3 %>%
+    group_by(paste(sp_name, ID_v1, ID_v2, Type, Param, START, END)) %>%
+    summarise(N=length(sp_name))
+
+length(which(test$N>5))
+length(which(test$N>6))
+length(which(test$N>7))
+length(which(test$N>8))
+
+```
+
+
+## *Shift duration*
+
+```{r}
+
+ggplot(data = biov3 %>%
+           mutate(Time_periods = paste0(START,END,sep="-")))+
+    geom_segment(aes(x=Time_periods, xend=Time_periods, y=START, yend=END)) +
+    geom_point(aes(x=Time_periods, y=START), 
+               color=rgb(0.2,0.7,0.1,0.5), size=1 ) + #green
+    geom_point(aes(x=Time_periods, y=END), 
+               color=rgb(0.7,0.2,0.1,0.5), size=1 ) + # red
+    coord_flip()+
+    theme(
+        axis.text=element_text(size=6),
+        legend.position = "none") +
+    theme_classic()+
+    ylab("Shift period (years)")
+
+ggplot(data = biov3 %>%
+           mutate(Time_periods = paste0(START,END,sep="-")))+
+    geom_segment(aes(x=Time_periods, xend=Time_periods, y=START, yend=END)) +
+    geom_point(aes(x=Time_periods, y=START), 
+               color=rgb(0.2,0.7,0.1,0.5), size=1 ) + #green
+    geom_point(aes(x=Time_periods, y=END), 
+               color=rgb(0.7,0.2,0.1,0.5), size=1 ) + # red
+    coord_flip()+
+    theme(
+        axis.text=element_text(size=6),
+        legend.position = "none") +
+    theme_classic()+
+    ylab("Shift period (years)")+
+    facet_wrap(Type~Param)
+
+ggplot(data = biov3 %>%
+           mutate(Time_periods = paste0(START,END,sep="-")))+
+    geom_segment(aes(x=Time_periods, xend=Time_periods, y=START, yend=END)) +
+    geom_point(aes(x=Time_periods, y=START), 
+               color=rgb(0.2,0.7,0.1,0.5), size=1 ) + #green
+    geom_point(aes(x=Time_periods, y=END), 
+               color=rgb(0.7,0.2,0.1,0.5), size=1 ) + # red
+    coord_flip()+
+    theme(
+        axis.text=element_text(size=6),
+        legend.position = "none") +
+    theme_classic()+
+    ylab("Shift period (years)")+
+    facet_wrap(.~Group)
+
+
+
+```
+
+# *Compare shift values between v1 and v2*
+
+```{r}
+
+# combine full and subseted data
+comp <- rbind(data.frame(dataset = "v1", biov1[,c("Type","Param","kmyr","group")]),
+              data.frame(dataset = "v2", biov2[,c("Type","Param","kmyr","group")]))
+
+# compare the distribution of kmyr values
+ggplot(comp, aes(y=kmyr, x=dataset, color=dataset))+
+    geom_violin(alpha=.5)+
+    facet_wrap(Type~Param, scales = "free")
+
+# calculate the difference in kmyr for all combinations of Type and Param
+combinations <- expand.grid(unique(comp$Type),unique(comp$Param))
+names(combinations) <- c("Type", "Parameter")
+combinations$mean_v1 <- NA
+combinations$mean_v2 <- NA
+combinations$p_value = NA
+
+for (i in 1:nrow(combinations)) {
+    tmp_data <- comp %>% 
+        filter(Type == combinations[i,1] &
+                   Param == combinations[i,2])
+    tmp <- aov(kmyr~dataset, tmp_data)
+    
+    combinations$mean_v1[i] <- round(mean(tmp$model$kmyr[which(tmp$model$dataset=="v1")]),3)
+    combinations$mean_v2[i] <- round(mean(tmp$model$kmyr[which(tmp$model$dataset=="v2")]),3)
+    combinations$p_value[i] <- round(summary(tmp)[[1]]$`Pr(>F)`[1],3)
+}
+
+combinations
+
+```
+
+# *Subset*
+
+## *Filter shifts within the temporal range of the environmental data*
+
+```{r}
+
+biov3_sdm <- biov3 %>%
+    dplyr::filter(START >= range_env_data[1]) # shifts within the range of environmental data
+
+# splist
+splist_sdm <- splist %>% filter(scientificName %in% biov3_sdm$sp_name)
+
+all(splist_sdm$scientificName %in% biov3_sdm$sp_name)
+
+length(unique(splist_sdm$scientificName))
+
+```
+
+*Just by filtering species with shift starting after `r range_env_data[1]`, we reduce the number of species from `r length(unique(splist$scientificName))` to `r length(unique(splist_sdm$scientificName))`.*
+
+## *Filter species with GBIF data*
+
+```{r}
+
+# From those species, how many we have GBIF data?
+
+# Get N occurrences in GBIF
+my_db_file <- here::here("Data/BioshiftsExposure.sqlite")
+# driver
+drv <- dbDriver("SQLite") 
+# connect
+db <- dbConnect(drv, my_db_file) 
+N_OCC <- dbReadTable(conn=db, name="SpInfo")
+# disconnect
+DBI::dbDisconnect(db)
+
+# remove species absent from bioshifts
+N_OCC <- N_OCC %>% filter(scientificName %in% splist_sdm$scientificName)
+N_OCC <- N_OCC %>% filter(!duplicated(db_code))
+
+# check if all sps in splist are in N_OCC? 
+all(splist_sdm$scientificName %in% N_OCC$scientificName)
+all(N_OCC$scientificName %in% splist_sdm$scientificName)
+
+# % bioshift with occ
+bio <- data.frame(table(splist_sdm$class))
+names(bio) <- c("Class","Bioshifts_Freq")
+
+gbifocc <- data.frame(table(N_OCC$class))
+names(gbifocc) <- c("Class","GBIF_Freq")
+
+bio <- merge(bio, gbifocc)
+bio$percent = paste(round((bio$GBIF_Freq/bio$Bioshifts_Freq)*100,2),"%")
+
+melted <- reshape::melt(bio[,c(1:3)], id="Class")
+melted <- merge(melted, bio[,c(1,4)])
+melted$percent[which(melted$variable == "GBIF_Freq")] = NA
+
+keep <- unique(melted$Class[which(melted$value > 20)])
+toplot = melted[which(melted$Class %in% keep),]
+toplot$Class <- factor(toplot$Class, levels = unique(toplot$Class[order(toplot$value)]))
+
+ggplot(toplot, 
+       aes(x = Class, y = value, fill = variable))+
+    geom_bar(stat="identity",position = "identity", alpha = .5) +
+    geom_text(aes(label=percent),
+              stat='identity', size = 3, hjust = "inward")+
+    coord_flip()+
+    ylab("N species")+ylab("N species")+
+    theme_classic()+
+    theme(legend.position="bottom",
+          legend.title = element_blank()) 
+
+############ Filter
+
+sel <- N_OCC %>% dplyr::filter(n_occ > 30) %>% dplyr::select(scientificName)
+
+biov3_sdm <- biov3_sdm %>% filter(sp_name %in% unique(sel$scientificName))
+splist_sdm <- splist_sdm %>% filter(scientificName %in% unique(sel$scientificName))
+
+```
+
+# *Stats after subsetting*
+
+## *How many species in Bioshifts ?*
+
+```{r}
+
+# N species
+tmp <- data.frame(sps = biov3_sdm$sp_name,
+                  ECO = biov3_sdm$ECO,
+                  Type = biov3_sdm$Type,
+                  Group = biov3_sdm$Group)
+
+tmp %>% summarise(N = length(unique(sps))) 
+
+# N shifts
+nrow(tmp)
+
+# Cumulative n species by starting shift
+ggplot(biov3, aes(START)) +
+    stat_ecdf(geom = "step") +
+    geom_vline(xintercept = range_env_data[1], color = "red")+
+    theme(plot.title = element_text(hjust = 0.5))+
+    ylab("Cumulative N observations")
+
+ggplot(biov3, aes(START, colour = Type)) +
+    stat_ecdf(geom = "step") +
+    geom_vline(xintercept = range_env_data[1], color = "red")+
+    theme(plot.title = element_text(hjust = 0.5))+
+    ylab("Cumulative N observations")
+
+# N species by group
+toplot <- 
+    tmp %>%
+    group_by(Group) %>%
+    summarise(N = length(unique(sps)))  %>%
+    arrange(desc(N))
+
+nice_table(toplot)
+
+toplot$Group <- factor(toplot$Group, levels = unique(toplot$Group[order(toplot$N)]))
+ggplot(toplot, aes(x = Group, y = N)) +
+    geom_bar(stat="identity")+
+    geom_text(aes(y=N, label=N, 
+                  hjust = ifelse(N < max(toplot$N), -0.1, 1.1)), vjust=0.2, size=3, 
+              position = position_dodge(0.9))+
+    theme_classic()+
+    coord_flip()
+
+# N species by group
+toplot <- 
+    tmp %>%
+    group_by(Group, ECO) %>%
+    summarise(N = length(unique(sps)))  %>%
+    arrange(desc(N))
+
+nice_table(toplot)
+
+toplot$Group <- factor(toplot$Group, levels = unique(toplot$Group[order(toplot$N)]))
+ggplot(toplot, aes(x = Group, y = N)) +
+    geom_bar(stat="identity")+
+    geom_text(aes(y=N, label=N, 
+                  hjust = ifelse(N < max(toplot$N), -0.1, 1.1)), vjust=0.2, size=3, 
+              position = position_dodge(0.9))+
+    theme_classic()+
+    coord_flip()+
+    facet_wrap(.~ECO)
+
+# N species
+tmp <- data.frame(sps = biov3_sdm$sp_name,
+                  Type = biov3_sdm$Type,
+                  Param = biov3_sdm$Param,
+                  ECO = biov3_sdm$ECO,
+                  Group = biov3_sdm$Group)
+
+# N species by group
+toplot <- 
+    tmp %>%
+    group_by(ECO, Group) %>%
+    summarise(N = length(unique(sps))) %>%
+    mutate(Group = factor(Group, levels = Group[order(N)]))
+
+ggplot(toplot, aes(x = ECO, y = N, fill = Group, label = N)) +
+    geom_bar(stat = "identity") +
+    geom_text(size = 3, position = position_stack(vjust = 0.5))+
+    facet_wrap(.~ECO, scales = "free")
+
+
+
+```
+
+
+# *Compare shift values between the subset and the complete data*
+
+```{r}
+
+# combine full and subseted data
+comp <- rbind(data.frame(dataset = "Full", biov3),
+              data.frame(dataset = "SDM", biov3_sdm))
+
+# compare the distribution of shift values
+ggplot(comp, aes(y=SHIFT, x=dataset, color=dataset))+
+    geom_violin(alpha=.5)+
+    facet_wrap(Type~Param, scales = "free")
+
+# calculate the difference in shift for all combinations of Type and Param
+combinations <- expand.grid(unique(biov3$Type),unique(biov3$Param))
+names(combinations) <- c("Type", "Parameter")
+combinations$mean_full <- NA
+combinations$mean_sdm <- NA
+combinations$p_value = NA
+
+for (i in 1:nrow(combinations)) {
+    tmp_data <- comp %>% 
+        filter(Type == combinations[i,1] &
+                   Param == combinations[i,2])
+    tmp <- aov(SHIFT~dataset, tmp_data)
+    
+    combinations$mean_full[i] <- round(mean(tmp$model$SHIFT[which(tmp$model$dataset=="Full")]),3)
+    combinations$mean_sdm[i] <- round(mean(tmp$model$SHIFT[which(tmp$model$dataset=="SDM")]),3)
+    combinations$p_value[i] <- round(summary(tmp)[[1]]$`Pr(>F)`[1],3)
+}
+
+
+```
+
+
+# *Shift values < than threshold*
+How many shift values are < spatial resolution environmental data
+```{r}
+
+biov3_sdm %>%
+    filter(ECO=="T") %>%
+    group_by(Type, Param) %>%
+    summarise('> 1km' = length(which(SHIFT>=1)),
+              '< 1km' = length(which(SHIFT<1)))
+
+biov3_sdm %>%
+    filter(ECO=="A") %>%
+    group_by(Type, Param) %>%
+    summarise('> 1km' = length(which(SHIFT>=1)),
+              '< 1km' = length(which(SHIFT<1)))
+
+biov3_sdm %>%
+    filter(ECO=="M") %>%
+    group_by(Type, Param) %>%
+    summarise('> 5km' = length(which(SHIFT>=5)),
+              '< 5km' = length(which(SHIFT<5)))
+
+```
+

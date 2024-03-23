@@ -43,6 +43,10 @@ work_dir <- if(computer == "muse"){
 }else{
     if(computer=="matrics"){
         "/users/boliveira/Exposure-SDM"
+    } else {
+        if(computer=="personal"){
+            here::here()
+        }
     }
 }
 
@@ -52,6 +56,10 @@ scratch_dir <- if(computer == "muse"){
 }else{
     if(computer=="matrics"){
         "/scratch/boliveira"
+    } else {
+        if(computer=="personal"){
+            here::here()
+        }
     }
 }
 

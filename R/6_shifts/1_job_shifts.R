@@ -127,16 +127,9 @@ for(j in 1:length(realms)){
     ########################
     # submit jobs
     
-    N_jobs_at_a_time = 100
-    
-    N_Nodes = 1
-    tasks_per_core = 1
-    cores = 1
-    time = "40:00"
-    memory = "16G"
+    N_jobs_at_a_time = 20
     
     cat("Running for", length(all_sps), realm, "species\n")
-    
     
     for(i in 1:length(all_sps)){
         
@@ -151,20 +144,25 @@ for(j in 1:length(realms)){
         # the basic job submission script is a bash script
         cat("#!/bin/bash\n")
         
-        cat("#SBATCH -N",N_Nodes,"\n")
-        cat("#SBATCH -n",tasks_per_core,"\n")
-        cat("#SBATCH -c",cores,"\n")
-        if(computer == "matrics"){
-            cat("#SBATCH --partition=normal-amd\n")
+        cat("#SBATCH -N 1\n")
+        cat("#SBATCH -n 1\n")
+        
+        if(realm=="Ter"){
+            cat("#SBATCH --time=20:00:00\n")
+            cat("#SBATCH --partition=bigmem\n")
+            cat("#SBATCH -c 5\n")
+            cat("#SBATCH --mem=100G\n")
+            # cat("#SBATCH --mem=500G\n") # for big jobs that crash
+        } else {
+            cat("#SBATCH --partition=normal\n")
+            cat("#SBATCH --mem=50G\n")
+            cat("#SBATCH --time=5:00:00\n")
+            cat("#SBATCH -c 1\n")
         }
         
         cat("#SBATCH --job-name=",sptogo,"\n", sep="")
         cat("#SBATCH --output=",here::here(logdir,paste0(sptogo,".out")),"\n", sep="")
         cat("#SBATCH --error=",here::here(logdir,paste0(sptogo,".err")),"\n", sep="")
-        cat("#SBATCH --time=",time,"\n", sep="")
-        cat("#SBATCH --mem=",memory,"\n", sep="")
-        # cat("#SBATCH --mail-type=ALL\n")
-        # cat("#SBATCH --mail-user=brunno.oliveira@fondationbiodiversite.fr\n")
         
         if(computer == "muse"){
             cat("IMG_DIR='/storage/simple/projects/t_cesab/brunno'\n")

@@ -61,6 +61,9 @@ Bioshifts_DB <- Bioshifts_DB[-which(duplicated(Bioshifts_DB$ID)),]
 # Rerun just for marines
 # Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$ECO=="M"),]
 ##############################
+# Rerun just for terrestrials
+# Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$ECO=="T"),]
+##############################
 
 # Filter Polygons in Study areas v3
 v3_polygons <- v3_polygons[v3_polygons %in% Bioshifts_DB$ID]
@@ -76,7 +79,7 @@ v3_polygons_metadata$ECO <- ifelse(is.na(v3_polygons_metadata$EleExtentm),"Mar",
 N_jobs_at_a_time = 50
 
 # Check if file exists
-check_if_file_exists <- TRUE
+check_if_file_exists <- FALSE
 
 for(i in 1:nrow(v3_polygons_metadata)){
     
@@ -106,10 +109,11 @@ for(i in 1:nrow(v3_polygons_metadata)){
         cat("#SBATCH -n 1\n")
         
         if(ECO=="Ter"){
-            cat("#SBATCH --partition=bigmem-amd\n")
-            cat("#SBATCH --mem=100G\n")
             cat("#SBATCH --time=2-20:00:00\n")
+            cat("#SBATCH --partition=bigmem-amd\n")
             cat("#SBATCH -c 5\n")
+            # cat("#SBATCH --mem=100G\n")
+            cat("#SBATCH --mem=500G\n") # for big jobs that crash
         } else {
             cat("#SBATCH --partition=normal\n")
             cat("#SBATCH --mem=50G\n")
@@ -154,17 +158,18 @@ for(i in 1:nrow(v3_polygons_metadata)){
 
 # check if I got velocities for all SA
 # list of SA we got data
-SA_got <- list.files(velocity_SA_dir)
+SA_got <- list.files(velocity_SA_dir,pattern = "csv")
 SA_got <- gsub(".csv","",SA_got)
-missing_SA <- v3_polygons[!v3_polygons %in% SA_got]
-length(missing_SA)
-head(missing_SA)
+missing_SA <- v3_polygons_metadata$Name[!v3_polygons_metadata$Name %in% SA_got]
+missing_SA
 
 v3_polygons <- missing_SA
 v3_polygons_metadata <- v3_polygons_metadata[v3_polygons_metadata$Name %in% v3_polygons,]
 
+head(v3_polygons_metadata)
+
 # Check error file
-error_f <- lapply(v3_polygons, function(x){
+error_f <- lapply(missing_SA, function(x){
     tmp <- read.csv(here::here(script.dir,"slurm-log",paste0(x,".err")))
     tmp[nrow(tmp),]
 })

@@ -19,14 +19,20 @@ sapply(list.of.packages, require, character.only = TRUE)
 
 
 
-# Load parameters
-
-
+########################
 # set computer
-computer = "muse"
+computer = "personal"
 
 if(computer == "muse"){
     setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
+    work_dir <- getwd()
+}
+if(computer == "matrics"){
+    setwd("/users/boliveira/Exposure-SDM")
+    work_dir <- getwd()
+}
+if(computer == "personal"){
+    work_dir <- getwd()
 }
 
 # Load functions
@@ -51,28 +57,8 @@ splist <- splist %>%
 # Load raw bioshifts
 # *While we dont have a v3, just add papers from v2 to v1*
     
-    
-
-# Load v3
-biov3 <- read.csv("Data/Bioshifts/bioshifts_v3_raw.csv")
-biov3 <- biov3 %>%
-    filter(!is.na(sp_name)) %>%
-    mutate(sp_name=gsub("_"," ",sp_name))
-# add taxonomy
-tojoin <- splist %>%
-    dplyr::select(scientificName, kingdom, phylum, class, order, family) %>%
-    mutate(sp_name = scientificName) %>%
-    filter(!duplicated(sp_name))
-
-any(!biov3$sp_name %in% tojoin$sp_name)
-
-biov3 <- merge(biov3, tojoin, by = "sp_name", all.x = TRUE)
-
 # Load v1
 biov1 <- read.csv("Data/Bioshifts/biov1_fixednames.csv", header = T)
-# Fix references in biov1
-biov1$ID <- gsub("[^0-9.-]", "", biov1$Article_ID)
-biov1$ID <- as.numeric(biov1$ID)
 
 biov1$sp_name_std_v1 <- gsub("_"," ",biov1$sp_name_std_v1)
 
@@ -81,25 +67,14 @@ biov1 <- biov1 %>%
         Type = case_when(
             Type=="HOR" ~ "LAT",
             TRUE ~ as.character(Type)),
-        Species = sp_name_std_v1, 
-        # Standardize shift measures to km/year
-        SHIFT = case_when(
-            UNIT == "m/year" ~ SHIFT/1000, 
-            UNIT == "km/year" ~ SHIFT, 
-            TRUE ~ NA_real_),
-        Trend_unit = Unit.trend,
-        # Standardize trend to km 
-        Trend.std = SHIFT*DUR,
-        Trend.std = case_when(
-            Type == "LAT" ~ round_up(Trend.std,3), 
-            Type == "ELE" ~ round_up(Trend.std,6), 
-            TRUE ~ NA_real_),
-        Azi = ifelse(is.na(Azimuth),0,1))
+        Species = sp_name_std_v1) %>%
+    filter(Type == "LAT", # Use only latitudinal shifts
+           (ECO == "T" | ECO == "M")) # Shifts Marine or Terrestrial
 
 biov1 <- biov1 %>%
     filter(!is.na(sp_name_std_v1))
 
-all(biov1$sp_name_std_v1 %in% splist$scientificName[which(splist$v1==1)])
+all(biov1$sp_name_std_v1 %in% splist$scientificName)
 
 
 # Load v2 
@@ -113,15 +88,6 @@ biov2 <- biov2  %>%
             Dimension=="latitude" ~ "LAT",
             Dimension=="elevation" ~ "ELE",
             TRUE ~ as.character(Dimension)),
-        ID=Paper.ID,
-        Study_ID=Study.Period,
-        Type=Type,
-        Param=Parameter,
-        Trend=Numeric.Change,
-        Trend_unit=Unit,
-        DUR=as.numeric(Total.Years.Studied),
-        START=Start.Year,
-        END=End.Year,
         group=Taxonomic.Group,
         ECO=case_when(
             Ecosystem.Type=="terrestrial" ~ "T",
@@ -134,43 +100,16 @@ biov2 <- biov2  %>%
         Family=family,
         Genus=genus,
         Species=sp_name_std_v2) %>%
-    mutate(
-        Type = case_when(
-            Dimension=="latitude" ~ "LAT",
-            Dimension=="elevation" ~ "ELE",
-            TRUE ~ as.character(Dimension)),
-        Param = case_when(
-            Parameter=="leading edge" ~ "LE",
-            Parameter=="maximum/optimum" ~ "O",
-            Parameter=="trailing edge" ~ "TE",
-            Parameter=="mean" ~ "O",
-            TRUE ~ as.character(Parameter)),
-        # Standardize shift measures to km/year
-        SHIFT = case_when( 
-            Trend_unit == "ft" ~ Trend/3280.8 /Total.Years.Studied,
-            Trend_unit == 'degrees lat' ~ Trend*111/Total.Years.Studied,
-            Trend_unit =='degrees lat/year' ~ Trend*111,
-            Trend_unit=='degree latitude per decade'~ Trend*111/10,
-            Trend_unit=='km' ~ Trend/Total.Years.Studied,
-            Trend_unit=='km/decade' ~ Trend/10,
-            Trend_unit=='km/year' ~ Trend,
-            Trend_unit=='m' ~ Trend/1000/Total.Years.Studied,
-            Trend_unit=='m/year' ~ Trend/1000,
-            Trend_unit=='m/decade'~ Trend/1000/10,
-            TRUE ~ NA_real_),
-        # Standardize trend to km 
-        Trend.std = SHIFT*DUR,
-        Trend.std = case_when(
-            Type == "LAT" ~ round_up(Trend.std,3), 
-            Type == "ELE" ~ round_up(Trend.std,6), 
-            TRUE ~ NA_real_))
+    filter(Type == "LAT", # Use only latitudinal shifts
+           (ECO == "T" | ECO == "M")) # Shifts Marine or Terrestrial
 
 biov2 <- biov2 %>%
     filter(!is.na(sp_name_std_v2))
 
-all(biov2$biov2 %in% splist$scientificName[which(splist$v2==1)])
+all(biov2$biov2 %in% splist$scientificName)
 
-
+# filter sp list
+splist <- splist %>% filter((scientificName %in% biov1$sp_name_std_v1) | (scientificName %in% biov2$sp_name_std_v2))
 
 ## *Remove species identified to the genus level or cf.*
 
@@ -200,20 +139,6 @@ if(any(grep("cf[.]",biov2$sp_reported_name_v2))){
 }
 if(any(grep("cf[.]",biov2$sp_name_std_v2))){
     biov2 <- biov2 %>% filter(!grepl("cf[.]",sp_name_std_v2))
-}
-
-
-if(any(grep("sp[.]",biov3$sp_reported_name_v3))){
-    biov3 <- biov3 %>% filter(!grepl("sp[.]",sp_reported_name_v3))
-}
-if(any(grep("sp[.]",biov3$sp_name_std_v3))){
-    biov3 <- biov3 %>% filter(!grepl("sp[.]",sp_name_std_v3))
-}
-if(any(grep("cf[.]",biov3$sp_reported_name_v3))){
-    biov3 <- biov3 %>% filter(!grepl("cf[.]",sp_reported_name_v3))
-}
-if(any(grep("cf[.]",biov3$sp_name_std_v3))){
-    biov3 <- biov3 %>% filter(!grepl("cf[.]",sp_name_std_v3))
 }
 
 
@@ -252,9 +177,10 @@ FFishv1 <- unique(biov1$sp_name_std_v1[(biov1$Class == "Actinopterygii" | biov1$
 FFishv2 <- unique(biov2$sp_name_std_v2[biov2$group == "Fish" & 
                                            (biov2$ECO == "T" | biov2$ECO == "A")])
 FFish = unique(c(FFishv1,FFishv2))
+
 # Marine fish
 MFishv1 <- unique(biov1$sp_name_std_v1[biov1$Class == "Actinopterygii" & biov1$ECO == "M"])
-MFishv2 <- unique(biov2$sp_name_std_v2[biov2$group == "Fish" & biov2$ECO == "marine"])
+MFishv2 <- unique(biov2$sp_name_std_v2[biov2$group == "Fish" & biov2$ECO == "M"])
 MFish = unique(c(MFishv1,MFishv2))
 
 splist$ECO = NA
@@ -278,16 +204,11 @@ biov2$ECO[which(biov2$sp_name_std_v2 %in% Aquatic)] <- "A"
 biov2$ECO[which(biov2$sp_name_std_v2 %in% MFish)] <- "M"
 biov2$ECO[which(biov2$sp_name_std_v2 %in% FFish)] <- "A"
 
-biov3$ECO = NA
-biov3$ECO[which(biov3$sp_name_std_v3 %in% Terrestrials)] <- "T"
-biov3$ECO[which(biov3$sp_name_std_v3 %in% Marine)] <- "M"
-biov3$ECO[which(biov3$sp_name_std_v3 %in% Aquatic)] <- "A"
-biov3$ECO[which(biov3$sp_name_std_v3 %in% MFish)] <- "M"
-biov3$ECO[which(biov3$sp_name_std_v3 %in% FFish)] <- "A"
 
 splist$Group = NA
-splist$Group[which(splist$class == "Phaeophyceae")] <- "Chromista"
 splist$kingdom[which(splist$class == "Phaeophyceae")] <- "Chromista"
+splist$Group[which(splist$kingdom == "Chromista")] <- "Chromista"
+
 splist$Group[which(splist$phylum == "Rhodophyta")] <- "Seaweed"
 splist$kingdom[which(splist$phylum == "Rhodophyta")] <- "Plantae"
 splist$Group[which(splist$family == "Elminiidae")] <- "Barnacles"
@@ -342,99 +263,23 @@ biov2 <- merge(biov2[,-which(names(biov2) %in% c("Group","ECO"))], splist[,c("Gr
                by.x = "sp_name_std_v2", by.y = "scientificName", 
                all.x = T)
 
-biov3 <- merge(biov3[,-which(names(biov3) %in% c("Group","ECO"))], splist[,c("Group","ECO","scientificName")], 
-               by.x = "sp_name", by.y = "scientificName", 
-               all.x = T)
-
 table(biov1$ECO)
 table(biov2$ECO)
-table(biov3$ECO)
 table(splist$ECO)
 
-all(biov1$sp_name_std_v1 %in% biov3$scientificName)
+all(biov1$sp_name_std_v1 %in% splist$scientificName)
 
-
-
-# *Populate v3 columns*
-
-
-
-# Trend
-biov3$Trend <- as.numeric(biov3$Trend_v1)
-pos <- which(is.na(biov3$Trend))
-biov3$Trend[pos] <- biov3$Trend_v2[pos]
-
-# Unit trend
-biov3$Unit.trend <- biov3$Unit.trend_v1
-pos <- which(is.na(biov3$Unit.trend))
-biov3$Unit.trend[pos] <- biov3$Unit.trend_v2[pos]
-
-# Start
-biov3$START <- biov3$START_v1
-pos <- which(is.na(biov3$START))
-biov3$START[pos] <- biov3$START_v2[pos]
-
-# End
-biov3$END <- biov3$END_v1
-pos <- which(is.na(biov3$END))
-biov3$END[pos] <- biov3$END_v2[pos]
-
-# Duration
-biov3$DUR <- biov3$END-biov3$START+1
-
-# Trend km (standardized)
-unique(biov3$Unit.trend)
-biov3 <- biov3 %>%
-    mutate(
-        Trend_km = as.numeric(Trend),
-        DUR = as.numeric(DUR),
-        Trend_km = case_when(
-            Unit.trend == "degree" ~ Trend_km*111,
-            Unit.trend == "degrees lat" ~ Trend_km*111,
-            Unit.trend =='degree/year' ~ (Trend_km*111)*DUR,
-            Unit.trend=='degrees lat/year'~ (Trend_km*111)*DUR,
-            Unit.trend=='degree/decade'~ (Trend_km*111/10)*DUR,
-            Unit.trend=='degree latitude per decade'~ (Trend_km*111/10)*DUR,
-            Unit.trend=='km' ~ Trend_km,
-            Unit.trend=='km/decade' ~ (Trend_km/10)*DUR,
-            Unit.trend=='km/year' ~ Trend_km*DUR,
-            Unit.trend=='m' ~ Trend_km/1000,
-            Unit.trend=='m/year' ~ (Trend_km/1000)*DUR,
-            Unit.trend=='m/decade'~ (Trend_km/1000/10)*DUR
-        )
-    )
-
-# SHIFT (shift values come standardized)
-biov3$SHIFT <- biov3$SHIFT_v1
-pos <- which(is.na(biov3$SHIFT))
-biov3$SHIFT[pos] <- biov3$SHIFT_v2[pos]
-
-# remove categorical shifts
-biov3 <- biov3 %>%
-    mutate(SHIFT=as.numeric(SHIFT)) %>%
-    filter(!is.na(SHIFT))
-
-
-
-## Filter LAT / ELE shifts
-
-
-biov3 <- biov3 %>%
-    filter(Type %in% c("ELE","LAT"))  # Use LAT ELE shifts
-
-# splist
-splist <- splist %>% filter(scientificName %in% biov3$sp_name)
-
+any(duplicated(splist$scientificName))
 
 
 ## Filter fresh water fish and marine birds
 
 
 #remove freshwater fishes
-biov3 <- biov3[-which((biov3$class == "Actinopterygii" | biov3$Group == "Fish") & biov3$ECO=="A"),]
+splist <- splist[-which((splist$class == "Actinopterygii" | splist$Group == "Fish") & splist$ECO=="A"),]
 
 #remove marine birds
-biov3 <- biov3[-which(biov3$class == "Aves" & biov3$ECO=="M"),]
+splist <- splist[-which(splist$class == "Aves" & splist$ECO=="M"),]
 
 
 
@@ -446,37 +291,30 @@ biov3 <- biov3[-which(biov3$class == "Aves" & biov3$ECO=="M"),]
 # splist
 splist <- splist[which(splist$db == "gbif"),]
 
-biov3 <- biov3 %>% filter(sp_name %in% splist$scientificName)
-
-
-
 
 
 ## Filter shifts within the temporal range of the environmental data
+## work with v1 only as we dont have v3 yet
+## remove fresh water shifts
 
-
-biov3 <- biov3 %>%
+biov1 <- biov1 %>%
     dplyr::filter(
         # For terrestrials
-        ((ECO == "T" | ECO == "A") & 
+        ((ECO == "T") & 
              # start > beginning env data
-             (START >= get_temporal_range_env_data("Ter")[1])) |
+             (START >= temporal_range_env_data("Ter")[1])) |
             # For marine
             ((ECO == "M") & 
                  # start > beginning env data
-                 (START >= get_temporal_range_env_data("Mar")[1]))
+                 (START >= temporal_range_env_data("Mar")[1]))
     )
 
 # splist
-bios <- unique(biov3$sp_name)
-splist <- splist %>% filter(scientificName %in% bios)
+splist <- splist %>% filter(scientificName %in% unique(biov1$sp_name_std_v1))
 
 table(splist$ECO)
 
-table(biov3$ECO)
 table(biov1$ECO)
-table(biov2$ECO)
-
 
 
 
@@ -484,9 +322,9 @@ table(biov2$ECO)
 
 # Retrieve a summary table with N occurrence per species.
 # We only retrieve N occurrences for records based:
-#     1) "HUMAN_OBSERVATION", "LITERATURE", "LIVING_SPECIMEN", "OBSERVATION", "PRESERVED_SPECIMEN", "OCCURRENCE"
+# 1) "HUMAN_OBSERVATION" "OBSERVATION" "OCCURRENCE"
 # 2) from which there was coordinates recorded
-# 3) Registered after 1979 (limit is 2022)
+# 3) Registered after 1901 
 
 
 ncores = parallelly::availableCores()
@@ -513,7 +351,7 @@ cl = cl)
 
 stopCluster(cl)
 
-# Took 4min FRB
+# Took 9min FRB
 # Took 3min MESO
 
 length(N_OCC) == length(splist$scientificName)
@@ -524,24 +362,27 @@ write.csv(N_OCC, "Data/n_occ.csv", row.names = F)
 
 N_OCC <- read.csv("Data/n_occ.csv")
 
-length(unique(N_OCC$scientificName[which(N_OCC$n_occ>30)]))
 
 # N species
+length(unique(N_OCC$scientificName))
+
 tmp <- N_OCC %>%
     filter(n_occ > 30) 
 length(unique(tmp$scientificName))
+
 sort(table(tmp$Group))
+
 tmp %>%
     group_by(ECO, Group) %>%
     tally() 
 sort(table(tmp$ECO))
 
 # N shifts
-biov3 %>%
-    filter(sp_name %in% tmp$scientificName) %>%
+biov1 %>%
+    filter(sp_name_std_v1 %in% tmp$scientificName) %>%
     nrow()
-tmp2 <- biov3 %>%
-    filter(sp_name %in% tmp$scientificName) 
+tmp2 <- splist %>%
+    filter(scientificName %in% tmp$scientificName) 
 sort(table(tmp2$Group))
 sort(table(tmp2$ECO))
 
@@ -554,20 +395,14 @@ sort(table(tmp2$ECO))
 
 ## N occurrences by group
 
-toplot <- N_OCC %>%
-    dplyr::filter(n_occ > 30) %>%
-    group_by(kingdom, Group) %>%
-    dplyr::summarize(n_occ = sum(n_occ))
-
-toplot$class <- factor(toplot$Group, levels = toplot$Group[order(toplot$n_occ)])
-
 # Occ by Class
-ggplot(toplot, aes(x = Group, y = n_occ))+
+ggplot(N_OCC, aes(x = Group, y = n_occ))+
     geom_col()+
     theme_classic()+
     # coord_flip()+
     ylab("N occurrences")+xlab("Class")+
-    theme(axis.text.x = element_text(angle = 45, hjust=1))
+    theme(axis.text.x = element_text(angle = 45, hjust=1))+
+    facet_wrap(.~ECO, scales = "free")
 
 
 
@@ -575,10 +410,8 @@ ggplot(toplot, aes(x = Group, y = n_occ))+
 
 toplot <- N_OCC %>%
     filter(n_occ > 30) %>%
-    group_by(kingdom, Group) %>%
+    group_by(kingdom, Group, ECO) %>%
     dplyr::summarise(n_occ = length(unique(scientificName)))
-
-toplot$class <- factor(toplot$Group, levels = toplot$Group[order(toplot$n_occ)])
 
 # Occ by Class
 ggplot(toplot, aes(x = Group, y = n_occ))+
@@ -586,25 +419,8 @@ ggplot(toplot, aes(x = Group, y = n_occ))+
     theme_classic()+
     # coord_flip()+
     ylab("N species")+xlab("Class")+
-    theme(axis.text.x = element_text(angle = 45, hjust=1))
-
-
-
-## N species by ECO
-
-toplot <- N_OCC %>%
-    group_by(ECO, Group) %>%
-    dplyr::summarise(n_sps = length(unique(scientificName)))
-toplot$n_sps <- as.numeric(toplot$n_sps)
-
-# Occ by ECO
-ggplot(toplot, aes(x = ECO, y = n_sps))+
-    geom_col(fill = "white", color = "black")+
-    theme_classic()+
-    ylab("N species")+xlab("Habitat")+
-    facet_grid(scales = "free", space = "free", cols = vars(Group))+
-    theme(strip.text.x = element_text(angle = 90))
-
+    theme(axis.text.x = element_text(angle = 45, hjust=1))+
+    facet_wrap(.~ECO, scales = "free")
 
 
 # % bioshift with occ

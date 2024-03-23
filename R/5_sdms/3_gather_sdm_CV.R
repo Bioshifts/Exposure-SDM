@@ -39,7 +39,7 @@ if(any(rem)){
 CV_mar <- data.table::rbindlist(CV_mar)
 CV_mar$ECO = "Mar"
 
-## 1) get list of terine species I have SDMs
+## 1) get list of terrestrial species I have SDMs
 sdms_ter <- list.dirs(sdm_dir("Ter"), recursive = FALSE, full.names = FALSE)
 
 ## 1.1) Load in validation datasets
