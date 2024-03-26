@@ -27,17 +27,20 @@ if(computer == "matrics"){
 
 
 source("R/settings.R")
+source(here::here("R/fetchGHdata.R"))
 
 work_dir <- getwd()
 shift_dir <- here::here(work_dir,"Data/SHIFT")
 sdm_dir <- here::here(work_dir,"Data/SDMs")
+velocity_SA_dir <- here::here(work_dir,"Data/Velocity_SA")
 
 ###
 ### Load in Bioshifts ----
 biov1 <- read.csv(here::here(work_dir,"Data","Bioshifts",Bioshifts_DB_v1), header = T)
-
-# N species
-length(unique(biov1$sp_name_std_v1))
+# select columns of interest
+biov1 <- biov1 %>%
+    select(Article_ID, Study_ID, ID, Type, Param, START, END, DUR, ECO, UNIT, 
+           SHIFT, Class, group, sp_name_std_v1, v.lat.mean, v.ele.mean)
 
 # Lat only
 biov1 <- biov1 %>% 
@@ -47,11 +50,37 @@ biov1 <- biov1 %>%
             TRUE ~ as.character(Type)),
         velocity = ifelse(Type == "LAT", v.lat.mean, v.ele.mean),
         SHIFT = ifelse(UNIT == "m/year", SHIFT/1000, SHIFT) ) %>%
-    filter(Type == "LAT")
+    filter(Type == "LAT") %>%
+    select(!v.lat.mean,!v.ele.mean,!UNIT)
 
 # N species
 length(unique(biov1$sp_name_std_v1))
 
+# Get corrected shifts 
+fetchGHdata(gh_account = "Bioshifts", 
+            repo = "MethodologicalAdjustment", 
+            path = "outputs/biov1_method_corrected_shifts_study_level.csv",
+            output = here::here(work_dir,"Data/Bioshifts/biov1_method_corrected_shifts_study_level.csv"))
+
+biov1_corr <- read.csv(
+    here::here(work_dir,"Data/Bioshifts/biov1_method_corrected_shifts_study_level.csv"), 
+    header = T)
+
+biov1 <- merge(biov1, 
+               biov1_corr %>%
+                   select(c("Article_ID","Study_ID","Class","Type","SLDiff1")), 
+               by = c("Article_ID","Study_ID","Class","Type"),
+               all.x = TRUE)
+
+biov1$SHIFT_cor <- abs(biov1$SHIFT) - biov1$SLDiff1
+
+
+# N species
+length(unique(biov1$sp_name_std_v1))
+
+
+
+# New ID
 biov1$new_ID <- paste(biov1$ID,
                       biov1$sp_name_std_v1,
                       round(biov1$START,0),
@@ -69,10 +98,30 @@ biov1$ECO <- ifelse(biov1$ECO=="M", "Marine", "Terrestrial")
 table(biov1$ECO, biov1$Param)
 dim(biov1)
 
+
+# Plug in new velocity metrics
+velocities <- list.files(velocity_SA_dir, full.names = TRUE, pattern = ".csv")
+velocities <- lapply(velocities, read.csv)
+velocities <- data.table::rbindlist(velocities,fill = TRUE)
+velocities <- velocities[,c("ID","v.lat.median.mat","v.lat.sd.mat","v.lat.median.sst","v.lat.sd.sst")]
+velocities$v.lat.median.mat[which(is.na(velocities$v.lat.median.mat))] <- velocities$v.lat.median.sst[which(is.na(velocities$v.lat.median.mat))]
+velocities$vel_mat <- velocities$v.lat.median.mat
+velocities$vel_mat[which(is.na(velocities$vel_mat))] <- velocities$v.lat.median.sst[which(is.na(velocities$vel_mat))]
+velocities$vel_mat_sd <- velocities$v.lat.sd.mat
+velocities$vel_mat_sd[which(is.na(velocities$vel_mat_sd))] <- velocities$v.lat.sd.sst[which(is.na(velocities$vel_mat_sd))]
+
+biov1 <- merge(biov1,
+               velocities[,c("ID","vel_mat","vel_mat_sd")],
+               by = "ID",
+               all.x = TRUE)
+
+# Update velocity ----
+biov1$vel_mat[which(is.na(biov1$vel_mat))] <- biov1$v.lat.mean[which(is.na(biov1$vel_mat))]
+
 ###
 ### Load occ data ----
 # add group
-n_occ <- read_csv("Data/n_occ.csv")
+n_occ <- read_csv("Data/n_occ2.csv")
 n_occ$scientificName <- gsub(" ","_",n_occ$scientificName)
 
 ###
@@ -92,10 +141,10 @@ all(sdms_CV$Species %in% n_occ$scientificName)
 # N species
 length(unique(sdms_CV$Species))
 
-# N Marine
-length(unique(sdms_CV$Species[which(sdms_CV$ECO=="Marine")]))
 # N Terrestrial
 length(unique(sdms_CV$Species[which(sdms_CV$ECO=="Terrestrial")]))
+# N Marine
+length(unique(sdms_CV$Species[which(sdms_CV$ECO=="Marine")]))
 
 # add Taxonomic group and N occ
 sdms_CV <- merge(sdms_CV, n_occ[,c("scientificName","Group","n_occ")], 
@@ -113,6 +162,35 @@ plot(log(sdms_CV$n_occ),sdms_CV$sensitivity)
 sdms_CV_plot <- sdms_CV[,c("algo","calibration","validation","Group","ECO","metric.eval")] %>%
     tidyr::gather("Type", "value", -c(algo,Group,ECO,metric.eval)) 
 
+# Terrestrial
+## TSS
+p1 <- ggplot(sdms_CV_plot %>%
+                 dplyr::filter(ECO=="Terrestrial",
+                               metric.eval=="TSS"), 
+             aes(x = value, y = Group, color = algo))+
+    ggtitle("TSS")+
+    geom_boxplot(outlier.alpha = 0)+
+    scale_x_continuous(limits = c(0,1))+
+    facet_grid(ECO~Type, scales = "free")+
+    geom_vline(xintercept = .5,color='red',linetype = "dashed")+
+    geom_vline(xintercept = .7,color='darkgreen',linetype = "dashed")+
+    theme_classic()
+
+## ROC
+p2 <- ggplot(sdms_CV_plot %>%
+                 dplyr::filter(ECO=="Terrestrial",
+                               metric.eval=="ROC"), 
+             aes(x = value, y = Group, color = algo))+
+    ggtitle("ROC")+
+    geom_boxplot(outlier.alpha = 0)+
+    scale_x_continuous(limits = c(0,1))+
+    facet_grid(ECO~Type, scales = "free")+
+    geom_vline(xintercept = .5,color='red',linetype = "dashed")+
+    geom_vline(xintercept = .7,color='darkgreen',linetype = "dashed")+
+    theme_classic()
+
+gridExtra::grid.arrange(p1,p2,ncol=1)
+
 # Marine
 ## TSS
 p1 <- ggplot(sdms_CV_plot %>%
@@ -121,6 +199,7 @@ p1 <- ggplot(sdms_CV_plot %>%
              aes(x = value, y = Group, color = algo))+
     ggtitle("TSS")+
     geom_boxplot(outlier.alpha = 0)+
+    scale_x_continuous(limits = c(0,1))+
     facet_grid(ECO~Type, scales = "free")+
     geom_vline(xintercept = .5,color='red',linetype = "dashed")+
     geom_vline(xintercept = .7,color='darkgreen',linetype = "dashed")+
@@ -133,6 +212,7 @@ p2 <- ggplot(sdms_CV_plot %>%
              aes(x = value, y = Group, color = algo))+
     ggtitle("ROC")+
     geom_boxplot(outlier.alpha = 0)+
+    scale_x_continuous(limits = c(0,1))+
     facet_grid(ECO~Type, scales = "free")+
     geom_vline(xintercept = .5,color='red',linetype = "dashed")+
     geom_vline(xintercept = .7,color='darkgreen',linetype = "dashed")+
@@ -140,47 +220,20 @@ p2 <- ggplot(sdms_CV_plot %>%
 
 gridExtra::grid.arrange(p1,p2,ncol=1)
 
-# Terrestrial
-## TSS
-p1 <- ggplot(sdms_CV_plot %>%
-                 dplyr::filter(ECO=="Terrestrial",
-                               metric.eval=="TSS"), 
-             aes(x = value, y = Group, color = algo))+
-    ggtitle("TSS")+
-    geom_boxplot()+
-    facet_grid(ECO~Type, scales = "free")+
-    geom_vline(xintercept = .5,color='red',linetype = "dashed")+
-    geom_vline(xintercept = .7,color='darkgreen',linetype = "dashed")+
-    theme_classic()
-
-## ROC
-p2 <- ggplot(sdms_CV_plot %>%
-                 dplyr::filter(ECO=="Terrestrial",
-                               metric.eval=="ROC"), 
-             aes(x = value, y = Group, color = algo))+
-    ggtitle("ROC")+
-    geom_boxplot()+
-    facet_grid(ECO~Type, scales = "free")+
-    geom_vline(xintercept = .5,color='red',linetype = "dashed")+
-    geom_vline(xintercept = .7,color='darkgreen',linetype = "dashed")+
-    theme_classic()
-
-gridExtra::grid.arrange(p1,p2,ncol=1)
-
-# total Marine species
-length(unique(sdms_CV$Species[which(sdms_CV$ECO=="Marine")]))
-# Proportion Marines species MAXNET TSS > 0.5
+# total Terrestrial species
+length(unique(sdms_CV$Species[which(sdms_CV$ECO=="Terrestrial")]))
+# Proportion Terrestrials species MAXNET TSS > 0.5
 sdms_CV %>%
-    dplyr::filter(ECO=="Marine",
+    dplyr::filter(ECO=="Terrestrial",
                   algo=="MAXNET",
                   metric.eval=="TSS") %>%
     dplyr::group_by(Species) %>%
     dplyr::summarise(TSS = mean(calibration)) %>%
     dplyr::summarise(length(which(TSS > .5))/length(TSS))
 
-# Proportion Marines species MAXNET TSS > 0.7
+# Proportion Terrestrials species MAXNET TSS > 0.7
 sdms_CV %>%
-    dplyr::filter(ECO=="Marine",
+    dplyr::filter(ECO=="Terrestrial",
                   algo=="MAXNET",
                   metric.eval=="TSS") %>%
     dplyr::group_by(Species) %>%
@@ -189,18 +242,19 @@ sdms_CV %>%
 
 # total Terrestrial species
 length(unique(sdms_CV$Species[which(sdms_CV$ECO=="Terrestrial")]))
-# Proportion Terrestrial species MAXNET TSS > 0.5
+
+# Proportion Marine species MAXNET TSS > 0.5
 sdms_CV %>%
-    dplyr::filter(ECO=="Terrestrial",
+    dplyr::filter(ECO=="Marine",
                   algo=="MAXNET",
                   metric.eval=="TSS") %>%
     dplyr::group_by(Species) %>%
     dplyr::summarise(TSS = mean(calibration)) %>%
     dplyr::summarise(length(which(TSS > .5))/length(TSS))
 
-# Proportion Terrestrial species MAXNET TSS > 0.7
+# Proportion Marine species MAXNET TSS > 0.7
 sdms_CV %>%
-    dplyr::filter(ECO=="Terrestrial",
+    dplyr::filter(ECO=="Marine",
                   algo=="MAXNET",
                   metric.eval=="TSS") %>%
     dplyr::group_by(Species) %>%
@@ -221,6 +275,7 @@ shifts_ens <- lapply(shifts_ens, function(x) {
 })
 
 shifts_ens <- data.table::rbindlist(shifts_ens)
+
 shifts_ens_mar <- data.frame(shifts_ens)
 shifts_ens_mar$ECO = "Marine"
 
@@ -248,6 +303,8 @@ shifts_ens <- rbind(shifts_ens_mar,
 length(unique(shifts_ens$Species))
 length(unique(shifts_ens$Species[which(shifts_ens$ECO=="Terrestrial")]))
 length(unique(shifts_ens$Species[which(shifts_ens$ECO=="Marine")]))
+# N SAs
+length(unique(shifts_ens$ID))
 
 # create ID for merge
 START <- sapply(shifts_ens$time_period, function(x){
@@ -268,12 +325,10 @@ shifts_ens <- merge(shifts_ens, n_occ[,c("scientificName","Group")],
                     by.y = "scientificName",
                     all.x = TRUE)
 
-
 dim(shifts_ens)
 length(unique(shifts_ens$Species))
 
-# N terrestrials
-length(which(is.na(shifts_ens$ECO)))
+# N Species
 length(unique(shifts_ens$Species[which(shifts_ens$ECO=="Terrestrial")]))
 length(unique(shifts_ens$Species[which(shifts_ens$ECO=="Marine")]))
 
@@ -312,37 +367,37 @@ for(i in 1:length(all_IDS)){ cat(i, "from", length(all_IDS),"\r")
                          mean(tmp$nsCentroidVelocity),
                          mean(tmp$nsQuantVelocity_quant0p99))
         
-        SHIFT_sdm_2 <- c(mean(tmp$nsQuantVelocity_quant0p05),
-                         mean(tmp$nsCentroidVelocity),
-                         mean(tmp$nsQuantVelocity_quant0p95))
+        SHIFT_sdm_22 <- c(mean(tmp$nsQuantVelocity_quant0p05),
+                          mean(tmp$nsCentroidVelocity),
+                          mean(tmp$nsQuantVelocity_quant0p95))
         
         SHIFT_sdm_3 <- c(mean(tmp$nsQuantVelocity_quant0p1),
                          mean(tmp$nsCentroidVelocity),
                          mean(tmp$nsQuantVelocity_quant0p9))
         
         # get shift as linear coefficient of latitude at edges over time
-        SHIFT_sdm_11 <- as.numeric(
+        SHIFT_sdm_21 <- as.numeric(
             c(lm(tmp$nsQuantLat_quant0p01~tmp$START)[1][[1]][2],
               lm(tmp$nsCentroidLat~tmp$START)[1][[1]][2],
               lm(tmp$nsQuantLat_quant0p99~tmp$START)[1][[1]][2]))
         
-        SHIFT_sdm_21 <- as.numeric(
+        SHIFT_sdm_22 <- as.numeric(
             c(lm(tmp$nsQuantLat_quant0p05~tmp$START)[1][[1]][2],
               lm(tmp$nsCentroidLat~tmp$START)[1][[1]][2],
               lm(tmp$nsQuantLat_quant0p95~tmp$START)[1][[1]][2]))
         
-        SHIFT_sdm_31 <- as.numeric(
+        SHIFT_sdm_23 <- as.numeric(
             c(lm(tmp$nsQuantLat_quant0p1~tmp$START)[1][[1]][2],
               lm(tmp$nsCentroidLat~tmp$START)[1][[1]][2],
               lm(tmp$nsQuantLat_quant0p9~tmp$START)[1][[1]][2]))
         
         data.frame(Param = c("TE","O","LE"),
                    SHIFT_sdm_1 = SHIFT_sdm_1/1000, # from meters to km
-                   SHIFT_sdm_2 = SHIFT_sdm_2/1000,
+                   SHIFT_sdm_22 = SHIFT_sdm_22/1000,
                    SHIFT_sdm_3 = SHIFT_sdm_3/1000,
-                   SHIFT_sdm_11 = SHIFT_sdm_11/1000, 
-                   SHIFT_sdm_21 = SHIFT_sdm_21/1000,
-                   SHIFT_sdm_31 = SHIFT_sdm_31/1000,
+                   SHIFT_sdm_21 = SHIFT_sdm_21/1000, 
+                   SHIFT_sdm_22 = SHIFT_sdm_22/1000,
+                   SHIFT_sdm_23 = SHIFT_sdm_23/1000,
                    tmp[1,c("Type", "Species", "time_period","new_ID","ECO","Group")])
     }, silent = TRUE)
     if(class(tmp) == "try-error"){
@@ -365,36 +420,40 @@ dim(shifts_ens)
 length(unique(shifts_ens$Species))
 # N shifts
 length(unique(shifts_ens$new_ID))
+# ECO
+table(shifts_ens$ECO)
 
 table(shifts_ens$ECO, shifts_ens$Param)
 
 ### Correlation shifts % ----
 
-## Marine
-ggpairs(shifts_ens %>%
-            filter(ECO == "Marine") %>%
-            filter(Param != "O"), 
-        columns = c(2:7),
-        ggplot2::aes(colour=Param))
-
+## Terrestrial
 ggpairs(shifts_ens %>%
             filter(ECO == "Terrestrial") %>%
             filter(Param != "O"), 
         columns = c(2:7),
         ggplot2::aes(colour=Param))
 
+ggpairs(shifts_ens %>%
+            filter(ECO == "Marine") %>%
+            filter(Param != "O"), 
+        columns = c(2:7),
+        ggplot2::aes(colour=Param))
+
+
 ###
 ### Merge with bioshifts ----
+#### plug in shift sdms
 biov1_pred <- merge(
     biov1, shifts_ens[,c(2:7,11,13)], 
     by = "new_ID")
 
-## Add TSS
+### Plug in TSS ----
 avg_TSS <- sdms_CV %>%
     dplyr::filter(metric.eval=="TSS") %>%
     group_by(Species) %>%
-    summarise(TSS_vali = mean(validation),
-              TSS_cali = mean(calibration))
+    summarise(TSS_vali = median(validation),
+              TSS_cali = median(calibration))
 
 all(biov1_pred$sp_name_std_v1 %in% avg_TSS$Species)
 
@@ -404,7 +463,46 @@ biov1_pred <- merge(
     by.y = "Species",
     all.x = TRUE)
 
+###
+# Load velocity at edges ----
+vel_edge <- read.csv(here::here("Data/vel_edge.csv"))
+# N SAs
+length(unique(sapply(vel_edge$ID, function(x) strsplit(x, " ")[[1]][1])))
+vel_edge$new_ID2 <- vel_edge$ID
+vel_edge <- vel_edge %>% select(-ID)
+
+biov1_pred$new_ID2 <- sapply(biov1_pred$new_ID, function(x) paste(strsplit(x," ")[[1]][1:5],collapse = " "))
+
+biov1_pred <- merge(biov1_pred, 
+                    vel_edge, 
+                    by = "new_ID2",
+                    all.x = TRUE)
+biov1_pred <- biov1_pred %>% select(!new_ID2)
+
+# Fix edge
+biov1_pred$clim_vel_edge <- NA 
+edges <- sapply(biov1_pred$new_ID, function(x) strsplit(x," ")[[1]][6])
+biov1_pred$clim_vel_edge[edges=="LE"]  <- biov1_pred$edge95[edges=="LE"]
+biov1_pred$clim_vel_edge[edges=="TE"]  <- biov1_pred$edge05[edges=="TE"]
+biov1_pred$clim_vel_edge[edges=="O"]  <- biov1_pred$edge5[edges=="O"]
+
+### select the observed shift variable  
 biov1_pred$SHIFT_obs <- biov1_pred$SHIFT
+biov1_pred$bioclimatic_vel <- biov1_pred$SHIFT_sdm_22
+biov1_pred$clim_vel <- biov1_pred$vel_mat
+
+ggpairs(biov1_pred %>%
+            filter(ECO == "Terrestrial"),
+        columns = c(41,42,39),
+        ggplot2::aes(colour=Param))+
+    theme_classic()
+
+ggpairs(biov1_pred %>%
+            filter(ECO == "Marine"),
+        columns = c(41,42,39),
+        ggplot2::aes(colour=Param))+
+    theme_classic()
+
 
 ### Stats N species ----
 # N species v1
@@ -413,6 +511,11 @@ length(unique(biov1$sp_name_std_v1))
 length(unique(shifts_ens$Species))
 # N species with SDMs in bioshifts
 length(which(unique(shifts_ens$Species) %in% unique(biov1$sp_name_std_v1)))
+# N species velocity edge
+sp_vel_edge <- unique(sapply(vel_edge$new_ID, function(x) strsplit(x," ")[[1]][2]))
+length(unique(sp_vel_edge))
+# N species with SDMs in bioshifts
+length(which(sp_vel_edge %in% unique(biov1$sp_name_std_v1)))
 
 # shifts in v1
 length(unique(biov1$new_ID))
@@ -420,9 +523,12 @@ length(unique(biov1$new_ID))
 length(unique(shifts_ens$new_ID))
 # N shifts with SDMs in bioshifts
 length(which(unique(shifts_ens$new_ID) %in% unique(biov1$new_ID)))
-
-length(unique(shifts_ens$Species[which(shifts_ens$ECO == "Marine")]))
+# N species
 length(unique(shifts_ens$Species[which(shifts_ens$ECO == "Terrestrial")]))
+length(unique(shifts_ens$Species[which(shifts_ens$ECO == "Terrestrial")]))
+# N shifts
+length(unique(shifts_ens$new_ID[which(shifts_ens$ECO == "Terrestrial")]))
+length(unique(shifts_ens$new_ID[which(shifts_ens$ECO == "Terrestrial")]))
 
 spincommon <- intersect(biov1$sp_name_std_v1,shifts_ens$Species)
 
@@ -430,7 +536,7 @@ table(biov1$ECO, biov1$Param)
 table(shifts_ens$ECO, shifts_ens$Param)
 table(biov1_pred$ECO, biov1_pred$Param)
 
-table(biov1_pred$ECO, biov1_pred$Param, biov1_pred$Group)
+table(biov1_pred$ECO, biov1_pred$Param, biov1_pred$Class)
 
 
 ### Missing shifts ----
@@ -466,82 +572,141 @@ dim(missing_shifts)
 ###
 ### Geographical pattern ----
 
-mundi <- terra::vect(rnaturalearth::ne_coastline(scale = 10, returnclass = "sp"))
-
-# get raster bioshifts shp files study areas
-get_raster_bioshifts = "NO"
-if(get_raster_bioshifts=="YES"){
-    my_ext = terra::ext(mundi)
-    my_crs = crs(mundi)
-    
-    # empty raster for study areas
-    rast_biov1 <- terra::rast(my_ext, crs = my_crs, res = 0.5)
-    values(rast_biov1) <- 0
-    
-    # empty raster for N shifts
-    rast_biov1_sh <- terra::rast(my_ext, crs = my_crs, res = 0.5)
-    values(rast_biov1) <- 0
-    
-    fgdb <- "C:/Users/brunn/NextCloud/Bioshifts/Study_Areas.gdb"
-    fc_list <- rgdal::ogrListLayers(fgdb)
-    fc_list <- fc_list[which(fc_list %in% unique(biov1_pred$ID))]
-    
-    for(i in 1:length(fc_list)){ cat("\r",i,"from",length(fc_list))
-        tmp = terra::vect(sf::st_read(fgdb, layer=fc_list[i]))
-        tmp = terra::cells(rast_biov1,tmp)
-        tmp_cell = tmp[,2]
-        tmp_vals = rast_biov1[tmp_cell][,1]
-        rast_biov1[tmp_cell] = tmp_vals+1
-        
-        # get N shifts at the study area
-        N <- nrow(biov1_pred[which(biov1_pred$ID == fc_list[i]),])
-        rast_biov1_sh[tmp_cell] = tmp_vals + N
-    }
-    names(rast_biov1) <- names(rast_biov1_sh) <- "SA"
-    rast_biov1[rast_biov1==0] <- NA
-    rast_biov1_sh[rast_biov1_sh==0] <- NA
-    
-    writeRaster(rast_biov1, "Data/raster_bioshifts_SA.tif", overwrite = TRUE)
-    writeRaster(rast_biov1_sh, "Data/raster_bioshifts_N_SA.tif", overwrite = TRUE)
-    
-} else {
-    rast_biov1 <- terra::rast(here::here("Data/raster_bioshifts_SA.tif"))
-    rast_biov1_sh <- terra::rast(here::here("Data/raster_bioshifts_N_SA.tif"))
-}
-
-# plot
-mundi_sf <- sf::st_as_sf(mundi)
-
-test_df <- terra::as.data.frame(rast_biov1, xy = TRUE)
-colnames(test_df) <- c("x", "y", "value")
-
-p1 = ggplot() +  
-    geom_tile(data=test_df, aes(x=x, y=y, fill=value)) + 
-    ggtitle("N study areas")+
-    geom_sf(data=mundi_sf) +
-    theme_minimal() +
-    scale_fill_viridis_c()+
-    guides(fill = guide_colourbar(title = ""))+
-    xlab("")+ylab("")
-
-test_df <- terra::as.data.frame(rast_biov1_sh, xy = TRUE)
-colnames(test_df) <- c("x", "y", "value")
-
-p2 = ggplot() +  
-    geom_tile(data=test_df, aes(x=x, y=y, fill=value)) + 
-    ggtitle("N range shifts")+
-    geom_sf(data=mundi_sf) +
-    theme_minimal() +
-    scale_fill_viridis_c()+
-    guides(fill = guide_colourbar(title = ""))+
-    xlab("")+ylab("")
+# mundi <- terra::vect(rnaturalearth::ne_coastline(scale = 10, returnclass = "sp"))
+# 
+# # get raster bioshifts shp files study areas
+# get_raster_bioshifts = "NO"
+# if(get_raster_bioshifts=="YES"){
+#     my_ext = terra::ext(mundi)
+#     my_crs = crs(mundi)
+#     
+#     # empty raster for study areas
+#     rast_biov1 <- terra::rast(my_ext, crs = my_crs, res = 0.5)
+#     values(rast_biov1) <- 0
+#     
+#     # empty raster for N shifts
+#     rast_biov1_sh <- terra::rast(my_ext, crs = my_crs, res = 0.5)
+#     values(rast_biov1) <- 0
+#     
+#     fgdb <- "C:/Users/brunn/NextCloud/Bioshifts/Study_Areas.gdb"
+#     fc_list <- rgdal::ogrListLayers(fgdb)
+#     fc_list <- fc_list[which(fc_list %in% unique(biov1_pred$ID))]
+#     
+#     for(i in 1:length(fc_list)){ cat("\r",i,"from",length(fc_list))
+#         tmp = terra::vect(sf::st_read(fgdb, layer=fc_list[i]))
+#         tmp = terra::cells(rast_biov1,tmp)
+#         tmp_cell = tmp[,2]
+#         tmp_vals = rast_biov1[tmp_cell][,1]
+#         rast_biov1[tmp_cell] = tmp_vals+1
+#         
+#         # get N shifts at the study area
+#         N <- nrow(biov1_pred[which(biov1_pred$ID == fc_list[i]),])
+#         rast_biov1_sh[tmp_cell] = tmp_vals + N
+#     }
+#     names(rast_biov1) <- names(rast_biov1_sh) <- "SA"
+#     rast_biov1[rast_biov1==0] <- NA
+#     rast_biov1_sh[rast_biov1_sh==0] <- NA
+#     
+#     writeRaster(rast_biov1, "Data/raster_bioshifts_SA.tif", overwrite = TRUE)
+#     writeRaster(rast_biov1_sh, "Data/raster_bioshifts_N_SA.tif", overwrite = TRUE)
+#     
+# } else {
+#     rast_biov1 <- terra::rast(here::here("Data/raster_bioshifts_SA.tif"))
+#     rast_biov1_sh <- terra::rast(here::here("Data/raster_bioshifts_N_SA.tif"))
+# }
+# 
+# # plot
+# mundi_sf <- sf::st_as_sf(mundi)
+# 
+# test_df <- terra::as.data.frame(rast_biov1, xy = TRUE)
+# colnames(test_df) <- c("x", "y", "value")
+# 
+# p1 = ggplot() +  
+#     geom_tile(data=test_df, aes(x=x, y=y, fill=value)) + 
+#     ggtitle("N study areas")+
+#     geom_sf(data=mundi_sf) +
+#     theme_minimal() +
+#     scale_fill_viridis_c()+
+#     guides(fill = guide_colourbar(title = ""))+
+#     xlab("")+ylab("")
+# 
+# test_df <- terra::as.data.frame(rast_biov1_sh, xy = TRUE)
+# colnames(test_df) <- c("x", "y", "value")
+# 
+# p2 = ggplot() +  
+#     geom_tile(data=test_df, aes(x=x, y=y, fill=value)) + 
+#     ggtitle("N range shifts")+
+#     geom_sf(data=mundi_sf) +
+#     theme_minimal() +
+#     scale_fill_viridis_c()+
+#     guides(fill = guide_colourbar(title = ""))+
+#     xlab("")+ylab("")
 
 gridExtra::grid.arrange(p1,p2,ncol=1)
 
 ###
+### Shift pattern ----
+
+longdata <- biov1_pred[,c("ECO","Param","clim_vel_edge","clim_vel","bioclimatic_vel")] %>%
+    tidyr::gather("Type", "SHIFT", -c(Param,ECO))
+
+ggplot(longdata, aes(x=SHIFT, fill = Param))+
+    geom_density(alpha=.5)+
+    theme_bw()+
+    facet_wrap(ECO~Type,scales = "free")
+
+###
 ### Shift predicted vs observed ----
 
-ggplot(biov1_pred[,c("ECO","Param","SHIFT_obs","SHIFT_sdm_2")] %>%
+longdata <- biov1_pred[,c("ECO","Param","clim_vel_edge","clim_vel","bioclimatic_vel","SHIFT_obs","DUR")] %>%
+    tidyr::gather("Metric", "value", -c(Param,ECO,SHIFT_obs,DUR))
+
+## all together
+ggplot(longdata %>%
+           filter(Param == "O"), 
+       aes(x = as.numeric(value), y = SHIFT_obs, color = ECO, size = DUR))+
+    ggtitle("Centroid shifts")+
+    geom_point(alpha = .3)+
+    xlab("Velocity metric (km/yr)")+
+    ylab("Observed shift (km/yr)")+
+    theme_classic() +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
+    geom_hline(yintercept = 0, linetype = "dashed")+
+    geom_vline(xintercept = 0, linetype = "dashed")+
+    # tune::coord_obs_pred()+
+    facet_wrap(Metric~ECO,ncol = 2,scales = "free")
+
+ggplot(longdata %>%
+           filter(Param == "LE"), 
+       aes(x = as.numeric(value), y = SHIFT_obs, color = ECO, size = DUR))+
+    ggtitle("Leading edge shifts")+
+    geom_point(alpha = .3)+
+    xlab("Velocity metric (km/yr)")+
+    ylab("Observed shift (km/yr)")+
+    theme_classic() +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
+    geom_hline(yintercept = 0, linetype = "dashed")+
+    geom_vline(xintercept = 0, linetype = "dashed")+
+    # tune::coord_obs_pred()+
+    facet_wrap(Metric~ECO,ncol = 2,scales = "free")
+
+ggplot(longdata %>%
+           filter(Param == "TE"), 
+       aes(x = as.numeric(value), y = SHIFT_obs, color = ECO, size = DUR))+
+    ggtitle("Traling edge shifts")+
+    geom_point(alpha = .3)+
+    xlab("Velocity metric (km/yr)")+
+    ylab("Observed shift (km/yr)")+
+    theme_classic() +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
+    geom_hline(yintercept = 0, linetype = "dashed")+
+    geom_vline(xintercept = 0, linetype = "dashed")+
+    # tune::coord_obs_pred()+
+    facet_wrap(Metric~ECO,ncol = 2,scales = "free")
+
+
+## one by one
+ggplot(biov1_pred[,c("ECO","Param","SHIFT_obs","bioclimatic_vel")] %>%
            tidyr::gather("Type", "SHIFT", -c(Param,ECO)), 
        aes(x = Type, y = SHIFT))+
     ylab("Range shift (km/yr)")+
@@ -549,7 +714,7 @@ ggplot(biov1_pred[,c("ECO","Param","SHIFT_obs","SHIFT_sdm_2")] %>%
     theme_classic()+
     facet_wrap(.~ECO, scales = "free")
 
-ggplot(biov1_pred[,c("ECO","Param","SHIFT_obs","SHIFT_sdm_2")] %>%
+ggplot(biov1_pred[,c("ECO","Param","SHIFT_obs","bioclimatic_vel")] %>%
            tidyr::gather("Type", "SHIFT", -c(Param,ECO)), 
        aes(x = Type, y = SHIFT))+
     ylab("Range shift (km/yr)")+
@@ -557,7 +722,7 @@ ggplot(biov1_pred[,c("ECO","Param","SHIFT_obs","SHIFT_sdm_2")] %>%
     theme_classic()+
     facet_wrap(ECO~Param, scales = "free")
 
-ggplot(biov1_pred[,c("ECO","Param","SHIFT_obs","SHIFT_sdm_2")] %>%
+ggplot(biov1_pred[,c("ECO","Param","SHIFT_obs","bioclimatic_vel")] %>%
            tidyr::gather("Type", "SHIFT", -c(Param,ECO)), 
        aes(fill = Type, x = SHIFT))+
     xlab("Range shift (km/yr)")+
@@ -565,7 +730,7 @@ ggplot(biov1_pred[,c("ECO","Param","SHIFT_obs","SHIFT_sdm_2")] %>%
     theme_classic()+
     facet_wrap(.~ECO, scales = "free")
 
-ggplot(biov1_pred[,c("ECO","Param","SHIFT_obs","SHIFT_sdm_2")] %>%
+ggplot(biov1_pred[,c("ECO","Param","SHIFT_obs","bioclimatic_vel")] %>%
            tidyr::gather("Type", "SHIFT", -c(Param,ECO)) , 
        aes(fill = Type, x = SHIFT))+
     xlab("Range shift (km/yr)")+
@@ -575,7 +740,7 @@ ggplot(biov1_pred[,c("ECO","Param","SHIFT_obs","SHIFT_sdm_2")] %>%
 
 ggplot(
     biov1_pred, 
-    aes(x = SHIFT_sdm_21, y = SHIFT_obs, color = ECO, size = DUR))+
+    aes(x = bioclimatic_vel, y = SHIFT_obs, color = ECO, size = DUR))+
     ggtitle("All shifts")+
     geom_point(alpha = .3)+
     xlab("Bioclimatic velocity (km/yr)")+
@@ -588,10 +753,10 @@ ggplot(
     facet_wrap(.~ECO)
 
 # Optimum
-M_O <- ggplot(
+M_O_bio <- ggplot(
     biov1_pred %>%
         filter(Param == "O"), 
-    aes(x = SHIFT_sdm_21, y = SHIFT_obs, color = ECO, size = DUR))+
+    aes(x = bioclimatic_vel, y = SHIFT_obs, color = ECO, size = DUR))+
     ggtitle("Centroid")+
     geom_point(alpha = .3)+
     xlab("Bioclimatic velocity (km/yr)")+
@@ -600,14 +765,44 @@ M_O <- ggplot(
     geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
     geom_hline(yintercept = 0, linetype = "dashed")+
     geom_vline(xintercept = 0, linetype = "dashed")+
-    tune::coord_obs_pred()+
-    facet_wrap(.~ECO)
+    # tune::coord_obs_pred()+
+    facet_wrap(.~ECO, scales = "free")
+
+M_O_vel <- ggplot(
+    biov1_pred %>%
+        filter(Param == "O"), 
+    aes(x = clim_vel, y = SHIFT_obs, color = ECO, size = DUR))+
+    ggtitle("Centroid")+
+    geom_point(alpha = .3)+
+    xlab("Bioclimatic velocity (km/yr)")+
+    ylab("Observed shift (km/yr)")+
+    theme_classic() +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
+    geom_hline(yintercept = 0, linetype = "dashed")+
+    geom_vline(xintercept = 0, linetype = "dashed")+
+    # tune::coord_obs_pred()+
+    facet_wrap(.~ECO, scales = "free")
+
+M_O_vel_ed <- ggplot(
+    biov1_pred %>%
+        filter(Param == "O"), 
+    aes(x = clim_vel_edge, y = SHIFT_obs, color = ECO, size = DUR))+
+    ggtitle("Centroid")+
+    geom_point(alpha = .3)+
+    xlab("Climate velocity edge (km/yr)")+
+    ylab("Observed shift (km/yr)")+
+    theme_classic() +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
+    geom_hline(yintercept = 0, linetype = "dashed")+
+    geom_vline(xintercept = 0, linetype = "dashed")+
+    # tune::coord_obs_pred()+
+    facet_wrap(.~ECO, scales = "free")
 
 # LE
-M_LE <- ggplot(
+M_LE_bio <- ggplot(
     biov1_pred %>%
         filter(Param == "LE" ), 
-    aes(x = SHIFT_sdm_21, y = SHIFT_obs, color = ECO, size = DUR))+
+    aes(x = bioclimatic_vel, y = SHIFT_obs, color = ECO, size = DUR))+
     ggtitle("Leading edge")+
     geom_point(alpha = .3)+
     xlab("Bioclimatic velocity (km/yr)")+
@@ -616,14 +811,44 @@ M_LE <- ggplot(
     geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
     geom_hline(yintercept = 0, linetype = "dashed")+
     geom_vline(xintercept = 0, linetype = "dashed")+
-    tune::coord_obs_pred()+
-    facet_wrap(.~ECO)
+    # tune::coord_obs_pred()+
+    facet_wrap(.~ECO,scales = "free")
+
+M_LE_vel <- ggplot(
+    biov1_pred %>%
+        filter(Param == "LE" ), 
+    aes(x = clim_vel, y = SHIFT_obs, color = ECO, size = DUR))+
+    ggtitle("Leading edge")+
+    geom_point(alpha = .3)+
+    xlab("Climate velocity (km/yr)")+
+    ylab("Observed shift (km/yr)")+
+    theme_classic() +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
+    geom_hline(yintercept = 0, linetype = "dashed")+
+    geom_vline(xintercept = 0, linetype = "dashed")+
+    # tune::coord_obs_pred()+
+    facet_wrap(.~ECO,scales = "free")
+
+M_LE_vel_ed <- ggplot(
+    biov1_pred %>%
+        filter(Param == "LE" ), 
+    aes(x = clim_vel_edge, y = SHIFT_obs, color = ECO, size = DUR))+
+    ggtitle("Leading edge")+
+    geom_point(alpha = .3)+
+    xlab("Climate velocity edge (km/yr)")+
+    ylab("Observed shift (km/yr)")+
+    theme_classic() +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
+    geom_hline(yintercept = 0, linetype = "dashed")+
+    geom_vline(xintercept = 0, linetype = "dashed")+
+    # tune::coord_obs_pred()+
+    facet_wrap(.~ECO,scales = "free")
 
 # TE
-M_TE <- ggplot(
+M_TE_bio <- ggplot(
     biov1_pred %>%
         filter(Param == "TE"), 
-    aes(x = SHIFT_sdm_21, y = SHIFT_obs, color = ECO, size = DUR))+
+    aes(x = bioclimatic_vel, y = SHIFT_obs, color = ECO, size = DUR))+
     ggtitle("Trailing edge")+
     geom_point(alpha = .3)+
     xlab("Bioclimatic velocity (km/yr)")+
@@ -632,80 +857,115 @@ M_TE <- ggplot(
     geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
     geom_hline(yintercept = 0, linetype = "dashed")+
     geom_vline(xintercept = 0, linetype = "dashed")+
-    tune::coord_obs_pred()+
-    facet_wrap(.~ECO)
+    # tune::coord_obs_pred()+
+    facet_wrap(.~ECO,scales = "free")
 
+M_TE_vel <- ggplot(
+    biov1_pred %>%
+        filter(Param == "TE" ), 
+    aes(x = clim_vel, y = SHIFT_obs, color = ECO, size = DUR))+
+    ggtitle("Trailing edge")+
+    geom_point(alpha = .3)+
+    xlab("Climate velocity (km/yr)")+
+    ylab("Observed shift (km/yr)")+
+    theme_classic() +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
+    geom_hline(yintercept = 0, linetype = "dashed")+
+    geom_vline(xintercept = 0, linetype = "dashed")+
+    # tune::coord_obs_pred()+
+    facet_wrap(.~ECO,scales = "free")
 
-M_O
-M_LE
-M_TE
+M_TE_vel_ed <- ggplot(
+    biov1_pred %>%
+        filter(Param == "TE" ), 
+    aes(x = clim_vel_edge, y = SHIFT_obs, color = ECO, size = DUR))+
+    ggtitle("Trailing edge")+
+    geom_point(alpha = .3)+
+    xlab("Climate velocity edge (km/yr)")+
+    ylab("Observed shift (km/yr)")+
+    theme_classic() +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
+    geom_hline(yintercept = 0, linetype = "dashed")+
+    geom_vline(xintercept = 0, linetype = "dashed")+
+    # tune::coord_obs_pred()+
+    facet_wrap(.~ECO,scales = "free")
 
-# Marines ----
-
+M_O_bio
+M_O_vel
+M_O_vel_ed
+M_LE_bio
+M_LE_vel
+M_LE_vel_ed
+M_TE_bio
+M_TE_vel
+M_TE_vel_ed
 
 ## N species shifting same direction of bioclimatic velocity
-tmp <- biov1_pred %>%
-    filter(ECO == "Marine")
 
-table(sign(tmp$SHIFT_obs) == sign(tmp$SHIFT_sdm_21), tmp$Param)
+table(sign(biov1_pred$SHIFT_obs) == sign(biov1_pred$bioclimatic_vel), biov1_pred$ECO)
+table(sign(biov1_pred$SHIFT_obs) == sign(biov1_pred$clim_vel), biov1_pred$ECO)
+table(sign(biov1_pred$SHIFT_obs) == sign(biov1_pred$clim_vel_edge), biov1_pred$ECO)
+
+
 
 # Optimum
 M_O <- ggplot(
     biov1_pred %>%
-        filter(ECO == "Marine" & Param == "O"), 
-    aes(x = SHIFT_sdm_21, y = SHIFT_obs, color = Group, size = DUR))+
+        filter(ECO == "Terrestrial" & Param == "O"), 
+    aes(x = bioclimatic_vel, y = SHIFT_obs, color = Group, size = DUR))+
     ggtitle("Centroid")+
     geom_point(alpha = .3)+
     xlab("Bioclimatic velocity (km/yr)")+
     ylab("Observed shift (km/yr)")+
-    theme_classic() +
+    theme_classic()+
+    # tune::coord_obs_pred() +
     geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
     geom_hline(yintercept = 0, linetype = "dashed")+
-    geom_vline(xintercept = 0, linetype = "dashed")+
-    tune::coord_obs_pred()
+    geom_vline(xintercept = 0, linetype = "dashed")
 
 # LE
 M_LE <- ggplot(
     biov1_pred %>%
-        filter(ECO == "Marine" & Param == "LE"), 
-    aes(x = SHIFT_sdm_21, y = SHIFT_obs, color = Group, size = DUR))+
+        filter(ECO == "Terrestrial" & Param == "LE"), 
+    aes(x = bioclimatic_vel, y = SHIFT_obs, color = Group, size = DUR))+
     ggtitle("Leading edge")+
     geom_point(alpha = .3)+
     xlab("Bioclimatic velocity (km/yr)")+
     ylab("Observed shift (km/yr)")+
-    theme_classic() +
+    theme_classic()+
+    # tune::coord_obs_pred() +
     geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
     geom_hline(yintercept = 0, linetype = "dashed")+
-    geom_vline(xintercept = 0, linetype = "dashed")+
-    tune::coord_obs_pred()
+    geom_vline(xintercept = 0, linetype = "dashed")
 
 # TE
 M_TE <- ggplot(
     biov1_pred %>%
-        filter(ECO == "Marine" & Param == "TE"), 
-    aes(x = SHIFT_sdm_21, y = SHIFT_obs, color = Group, size = DUR))+
+        filter(ECO == "Terrestrial" & Param == "TE"), 
+    aes(x = bioclimatic_vel, y = SHIFT_obs, color = Group, size = DUR))+
     ggtitle("Trailing edge")+
     geom_point(alpha = .3)+
     xlab("Bioclimatic velocity (km/yr)")+
     ylab("Observed shift (km/yr)")+
-    theme_classic() +
+    theme_classic()+
+    # tune::coord_obs_pred() +
     geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
     geom_hline(yintercept = 0, linetype = "dashed")+
-    geom_vline(xintercept = 0, linetype = "dashed")+
-    tune::coord_obs_pred()
+    geom_vline(xintercept = 0, linetype = "dashed")
 
 
 M_O
 M_LE
+M_LE + lims(x=c(-5,2.5),y=c(-10,25))
 M_TE
 
-gridExtra::grid.arrange(grobs = list(M_O,
-                                     M_LE,
-                                     M_TE),ncol = 3)
+# gridExtra::grid.arrange(grobs = list(M_O,
+#                                      M_LE + lims(x=c(-2.5,2.5),y=c(-1,22)),
+#                                      M_TE),ncol = 3)
 
 # just class with > 20 shifts
 tmp <- data.frame(table(biov1_pred$Group,biov1_pred$ECO, biov1_pred$Param))
-tmp <- tmp[tmp$Freq>20 & tmp$Var2=="Marine",]
+tmp <- tmp[tmp$Freq>20 & tmp$Var2=="Terrestrial",]
 tmp <- tmp[order(tmp$Var1),]
 
 plots <- list()
@@ -713,17 +973,17 @@ for(i in 1:length(tmp$Var1)){
     
     plots[[i]] <- ggplot(
         biov1_pred %>%
-            filter(ECO == "Marine" & Param == tmp$Var3[i] & Group == tmp$Var1[i]), 
-        aes(x = SHIFT_sdm_21, y = SHIFT_obs, color = Class))+
+            filter(ECO == "Terrestrial" & Param == tmp$Var3[i] & Group == tmp$Var1[i]), 
+        aes(x = bioclimatic_vel, y = SHIFT_obs, color = Class))+
         ggtitle(paste(tmp$Var1[i],tmp$Var3[i]))+
         geom_point(alpha = .5)+
         xlab("Bioclimatic velocity (km/yr)")+
         ylab("Observed shift (km/yr)")+
         theme_classic() +
+        # tune::coord_obs_pred()+
         geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
         geom_hline(yintercept = 0, linetype = "dashed")+
-        geom_vline(xintercept = 0, linetype = "dashed")+
-        tune::coord_obs_pred()
+        geom_vline(xintercept = 0, linetype = "dashed")
 }
 names(plots) <- paste(tmp$Var1,tmp$Var3)
 
@@ -736,59 +996,59 @@ gridExtra::grid.arrange(grobs = plots,ncol = 2)
 tmp <- biov1_pred %>%
     filter(ECO == "Terrestrial")
 
-table(sign(tmp$SHIFT_obs) == sign(tmp$SHIFT_sdm_21), tmp$Param)
+table(sign(tmp$SHIFT_obs) == sign(tmp$bioclimatic_vel), tmp$Param)
 
 # Optimum
 T_O <- ggplot(
     biov1_pred %>%
         filter(ECO == "Terrestrial" & Param == "O"), 
-    aes(x = SHIFT_sdm_21, y = SHIFT_obs, color = Group))+
+    aes(x = bioclimatic_vel, y = SHIFT_obs, color = Group))+
     ggtitle("Centroid")+
     geom_point(alpha = .3)+
     xlab("Bioclimatic velocity (km/yr)")+
     ylab("Observed shift (km/yr)")+
+    # tune::coord_obs_pred()+
     theme_classic() +
     geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
     geom_hline(yintercept = 0, linetype = "dashed")+
-    geom_vline(xintercept = 0, linetype = "dashed")+
-    tune::coord_obs_pred()
+    geom_vline(xintercept = 0, linetype = "dashed")
 
 # LE
 T_LE <- ggplot(
     biov1_pred %>%
         filter(ECO == "Terrestrial" & Param == "LE"), 
-    aes(x = SHIFT_sdm_21, y = SHIFT_obs, color = Group))+
+    aes(x = bioclimatic_vel, y = SHIFT_obs, color = Group))+
     ggtitle("Leading edge")+
     geom_point(alpha = .3)+
     xlab("Bioclimatic velocity (km/yr)")+
     ylab("Observed shift (km/yr)")+
+    # tune::coord_obs_pred()+
     theme_classic() +
     geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
     geom_hline(yintercept = 0, linetype = "dashed")+
-    geom_vline(xintercept = 0, linetype = "dashed")+
-    tune::coord_obs_pred()
+    geom_vline(xintercept = 0, linetype = "dashed")
 
 # TE
 T_TE <- ggplot(
     biov1_pred %>%
         filter(ECO == "Terrestrial" & Param == "TE"), 
-    aes(x = SHIFT_sdm_21, y = SHIFT_obs, color = Group))+
+    aes(x = bioclimatic_vel, y = SHIFT_obs, color = Group))+
     ggtitle("Trailing edge")+
     geom_point(alpha = .3)+
     xlab("Bioclimatic velocity (km/yr)")+
     ylab("Observed shift (km/yr)")+
+    # tune::coord_obs_pred()+
     theme_classic() +
     geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
     geom_hline(yintercept = 0, linetype = "dashed")+
-    geom_vline(xintercept = 0, linetype = "dashed")+
-    tune::coord_obs_pred()
+    geom_vline(xintercept = 0, linetype = "dashed")
 
 
 T_O
 T_LE
 T_TE
 
-gridExtra::grid.arrange(grobs = list(T_O,T_LE,T_TE),ncol = 3)
+# gridExtra::grid.arrange(grobs = list(T_O,T_LE,T_TE),ncol = 3)
 
 # just class with > 10 shifts
 tmp <- data.frame(table(biov1_pred$Group,biov1_pred$ECO, biov1_pred$Param))
@@ -802,67 +1062,97 @@ for(i in 1:length(tmp$Var1)){
     plots[[i]] <- ggplot(
         biov1_pred %>%
             filter(ECO == "Terrestrial" & Param == tmp$Var3[i] & Group == tmp$Var1[i]), 
-        aes(x = SHIFT_sdm_21, y = SHIFT_obs, color = Class))+
+        aes(x = bioclimatic_vel, y = SHIFT_obs, color = Class))+
         ggtitle(paste(tmp$Var1[i],tmp$Var3[i]))+
         geom_point(alpha = .8)+
         xlab("Bioclimatic velocity (km/yr)")+
         ylab("Observed shift (km/yr)")+
         theme_classic() +
+        # tune::coord_obs_pred()+
         geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
         geom_hline(yintercept = 0, linetype = "dashed")+
-        geom_vline(xintercept = 0, linetype = "dashed")+
-        tune::coord_obs_pred()
+        geom_vline(xintercept = 0, linetype = "dashed")
 }
 names(plots) <- paste(tmp$Var1,tmp$Var3)
 
-gridExtra::grid.arrange(grobs = plots,ncol = 4)
+gridExtra::grid.arrange(grobs = plots,ncol = 2)
 
 
 ###
 ### calculate lags ----
-biov1_pred$biolag1 <- biov1_pred$SHIFT_sdm_21 - biov1_pred$SHIFT_obs
+biov1_pred$bioclimatic_vel_lag <- biov1_pred$bioclimatic_vel - biov1_pred$SHIFT_obs
+biov1_pred$clim_vel_lag <- biov1_pred$clim_vel - biov1_pred$SHIFT_obs
+biov1_pred$clim_vel_edge_lag <- biov1_pred$clim_vel_edge - biov1_pred$SHIFT_obs
+
 
 # fix lag
 # same direction: change lag sign when vel is negative
-pos <- which(biov1_pred$SHIFT_sdm_21<0)
-biov1_pred$biolag1[pos] <- biov1_pred$biolag1[pos] * sign(biov1_pred$SHIFT_sdm_21[pos])
+pos <- which(biov1_pred$bioclimatic_vel<0)
+biov1_pred$bioclimatic_vel_lag[pos] <- biov1_pred$bioclimatic_vel_lag[pos] * -1
+
+pos <- which(biov1_pred$clim_vel<0)
+biov1_pred$clim_vel_lag[pos] <- biov1_pred$clim_vel_lag[pos] * -1
+
+pos <- which(biov1_pred$clim_vel_edge<0)
+biov1_pred$clim_vel_edge_lag[pos] <- biov1_pred$clim_vel_edge_lag[pos] * -1
 
 # opposite direction: lag = vel
-biov1_pred$biolag2 <- biov1_pred$biolag1
-pos <- which((biov1_pred$SHIFT_sdm_21>0 & biov1_pred$SHIFT_obs<0)|
-                 biov1_pred$SHIFT_sdm_21<0 & biov1_pred$SHIFT_obs>0)
-biov1_pred$biolag2[pos] <- biov1_pred$SHIFT_sdm_21[pos]
+biov1_pred$bioclimatic_vel_lag2 <- biov1_pred$bioclimatic_vel_lag
+pos <- which((biov1_pred$bioclimatic_vel>0 & biov1_pred$SHIFT_obs<0)|
+                 biov1_pred$bioclimatic_vel<0 & biov1_pred$SHIFT_obs>0)
+biov1_pred$bioclimatic_vel_lag2[pos] <- biov1_pred$bioclimatic_vel[pos]
+biov1_pred$clim_vel_lag2[pos] <- biov1_pred$bioclimatic_vel[pos]
+biov1_pred$clim_vel_edge_lag2[pos] <- biov1_pred$bioclimatic_vel[pos]
+
+
+ggpairs(biov1_pred %>%
+            filter(ECO == "Terrestrial"),
+        columns = c("bioclimatic_vel_lag","clim_vel_lag","clim_vel_edge_lag"),
+        ggplot2::aes(colour=Param))+
+    theme_classic()
+
+ggpairs(biov1_pred %>%
+            filter(ECO == "Marine"),
+        columns = c("bioclimatic_vel_lag","clim_vel_lag","clim_vel_edge_lag"),
+        ggplot2::aes(colour=Param))+
+    theme_classic()
 
 
 ## % species shifting faster vs slower than expected
-table(biov1_pred$biolag1 > 0, biov1_pred$ECO)
+table(biov1_pred$bioclimatic_vel_lag > 0, biov1_pred$ECO)
+table(biov1_pred$clim_vel_lag > 0, biov1_pred$ECO)
+table(biov1_pred$clim_vel_edge_lag > 0, biov1_pred$ECO)
 
 
-## Marines
+## Terrestrials
 # just class with > 10 shifts
 tmp <- data.frame(table(biov1_pred$Group,biov1_pred$ECO, biov1_pred$Param))
-tmp <- tmp[tmp$Freq>10 & tmp$Var2=="Marine",]
+tmp <- tmp[tmp$Freq>10 & tmp$Var2=="Terrestrial",]
+plot_data <- biov1_pred %>%
+    dplyr::filter(ECO == "Terrestrial" & Group %in% tmp$Var1) %>%
+    dplyr::select(Group,Param,bioclimatic_vel_lag,clim_vel_lag,clim_vel_edge_lag) %>%
+    gather("LagMetric", "Value", -c(Group,Param))
 
-limits <- biov1_pred %>%
-    dplyr::filter(ECO == "Marine" & (Group %in% tmp$Var1)) %>%
-    dplyr::summarise(quantile(biolag1,c(0.01, 0.99))) 
+# limits <- biov1_pred %>%
+#     dplyr::filter(ECO == "Terrestrial" & (Group %in% tmp$Var1)) %>%
+#     dplyr::reframe(lag=quantile(bioclimatic_vel_lag,c(0.01, 0.99))) 
 
-ggplot(biov1_pred %>%
-           dplyr::filter(ECO == "Marine" & Group %in% tmp$Var1), 
-       aes(x = biolag1, y = Group, color = Param))+
+ggplot(plot_data, 
+       aes(x = Value, y = Group, color = LagMetric))+
     # geom_violin(trim = TRUE, draw_quantiles = c(0.05,0.5,0.95)) +
-    geom_boxplot(outlier.alpha = 1)+
-    # geom_point(alpha=.1, aes(size = DUR))+
+    ggtitle("Terrestrial")+
+    geom_point(alpha=.1)+
+    geom_boxplot(outlier.alpha = 1, alpha=.5)+
     # scale_x_continuous(limits = limits[,1])+
-    xlab("Lag = Bioclimatic velocity - Range shift velocity")+
+    xlab("Lag = Velocity metric - Observed range shift")+
     ylab("")+
     geom_vline(xintercept = 0, linetype = "longdash")+
     facet_wrap(Param~., scales = "free")+
     theme_classic()
 
 ggplot(biov1_pred %>%
-           dplyr::filter(ECO == "Marine" & Group %in% tmp$Var1), 
-       aes(x = biolag1, fill = Group, color = Group))+
+           dplyr::filter(ECO == "Terrestrial" & Group %in% tmp$Var1), 
+       aes(x = bioclimatic_vel_lag, fill = Group, color = Group))+
     # geom_violin(trim = TRUE, draw_quantiles = c(0.05,0.5,0.95)) +
     geom_density(alpha = 0.3)+
     scale_x_continuous(limits = limits[,1])+
@@ -875,18 +1165,23 @@ ggplot(biov1_pred %>%
 ## Terrestrials
 tmp <- data.frame(table(biov1_pred$Group,biov1_pred$ECO, biov1_pred$Param))
 tmp <- tmp[tmp$Freq>10 & tmp$Var2=="Terrestrial",]
+plot_data <- biov1_pred %>%
+    dplyr::filter(ECO == "Terrestrial" & Group %in% tmp$Var1) %>%
+    dplyr::select(Group,Param,bioclimatic_vel_lag,clim_vel_lag,clim_vel_edge_lag) %>%
+    gather("LagMetric", "Value", -c(Group,Param))
 
-limits <- biov1_pred %>%
-    dplyr::filter(ECO == "Marine" & Group %in% tmp$Var1) %>%
-    summarise(quantile(biolag1,c(0.01, 0.99))) 
+# limits <- biov1_pred %>%
+#     dplyr::filter(ECO == "Terrestrial" & (Group %in% tmp$Var1)) %>%
+#     dplyr::reframe(lag=quantile(bioclimatic_vel_lag,c(0.01, 0.99))) 
 
-ggplot(biov1_pred %>%
-           dplyr::filter(ECO == "Terrestrial" & Group %in% tmp$Var1), 
-       aes(x = biolag1, y = Group, color = Param))+
+ggplot(plot_data, 
+       aes(x = Value, y = Group, color = LagMetric))+
     # geom_violin(trim = TRUE, draw_quantiles = c(0.05,0.5,0.95)) +
-    geom_boxplot(outlier.alpha = 1)+
+    ggtitle("Terrestrial")+
+    geom_point(alpha=.1)+
+    geom_boxplot(outlier.alpha = 1, alpha=.5)+
     # scale_x_continuous(limits = limits[,1])+
-    xlab("Lag = Bioclimatic velocity - Range shift velocity")+
+    xlab("Lag = Velocity metric - Observed range shift")+
     ylab("")+
     geom_vline(xintercept = 0, linetype = "longdash")+
     facet_wrap(Param~., scales = "free")+
@@ -894,7 +1189,7 @@ ggplot(biov1_pred %>%
 
 ggplot(biov1_pred %>%
            dplyr::filter(ECO == "Terrestrial" & Group %in% tmp$Var1), 
-       aes(x = biolag1, fill = Group, color = Group))+
+       aes(x = bioclimatic_vel_lag, fill = Group, color = Group))+
     # geom_violin(trim = TRUE, draw_quantiles = c(0.05,0.5,0.95)) +
     geom_density(alpha = 0.3)+
     scale_x_continuous(limits = limits[,1])+
@@ -905,12 +1200,117 @@ ggplot(biov1_pred %>%
     theme_classic()
 
 ###
+# Summarise velocities in study areas ----
+
+plot_data <- biov1_pred %>%
+    group_by(ID,ECO) %>%
+    dplyr::summarise(bioclimatic_vel = mean(bioclimatic_vel,na.rm=TRUE),
+                     clim_vel = mean(clim_vel,na.rm=TRUE),
+                     clim_vel_edge = mean(clim_vel_edge,na.rm=TRUE)) %>%
+    gather("Study", "Value", -c(ID,ECO))
+
+ggplot(plot_data, 
+       aes(x = Value, y = Study, color = LagMetric))+
+    # geom_violin(trim = TRUE, draw_quantiles = c(0.05,0.5,0.95)) +
+    ggtitle("Terrestrial")+
+    geom_point(alpha=.1)+
+    geom_boxplot(outlier.alpha = 1, alpha=.5)+
+    # scale_x_continuous(limits = limits[,1])+
+    xlab("Lag = Velocity metric - Observed range shift")+
+    ylab("")+
+    geom_vline(xintercept = 0, linetype = "longdash")+
+    facet_wrap(Param~., scales = "free")+
+    theme_classic()
+
+
+
+
+###
+## Model predict range shift
+all_models <- expand.grid(ECOs = c("Terrestrial", "Marine"),
+                          Param = c("TE","LE","O"))
+
+models <- lapply(1:nrow(all_models), function(x){
+    tmp = lmer(SHIFT_obs~
+                   bioclimatic_vel + clim_vel_edge + clim_vel + (1|Article_ID),
+               data = biov1_pred %>%
+                   filter(ECO == all_models$ECOs[x],
+                          Param == all_models$Param[x]))
+    tmp_conf <- confint(tmp)
+    tmp <- summary(tmp)
+    tmp <- data.frame(tmp$coefficients)
+    tmp <- cbind(tmp, tmp_conf[rownames(tmp),])
+    data.frame(tmp, 
+               vars = rownames(tmp), 
+               ECO = all_models$ECOs[x], Param = all_models$Param[x])
+})
+models <- data.table::rbindlist(models)
+models$sig <- 0.5
+models$sig[which((models$X2.5.. > 0 & models$X97.5.. > 0) | (models$X2.5.. < 0 & models$X97.5.. < 0))] <- 1
+
+ggplot(models %>%
+           filter(!vars == "(Intercept)"),
+       aes(x = Estimate, y = vars, color = Param, alpha = sig))+
+    geom_point()+
+    geom_linerange(aes(xmin = X2.5.., xmax = X97.5..))+
+    theme_bw()+
+    geom_vline(xintercept = 0)+
+    facet_wrap(ECO~Param,scales = "free_x")
+
+
+models <- lapply(1:nrow(all_models), function(x){
+    tmp = lmer(SHIFT_obs~
+                   bioclimatic_vel + clim_vel_edge + clim_vel + (1|Article_ID),
+               data = biov1_pred %>%
+                   filter(ECO == all_models$ECOs[x],
+                          Param == all_models$Param[x]))
+    tmp_conf <- confint(tmp)
+    tmp <- summary(tmp)
+    tmp <- data.frame(tmp$coefficients)
+    tmp <- cbind(tmp, tmp_conf[rownames(tmp),])
+    data.frame(tmp, 
+               vars = rownames(tmp), 
+               ECO = all_models$ECOs[x], Param = all_models$Param[x])
+})
+models <- data.table::rbindlist(models)
+models$sig <- 0.5
+models$sig[which((models$X2.5.. > 0 & models$X97.5.. > 0) | (models$X2.5.. < 0 & models$X97.5.. < 0))] <- 1
+
+ggplot(models %>%
+           filter(!vars == "(Intercept)"),
+       aes(x = Estimate, y = vars, color = Param, alpha = sig))+
+    geom_point()+
+    geom_linerange(aes(xmin = X2.5.., xmax = X97.5..))+
+    theme_bw()+
+    geom_vline(xintercept = 0)+
+    facet_wrap(ECO~Param,scales = "free_x")
+
+
+
+
+###
 ### Lag vs duration ----
 
-### Marine
+### Terrestrial
+tmp <- data.frame(table(biov1_pred$Group,biov1_pred$ECO, biov1_pred$Param))
+tmp <- tmp[tmp$Freq>10 & tmp$Var2=="Terrestrial",]
+plot_data <- biov1_pred %>%
+    dplyr::filter(ECO == "Terrestrial" & Group %in% tmp$Var1) %>%
+    dplyr::select(Group,Param,bioclimatic_vel_lag,clim_vel_lag,clim_vel_edge_lag,DUR) %>%
+    gather("LagMetric", "Value", -c(Group,Param,DUR))
+
+ggplot(plot_data, aes(x=DUR,y=Value))+
+    geom_point(alpha=.3)+
+    geom_smooth(method = 'lm')+
+    ylab("Lag = Bioclimatic velocity - Range shift velocity")+
+    xlab("Duration (years)")+
+    theme_bw()+
+    facet_wrap(LagMetric~Param)
+
+
 ggplot(biov1_pred %>%
-           dplyr::filter(ECO == "Marine"),
-       aes(x = DUR, y = biolag1))+
+           dplyr::filter(ECO == "Terrestrial"),
+       aes(x = DUR, y = bioclimatic_vel_lag))+
     geom_point(alpha=.3)+
     geom_smooth(method = 'lm')+
     ylab("Lag = Bioclimatic velocity - Range shift velocity")+
@@ -919,8 +1319,8 @@ ggplot(biov1_pred %>%
     facet_wrap(.~Param)
 
 ggplot(biov1_pred %>%
-           dplyr::filter(ECO == "Marine"),
-       aes(x = START, y = biolag1))+
+           dplyr::filter(ECO == "Terrestrial"),
+       aes(x = START, y = bioclimatic_vel_lag))+
     geom_point(alpha=.3)+
     geom_smooth(method = 'lm')+
     ylab("Lag = Bioclimatic velocity - Range shift velocity")+
@@ -931,8 +1331,8 @@ ggplot(biov1_pred %>%
 ### Terrestrial
 
 ggplot(biov1_pred %>%
-           dplyr::filter(ECO == "Terrestrial" & biolag1>-100),
-       aes(x = DUR, y = biolag1, size=abs(SHIFT_obs)))+
+           dplyr::filter(ECO == "Terrestrial" & bioclimatic_vel_lag>-100),
+       aes(x = DUR, y = bioclimatic_vel_lag, size=abs(SHIFT_obs)))+
     geom_point(alpha=.3)+
     geom_smooth(method = 'lm')+
     ylab("Lag = Bioclimatic velocity - Range shift velocity")+
@@ -941,8 +1341,8 @@ ggplot(biov1_pred %>%
     facet_wrap(.~Param)
 
 ggplot(biov1_pred %>%
-           dplyr::filter(ECO == "Terrestrial" & biolag1>-100),
-       aes(x = START, y = biolag1, size=abs(SHIFT_obs)))+
+           dplyr::filter(ECO == "Terrestrial" & bioclimatic_vel_lag>-100),
+       aes(x = START, y = bioclimatic_vel_lag, size=abs(SHIFT_obs)))+
     geom_point(alpha=.3)+
     geom_smooth(method = 'lm')+
     ylab("Lag = Bioclimatic velocity - Range shift velocity")+
@@ -954,11 +1354,11 @@ ggplot(biov1_pred %>%
 
 ### Lag vs TSS ----
 
-### Marine
+### Terrestrial
 
 ggplot(biov1_pred %>%
-           dplyr::filter(ECO == "Marine"),
-       aes(x = TSS_vali, y = abs(biolag1),size=abs(SHIFT_sdm_21)))+
+           dplyr::filter(ECO == "Terrestrial"),
+       aes(x = TSS_vali, y = abs(bioclimatic_vel_lag),size=abs(bioclimatic_vel)))+
     geom_point(alpha=.3)+
     geom_smooth(method = 'lm')+
     ylab("Lag = Bioclimatic velocity - Range shift velocity")+
@@ -967,8 +1367,8 @@ ggplot(biov1_pred %>%
     facet_wrap(.~Param)
 
 ggplot(biov1_pred %>%
-           dplyr::filter(ECO == "Marine"),
-       aes(x = TSS_cali, y = abs(biolag1),size=abs(SHIFT_sdm_21)))+
+           dplyr::filter(ECO == "Terrestrial"),
+       aes(x = TSS_cali, y = abs(bioclimatic_vel_lag),size=abs(bioclimatic_vel)))+
     geom_point(alpha=.3)+
     geom_smooth(method = 'lm')+
     ylab("Lag = Bioclimatic velocity - Range shift velocity")+
@@ -979,8 +1379,8 @@ ggplot(biov1_pred %>%
 ### Terrestrial
 
 ggplot(biov1_pred %>%
-           dplyr::filter(ECO == "Terrestrial" & biolag1>-100),
-       aes(x = TSS_vali, y = abs(biolag1),size=abs(SHIFT_sdm_21)))+
+           dplyr::filter(ECO == "Terrestrial"),
+       aes(x = TSS_vali, y = abs(bioclimatic_vel_lag),size=abs(bioclimatic_vel)))+
     geom_point(alpha=.3)+
     geom_smooth(method = 'lm')+
     ylab("Lag = Bioclimatic velocity - Range shift velocity")+
@@ -989,8 +1389,8 @@ ggplot(biov1_pred %>%
     facet_wrap(.~Param, scales = "free")
 
 ggplot(biov1_pred %>%
-           dplyr::filter(ECO == "Terrestrial" & biolag1>-100),
-       aes(x = TSS_cali, y = abs(biolag1),size=abs(SHIFT_sdm_21)))+
+           dplyr::filter(ECO == "Terrestrial"),
+       aes(x = TSS_cali, y = abs(bioclimatic_vel_lag),size=abs(bioclimatic_vel)))+
     geom_point(alpha=.3)+
     geom_smooth(method = 'lm')+
     ylab("Lag = Bioclimatic velocity - Range shift velocity")+
@@ -1004,7 +1404,7 @@ ggplot(biov1_pred %>%
 
 ## Does bioclimatic velocity explains shifts better then temperature velocity?
 
-### Marines
+### Terrestrials
 # all groups with > > 10 shifts
 tmp <- data.frame(table(biov1_pred$Group,biov1_pred$ECO, biov1_pred$Param))
 tmp <- tmp[tmp$Freq>10,]
@@ -1014,16 +1414,26 @@ mods <- data.frame()
 for(i in 1:nrow(tmp)){
     
     mod_vel_i <- lm(
-        SHIFT_obs~v.lat.mean,
+        SHIFT_obs~velocity,
         data = biov1_pred %>%
             filter(ECO == tmp$Var2[i] & 
                        Param == tmp$Var3[i] & 
                        Group == tmp$Var1[i]))
     
+    # mod_vel_i <- lm(
+    #     SHIFT_obs~vel_var,
+    #     data = biov1_pred %>%
+    #         filter(ECO == tmp$Var2[i] & 
+    #                    Param == tmp$Var3[i] & 
+    #                    Group == tmp$Var1[i]) %>%
+    #         mutate(vel_var = ifelse(tmp$Var2[i]=="Terrestrial", 
+    #                                 v.lat.median.sst,
+    #                                 v.lat.median.mat)))
+    
     mod_vel_i_sum <- summary(mod_vel_i)
     
     mod_bio_i <- lm(
-        SHIFT_obs~SHIFT_sdm_21,
+        SHIFT_obs~bioclimatic_vel,
         data = biov1_pred %>%
             filter(ECO == tmp$Var2[i] & 
                        Param == tmp$Var3[i] & 
@@ -1055,50 +1465,50 @@ ggplot(mods, aes(x = coeff_vel, y = coeff_bio))+
     facet_wrap(.~Var2, scales = "free")+
     theme_classic()
 
-## Marine
+## Terrestrial
 p1 <- ggplot(
     biov1_pred %>%
-        filter(ECO == "Marine"), 
-    aes(x = v.lat.mean, y = SHIFT_sdm_1, color = Param))+
+        filter(ECO == "Terrestrial"), 
+    aes(x = v.lat.mean, y = SHIFT_sdm_21, color = Param))+
     ggtitle("TE = 1%, LE = 99%")+
     geom_point(alpha = .3)+
     xlab("Temperature velocity (km/yr)")+
     ylab("Bioclimatic velocity (km/yr)")+
-    theme_classic() +
+    theme_classic()+
+    # tune::coord_obs_pred() +
     geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
     geom_hline(yintercept = 0, linetype = "dashed")+
-    geom_vline(xintercept = 0, linetype = "dashed")+
-    tune::coord_obs_pred()
+    geom_vline(xintercept = 0, linetype = "dashed")
 
 p2 <- ggplot(
     biov1_pred %>%
-        filter(ECO == "Marine"), 
-    aes(x = v.lat.mean, y = SHIFT_sdm_21, color = Param))+
+        filter(ECO == "Terrestrial"), 
+    aes(x = v.lat.mean, y = bioclimatic_vel, color = Param))+
     ggtitle("TE = 5%, LE = 95%")+
     geom_point(alpha = .3)+
     xlab("Temperature velocity (km/yr)")+
     ylab("Bioclimatic velocity (km/yr)")+
-    theme_classic() +
+    theme_classic()+
+    # tune::coord_obs_pred() +
     geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
     geom_hline(yintercept = 0, linetype = "dashed")+
-    geom_vline(xintercept = 0, linetype = "dashed")+
-    tune::coord_obs_pred()
+    geom_vline(xintercept = 0, linetype = "dashed")
 
 p3 <- ggplot(
     biov1_pred %>%
-        filter(ECO == "Marine"), 
-    aes(x = v.lat.mean, y = SHIFT_sdm_3, color = Param))+
+        filter(ECO == "Terrestrial"), 
+    aes(x = v.lat.mean, y = SHIFT_sdm_23, color = Param))+
     ggtitle("TE = 10%, LE = 90%")+
     geom_point(alpha = .3)+
     xlab("Temperature velocity (km/yr)")+
     ylab("Bioclimatic velocity (km/yr)")+
-    theme_classic() +
+    theme_classic()+
+    # tune::coord_obs_pred() +
     geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
     geom_hline(yintercept = 0, linetype = "dashed")+
-    geom_vline(xintercept = 0, linetype = "dashed")+
-    tune::coord_obs_pred()
+    geom_vline(xintercept = 0, linetype = "dashed")
 
-gridExtra::grid.arrange(p1,p2,p3,ncol=3,top="Marine")
+gridExtra::grid.arrange(p1,p2,p3,ncol=3,top="Terrestrial")
 
 
 
@@ -1106,44 +1516,44 @@ gridExtra::grid.arrange(p1,p2,p3,ncol=3,top="Marine")
 p1 <- ggplot(
     biov1_pred %>%
         filter(ECO == "Terrestrial"), 
-    aes(x = v.lat.mean, y = SHIFT_sdm_1, color = Param))+
+    aes(x = v.lat.mean, y = SHIFT_sdm_21, color = Param))+
     ggtitle("TE = 1%, LE = 99%")+
     geom_point(alpha = .3)+
     xlab("Temperature velocity (km/yr)")+
     ylab("Bioclimatic velocity (km/yr)")+
-    theme_classic() +
+    theme_classic()+
+    # tune::coord_obs_pred() +
     geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
     geom_hline(yintercept = 0, linetype = "dashed")+
-    geom_vline(xintercept = 0, linetype = "dashed")+
-    tune::coord_obs_pred()
+    geom_vline(xintercept = 0, linetype = "dashed")
 
 p2 <- ggplot(
     biov1_pred %>%
         filter(ECO == "Terrestrial"), 
-    aes(x = v.lat.mean, y = SHIFT_sdm_21, color = Param))+
+    aes(x = v.lat.mean, y = bioclimatic_vel, color = Param))+
     ggtitle("TE = 5%, LE = 95%")+
     geom_point(alpha = .3)+
     xlab("Temperature velocity (km/yr)")+
     ylab("Bioclimatic velocity (km/yr)")+
-    theme_classic() +
+    theme_classic()+
+    # tune::coord_obs_pred() +
     geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
     geom_hline(yintercept = 0, linetype = "dashed")+
-    geom_vline(xintercept = 0, linetype = "dashed")+
-    tune::coord_obs_pred()
+    geom_vline(xintercept = 0, linetype = "dashed")
 
 p3 <- ggplot(
     biov1_pred %>%
         filter(ECO == "Terrestrial"), 
-    aes(x = v.lat.mean, y = SHIFT_sdm_3, color = Param))+
+    aes(x = v.lat.mean, y = SHIFT_sdm_23, color = Param))+
     ggtitle("TE = 10%, LE = 90%")+
     geom_point(alpha = .3)+
     xlab("Temperature velocity (km/yr)")+
     ylab("Bioclimatic velocity (km/yr)")+
-    theme_classic() +
+    theme_classic()+
+    # tune::coord_obs_pred() +
     geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
     geom_hline(yintercept = 0, linetype = "dashed")+
-    geom_vline(xintercept = 0, linetype = "dashed")+
-    tune::coord_obs_pred()
+    geom_vline(xintercept = 0, linetype = "dashed")
 
 gridExtra::grid.arrange(p1,p2,p3,ncol=3,top="Terrestrials")
 
@@ -1151,7 +1561,7 @@ gridExtra::grid.arrange(p1,p2,p3,ncol=3,top="Terrestrials")
 ggplot(
     biov1_pred %>%
         filter(ECO == "Terrestrial", Param == "O"), 
-    aes(x = velocity, y = SHIFT_sdm_21))+
+    aes(x = velocity, y = bioclimatic_vel))+
     geom_point(alpha = .3)+
     xlab("Temperature velocity (km/yr)")+
     ylab("Bioclimatic velocity (km/yr)")+
@@ -1166,7 +1576,7 @@ ggplot(
 # expectations
 # climate velocity have been used. how it is calculated. can be applied by across species but does not account for species specific sensitivities >>> SDMs
 
-# 1) better predictions for marine than terrestrials because landscape is more connected - dispersal constrains in land. marine more in eq with the environment
+# 1) better predictions for Terrestrial than terrestrials because landscape is more connected - dispersal constrains in land. Terrestrial more in eq with the environment
 # 2) but we would expect lags associated with dispersal and persistance (demography, life history)
 
 # sdms methods
@@ -1176,14 +1586,3 @@ ggplot(
 # plot all param >>> only LE, TE O
 
 # expectations by group >> fishes should track better than crustacea
-
-## Plot lag by group
-
-## next steps
-# account for methodological factors
-# connectivity
-# microclimatic variability
-# traits
-
-# funny pic
-# announcement about interaction with the group Wednesday after to movie

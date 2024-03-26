@@ -72,74 +72,80 @@ for(j in 1:length(realms)){
     ########################
     # sp list I have sdms
     all_sps <- list.dirs(here::here(sdm_dir(realm)), recursive = FALSE, full.names = FALSE)
-    all_sps <- gsub("_"," ",all_sps)
     length(all_sps)
     
-    # get info from v1
-    biov1 <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v1), header = T)
-    # only LAT
-    biov1$Type[which(biov1$Type=="HOR")] <- "LAT"
-    biov1 <- biov1[which(biov1$Type=="LAT"),]
-    biov1 <- biov1[which(biov1$sp_name_std_v1 %in%  gsub(" ","_",all_sps)),]
+    test <- sapply(all_sps, function(x){
+        file.exists(here::here(sdm_dir(realm),x,paste(x,"shift_info.csv")))
+    })
+    all_sps <- all_sps[test]
+    length(all_sps)
     
-    # sp list - Species with full sdms
-    I_have_sdms <- c()
+    # Species with sdms projections for all years
+    I_have_sdms <- data.frame()
     for(i in 1:length(all_sps)) { cat(i, "from", length(all_sps),"\r")
-        sp_i <- gsub(" ","_",all_sps[i])
+        
+        sp_i <- all_sps[i]
         sp_i_realm <- realm
         # get studies for species i
-        ID_i <- unique(biov1$ID[which(biov1$sp_name_std_v1 == sp_i)])
+        shift_info <- read.csv(here::here(sdm_dir(realm),sp_i,paste(sp_i,"shift_info.csv")))
+        ID_i <- shift_info$ID
         # for each ID_i, look if has projections for all years
-        I_have_sdms[i] <- all(sapply(ID_i, function(x){
-            bio_i <- biov1[which(biov1$ID == x),]
-            bio_i <- biov1[which(biov1$sp_name_std_v1 == sp_i),]
-            years_ID_i <- round(bio_i$START[1],0):round(bio_i$END[1],0)
+        tmp <- data.frame(sps=sp_i,
+                          realm=sp_i_realm,
+                          ID=ID_i)
+        
+        tmp$I_have_sdms <- sapply(ID_i, function(x){
+            years_ID_i <- round(shift_info$START[1],0):round(shift_info$END[1],0)
             # check
             # Focus on SA for now
             sdms_sp_i <- list.files(paste(sdm_dir(sp_i_realm),sp_i,gsub("_",".",sp_i),sep = "/"),pattern = "SA")
             # get ensemble models
             sdms_sp_i_ens <- sdms_sp_i[grep(" ens",sdms_sp_i)]
-            # get single algorithms
-            # sdms_sp_i <- sdms_sp_i[-grep(" ens",sdms_sp_i)]
             # check if all years exist
             sdms_sp_i_ens <- all(sapply(years_ID_i, function(x){any(grepl(x,sdms_sp_i_ens))}))
-            # sdms_sp_i <- all(sapply(years_ID_i, function(x){any(grepl(x,sdms_sp_i))}))
-            # all(sdms_sp_i,sdms_sp_i_ens)
             sdms_sp_i_ens
-        }))
+        })
+        I_have_sdms <- rbind(I_have_sdms,tmp)
     }
-    I_have_sdms <- all_sps[which(I_have_sdms)]
-    length(I_have_sdms)
+    nrow(I_have_sdms)
+    I_have_sdms <- I_have_sdms[which(I_have_sdms$I_have_sdms),]
+    nrow(I_have_sdms)
+    
+    # sps I have shifts calculated
+    I_have_shift <- list.files(shift_dir(realm))
+    I_have_shift <- lapply(I_have_shift, function(x){
+        tmp <- strsplit(x,"_")[[1]]
+        data.frame(sps=paste(tmp[1],tmp[2],sep="_"),realm=tmp[7],ID=paste(tmp[3],tmp[4],sep="_"))
+    })
+    I_have_shift <- do.call(rbind,I_have_shift)
+    
+    nrow(I_have_shift)
     
     # select from the list of species I have sdms the ones which we still did not have shift calculated
-    I_have_shift <- list.files(shift_dir(realm))
-    I_have_shift <- I_have_shift[grep(" ens SA",I_have_shift)]
-    I_have_shift <- gsub(" shift ens SA.csv","",I_have_shift)
-    length(I_have_shift)
-    
     # missing
-    missing <- I_have_sdms[!I_have_sdms %in% gsub("_"," ",I_have_shift)]
-    length(missing)
-    
-    # species to go
-    all_sps <- missing
+    missing <- I_have_sdms[which(!paste(I_have_sdms$sps,I_have_sdms$ID) %in% paste(I_have_shift$sps,I_have_shift$ID)),]
+    nrow(missing)
     
     ########################
     # submit jobs
     
     N_jobs_at_a_time = 20
     
-    cat("Running for", length(all_sps), realm, "species\n")
+    cat("Running for", length(missing), realm, "species\n")
     
-    for(i in 1:length(all_sps)){
+    for(i in 1:nrow(missing)){ 
         
-        sptogo <- all_sps[i]
-        sptogo <- gsub(" ","_",sptogo)
+        sptogo <- missing$sps[i]
+        realmtogo <- missing$realm[i]
+        IDtogo <- missing$ID[i]
         
-        args = paste(sptogo, realm)
+        args <- paste(sptogo,realmtogo,IDtogo)
+        
+        shifttogo = gsub(" ","_",args)
         
         # Start writing to this file
-        sink(here::here(jobdir,paste0(sptogo,'.sh')))
+        sh_file <- here::here(jobdir,paste0(shifttogo,'.sh'))
+        sink(sh_file)
         
         # the basic job submission script is a bash script
         cat("#!/bin/bash\n")
@@ -147,7 +153,7 @@ for(j in 1:length(realms)){
         cat("#SBATCH -N 1\n")
         cat("#SBATCH -n 1\n")
         
-        if(realm=="Ter"){
+        if(realmtogo=="Ter"){
             cat("#SBATCH --time=20:00:00\n")
             cat("#SBATCH --partition=bigmem\n")
             cat("#SBATCH -c 5\n")
@@ -160,9 +166,9 @@ for(j in 1:length(realms)){
             cat("#SBATCH -c 1\n")
         }
         
-        cat("#SBATCH --job-name=",sptogo,"\n", sep="")
-        cat("#SBATCH --output=",here::here(logdir,paste0(sptogo,".out")),"\n", sep="")
-        cat("#SBATCH --error=",here::here(logdir,paste0(sptogo,".err")),"\n", sep="")
+        cat("#SBATCH --job-name=",shifttogo,"\n", sep="")
+        cat("#SBATCH --output=",here::here(logdir,paste0(shifttogo,".out")),"\n", sep="")
+        cat("#SBATCH --error=",here::here(logdir,paste0(shifttogo,".err")),"\n", sep="")
         
         if(computer == "muse"){
             cat("IMG_DIR='/storage/simple/projects/t_cesab/brunno'\n")
@@ -185,7 +191,7 @@ for(j in 1:length(realms)){
         sink()
         
         # Submit to run on cluster
-        system(paste("sbatch", here::here(jobdir, paste0(sptogo,'.sh'))))
+        system(paste("sbatch", sh_file))
         
         # check how many jobs in progress
         tmp <- system("squeue -u $USER",intern = T)
