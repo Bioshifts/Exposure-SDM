@@ -3,8 +3,6 @@ require("here")
 # -----------------------------
 ## Settings
 
-computer = "matrics"
-
 # set resolution terrestrial environmental data
 # must be 1km or 5km
 my_res <- "1km"
@@ -18,9 +16,9 @@ ter_data <- "cruts"
 mar_data <- "oras"
 
 # Bioshifts database
-Bioshifts_DB <- "bioshifts_v3_raw.csv"
 Bioshifts_DB_v1 <- "biov1_fixednames.csv"
 Bioshifts_DB_v2 <- "biov2_fixednames.csv"
+Bioshifts_DB_v3 <- "BIOSHIFTS_v3_24032024_methodo_rate.csv"
 
 # basis of records for downloading GBIF data
 basisOfRecord = c("HUMAN_OBSERVATION", "OBSERVATION", "OCCURRENCE")

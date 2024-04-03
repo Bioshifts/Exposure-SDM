@@ -16,7 +16,7 @@ output:
 rm(list=ls())
 gc()
 
-list.of.packages <- c("dplyr", "here", "tidyr","data.table", "ggplot2")
+list.of.packages <- c("dplyr", "here", "tidyr","data.table", "ggplot2", "pbapply")
 
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
 
@@ -34,8 +34,13 @@ This is the list of species from Bioshifts v1 considering only:
 3 - species with > 30 GBIF occurrence records. For the GBIF records we used only the basis of record "HUMAN_OBSERVATION",  "OBSERVATION" or "OCCURRENCE", and occurrences recorded after 1901, occurrences flagged as has no issue.
 
 ```{r}
+computer = "personal"
+
+source(here("R/settings.R"))
+source(here("R/Clean_names.R"))
 
 N_OCC <- read.csv(here("Data/n_occ.csv"))
+splist <- read.csv(here("Data/Bioshifts/splist_v3_hamonized.csv"), header = T)
 
 ```
 
@@ -43,11 +48,9 @@ N_OCC <- read.csv(here("Data/n_occ.csv"))
 # *N species*
 ```{r}
 
-splist <- read.csv(here("Data/Bioshifts/splist.csv"), header = T)
 
 # remove duplicated sp_names
 splist <- splist %>%
-    filter(v1==1) %>%
     dplyr::select(scientificName,kingdom,phylum,class,order,family,db,db_code) %>%
     filter(!duplicated(scientificName))
 
@@ -55,28 +58,31 @@ splist <- splist %>%
 nrow(splist)
 
 # N species with occurrences in GBIF after removing the species mentioned above
-N_OCC <- N_OCC %>%
-    filter(n_occ > 30)
+gbifocc <- N_OCC %>%
+    dplyr::select(scientificName,kingdom,phylum,class,order,family,db,N_OCC,Eco,Group) %>%
+    filter(!duplicated(scientificName))
+N_OCC <- gbifocc %>%
+    filter(N_OCC > 30)
 nrow(N_OCC)
 
 all(N_OCC$scientificName %in% splist$scientificName)
 
-# By ECO and group
+# By Eco and group
 ## Terrestrials
 N_OCC %>%
-    filter(ECO == "T") %>%
+    filter(Eco == "Ter") %>%
     group_by(Group) %>%
     tally() %>%
     arrange(by = desc(n))
 
 ## Marine
 N_OCC %>%
-    filter(ECO == "M") %>%
+    filter(Eco == "Mar") %>%
     group_by(Group) %>%
     tally() %>%
     arrange(by = desc(n))
 
-table(N_OCC$ECO)
+table(N_OCC$Eco)
 
 ####################
 #### Plot
@@ -86,65 +92,48 @@ ggplot(N_OCC, aes(x = Group))+
     # coord_flip()+
     ylab("N species")+xlab("")+
     theme(axis.text.x = element_text(angle = 45, hjust=1))+
-    facet_wrap(.~ECO, scales = "free")
+    facet_wrap(.~Eco, scales = "free")
 
 ```
 
 
 # *N shifts*
 ```{r}
-# Load v1
-biov1 <- read.csv(here("Data/Bioshifts/biov1_fixednames.csv"), header = T)
-biov1$sp_name_std_v1 <- gsub("_"," ",biov1$sp_name_std_v1)
+bioshifts <- read.csv(here::here(Bioshifts_dir, Bioshifts_DB_v3), header = T)
+bioshifts <- bioshifts %>%
+    filter(Type == "LAT") %>% # Use only latitudinal shifts
+    filter(Eco == "Ter" & (MIDPOINT_firstperiod_v3 >= (temporal_range_env_data("Ter")[1] + n_yr_bioclimatic)) | # Shifts Marine or Terrestrial + within time period of the environmental data
+               (Eco == "Mar" & (MIDPOINT_firstperiod_v3 >= (temporal_range_env_data("Mar")[1] + n_yr_bioclimatic)))) 
 
-biov1 <- biov1 %>%
-    mutate(
-        Type = case_when(
-            Type=="HOR" ~ "LAT",
-            TRUE ~ as.character(Type)),
-        Species = sp_name_std_v1) %>%
-    filter(Type == "LAT", # Use only latitudinal shifts
-           (ECO == "T" | ECO == "M")) # Shifts Marine or Terrestrial
+bioshifts$sp_name_v3 <- gsub("_"," ",bioshifts$sp_name_v3)
+bioshifts$sp_name_v3 <- Clean_Names(bioshifts$sp_name_v3)
 
-biov1 <- biov1 %>%
-    filter(!is.na(sp_name_std_v1))
-
-all(biov1$sp_name_std_v1 %in% splist$scientificName)
-
-
-# filter species with GBIF data
-sdms_sps <- list.files(here("Data/SHIFT"),recursive = TRUE)
-sdms_sps
-biov1 <- biov1 %>%
-    filter(sp_name_std_v1 %in% N_OCC$scientificName) 
-biov1 <- merge(biov1[,-which(names(biov1) %in% c("Group","ECO"))], 
-               N_OCC[,c("Group","ECO","scientificName")], 
-               by.x = "sp_name_std_v1", by.y = "scientificName", 
-               all.x = T)
-
-table(biov1$Type)
-table(biov1$ECO)
-
-biov1 %>%
-    group_by(Group,ECO,Type,Param) %>%
+# add taxonomy
+splist <- read.csv(here("Data/Bioshifts/splist_v3_hamonized.csv"), header = T)
+bioshifts <- merge(bioshifts[,!names(bioshifts) %in% names(splist)], splist,
+                   by.x = "sp_name_v3",
+                   by.y = "original_name",
+                   all.x = TRUE)
+bioshifts %>%
+    group_by(Group,Eco,Type,Param) %>%
     tally()
 
 ####################
 #### Plot
-ggplot(biov1, aes(x = Group))+
+ggplot(bioshifts, aes(x = Group))+
     geom_bar()+
     theme_classic()+
     # coord_flip()+
     ylab("N shifts")+xlab("")+
     theme(axis.text.x = element_text(angle = 45, hjust=1))+
-    facet_wrap(.~ECO, scales = "free")
+    facet_wrap(.~Eco, scales = "free")
 ```
 
 Select only groups with shift for all the three edges
 ```{r}
 
-ggplot(biov1 %>%
-           filter(ECO == "T"), 
+ggplot(bioshifts %>%
+           filter(Eco == "Ter"), 
        aes(x = Group))+
     ggtitle("Terrestrial")+
     geom_bar()+
@@ -154,8 +143,8 @@ ggplot(biov1 %>%
     theme(axis.text.x = element_text(angle = 45, hjust=1))+
     facet_grid(.~Param, scales = "free")
 
-ggplot(biov1 %>%
-           filter(ECO == "M"), 
+ggplot(bioshifts %>%
+           filter(Eco == "Mar"), 
        aes(x = Param))+
     ggtitle("Marine")+
     geom_bar()+

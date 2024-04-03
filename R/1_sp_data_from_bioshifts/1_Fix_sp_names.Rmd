@@ -1,0 +1,452 @@
+---
+title: "Fix species names v1 and v2"
+author: "Brunno F Oliveira & Bioshifts group"
+date: "Last compiled on `r Sys.Date()`"
+output:
+    html_document:
+        toc: true
+        toc_float: true
+        number_sections: true
+---
+
+# setup
+
+```{r setup, message = FALSE, warning = FALSE}
+
+rm(list=ls())
+
+require(data.table)
+library(knitr)
+library(dplyr)
+library(DT)
+library(tidyverse)
+library(readxl)
+library(traitdataform)
+library(parallel)
+library(pbapply)
+library(taxize)
+library(taxizedb)
+library(taxadb)
+library(ggrepel)
+library(bdc)
+library(rgbif)
+library(googledrive)
+library(tictoc)
+
+```
+
+# Load functions
+```{r}
+
+source(here::here("R/Source_code/Find_Sci_Names.R"))
+source(here::here("R/Source_code/Clean_names.R"))
+
+```
+
+
+# Load range shift data
+```{r v1mv2, warning=FALSE}
+
+
+# Load v1
+biov1 <- read.table("v1/Shifts2018_checkedtaxo.txt",
+                    header = T,
+                    encoding="latin1")
+
+# v1
+biov1$sp_name_v1 <- biov1$New_name
+# create a shift ID
+biov1$S_ID_v1 <- sapply(1:nrow(biov1), function(x) paste("S",x,sep = "_"))
+
+# reported name = Publi_name
+biov1$sp_reported_name_v1 = Clean_Names(gsub("_"," ",biov1$Publi_name), return_gen_sps = F)
+# accepted name = New_name
+biov1$sp_name_v1 = Clean_Names(gsub("_"," ",biov1$New_name), return_gen_sps = F)
+
+# Load v2 
+# biov2 <- read.csv("v2/Bioshifts.v2.final.csv")
+biov2 <- read_excel("v2/Bioshifts.v2.final.corrected.xlsx", 
+                    sheet = 2) # new file sent by Sarah with start/end dates for shifts
+# create a shift ID
+biov2$S_ID_v2 <- sapply(1:nrow(biov2), function(x) paste("S",x,sep = "_"))
+
+# v2
+# reported name = Scientific Name
+biov2$sp_reported_name_v2 = Clean_Names(gsub("_"," ",biov2$`Scientific Name`), return_gen_sps = F)
+# accepted name = species
+biov2$sp_name_v2 = Clean_Names(gsub("_"," ",biov2$species), return_gen_sps = T)
+
+# manual
+biov2$sp_reported_name_v2[which(biov2$sp_reported_name_v2 == "Coprosma 3sp")] <- "Coprosma sp."
+biov2$sp_name_v2[which(biov2$sp_name_v2 == "Coprosma 3sp")] <- "Coprosma sp."
+
+
+```
+
+# Create a species list
+```{r }
+
+splist <- data.frame(reported_name = unique(c(biov1$sp_reported_name_v1, biov2$sp_reported_name_v2)))
+splist$v1 <- 0
+splist$v1[which(splist$reported_name %in% biov1$sp_reported_name_v1)] <- 1
+splist$v2 <- 0
+splist$v2[which(splist$reported_name %in% biov2$sp_reported_name_v2)] <- 1
+splist$reported_name <- gsub("_"," ",splist$reported_name)
+
+# add original accepted
+original_accepted_v1 <- 
+    data.frame(
+        species = gsub("_"," ",biov1$sp_name_v1),
+        reported_name = gsub("_"," ",biov1$sp_reported_name_v1))
+original_accepted_v2 <- 
+    data.frame(
+        species = gsub("_"," ",biov2$sp_name_v2),
+        reported_name = gsub("_"," ",biov2$sp_reported_name_v2))
+
+original_accepted <- rbind(original_accepted_v1,original_accepted_v2)
+
+splist <- merge(splist,original_accepted, by="reported_name", all.x = TRUE)
+splist <- splist[-which(duplicated(paste(splist$reported_name,splist$species))),]
+
+# fix issues with original name
+# V2 never uses subspecies or variants, so look for species at the genus level
+splist$reported_name_fixed <- Clean_Names(splist$reported_name,
+                                          return_gen_sps = TRUE)
+
+# do not look at species identified to the genus level or cf. species
+spgen <- sapply(splist$reported_name, function(x){
+    tmp. <- strsplit(x, " ")[[1]]
+    any(tmp. == "sp" | tmp. == "spp" | tmp. == "sp." | tmp. == "spp." | tmp. == "cf." | tmp. == "cf" | length(tmp.) == 1)
+})
+spgen <- splist$reported_name[spgen]
+all(spgen %in% splist$reported_name)
+
+V3 <- data.frame(matrix(nrow = nrow(splist), ncol = 7))
+names(V3) = c("scientificName", "kingdom", "phylum", "class", "order", "family", "db")
+splist <- cbind(splist, V3)
+
+# For these species, use classification from the original database
+for(i in 1:length(spgen)){
+    tofill <- which(splist$reported_name == spgen[i])
+    db <- splist[tofill,2:3]
+    db <- names(db)[which(db==1)]
+    if(length(db) > 1) { db = "v1"}
+    if(db == "v1"){
+        v1row <- which(biov1$sp_reported_name_v1 == spgen[i])
+        splist$scientificName[tofill] <- unique(biov1$sp_name_v1[v1row])[1]
+        splist$kingdom[tofill] <- unique(biov1$Kingdom[v1row])[1]
+        splist$phylum[tofill] <- unique(biov1$Phylum[v1row])[1]
+        splist$class[tofill] <- unique(biov1$Class[v1row])[1]
+        splist$order[tofill] <- unique(biov1$Order[v1row])[1]
+        splist$family[tofill] <- unique(biov1$Family[v1row])[1]
+        splist$db[tofill] <- "Bioshifts_v1"
+    }
+    if(db == "v2"){
+        v2row <- which(biov2$sp_reported_name_v2 == spgen[i])
+        splist$scientificName[tofill] <- unique(biov2$sp_name_v2[v2row])[1]
+        splist$kingdom[tofill] <- unique(biov2$kingdom[v2row])[1]
+        splist$phylum[tofill] <- unique(biov2$phylum[v2row])[1]
+        splist$class[tofill] <- unique(biov2$class[v2row])[1]
+        splist$order[tofill] <- unique(biov2$order[v2row])[1]
+        splist$family[tofill] <- unique(biov2$family[v2row])[1]
+        splist$db[tofill] <- "Bioshifts_v2"
+    }
+}
+
+splist$db_code <- NA
+splist$db_code <- as.character(splist$db_code)
+
+splist <- splist[,c("species","v1", "v2", "scientificName", "kingdom", "phylum", "class", "order", "family", "db", "db_code", "reported_name_fixed", "reported_name")]
+
+# keep kingdom as reported in the original databases to help on the taxonomy searches
+for(i in 1:nrow(splist)){
+    db <- splist[i,2:3]
+    db <- names(db)[which(db==1)]
+    if(length(db) > 1) { db = "v1" } 
+    if(db == "v1"){
+        v1row <- which(biov1$sp_reported_name_v1 == splist$reported_name[i])
+        splist$kingdom[i] <- biov1$Kingdom[v1row][1]
+    }
+    if(db == "v2"){
+        v2row <- which(biov2$sp_reported_name_v2 == splist$reported_name[i])
+        splist$kingdom[i] <- biov2$kingdom[v2row][1]
+    }
+}
+
+# remove two viruses with do not contain species description
+splist <- splist[-which(splist$species=="NA"),]
+
+splist$method <- NA
+
+```
+
+Look for accepted names
+
+We use a combination of 'taxadb' and 'bdc' packages. taxadb builds on taxize, but it is much faster because it uses species lists from providers stored in the HD. The advantage of 'bdc' over taxadb is that it allows using fuzzy matching. As fuzzy matching can take longer times when running over a long list of species, we first run the function bdc_query_names_taxadb on exact matches, then use fuzzy matching on the remaining species.
+
+# Species to find
+```{r}
+
+tofind_ <- splist[which(is.na(splist$scientificName)),]
+tofind_ <- unique(tofind_$reported_name_fixed)
+
+tofind <- data.frame(matrix(nrow = length(tofind_), ncol = 8))
+names(tofind) = c("scientificName", "kingdom", "phylum", "class", "order", "family", "db", "db_code")
+
+tofind <- data.frame(species = tofind_, tofind)
+
+tofind <- tofind %>%
+    mutate(across(everything(), as.character))
+
+# add kingdom to help on the searches
+for(i in 1:nrow(tofind)){
+    tofind$kingdom[i] <-splist$kingdom[which(splist$reported_name_fixed == tofind$species[i])][1]
+}
+
+```
+
+# Find species
+```{r}
+
+all_names <- Find_Sci_Names(sp_name = tofind$species, 
+                            kingdom = tofind$kingdom)
+
+# ----------------
+#  Summary 
+# ----------------
+# 
+# N taxa:
+# 14553
+# N taxa found:
+# |db   |     N|
+# |:----|-----:|
+# |GBIF | 14420|
+# |ITIS |     1|
+# |NCBI |    54|
+# N taxa not found:
+# 78
+
+```
+
+# Add found species names to the splist
+```{r}
+
+all(all_names$requested_name %in% tofind$species)
+all(all_names$requested_name %in% splist$reported_name_fixed)
+
+for(i in 1:length(all_names$requested_name)){
+    tofill <- unique(which(splist$reported_name_fixed == all_names$requested_name[i]))
+    splist$scientificName[tofill] <- all_names$scientificName[i]
+    splist$kingdom[tofill] <- all_names$kingdom[i]
+    splist$phylum[tofill] <-all_names$phylum[i]
+    splist$class[tofill] <- all_names$class[i]
+    splist$order[tofill] <- all_names$order[i]
+    splist$family[tofill] <- all_names$family[i]
+    splist$db[tofill] <- all_names$db[i]
+    splist$db_code[tofill] <- all_names$db_code[i]
+    splist$method[tofill] <- all_names$method[i]
+}
+
+```
+
+# Search using old accepted name for species we couldn't find at any taxa DB based on their published names
+```{r}
+
+tofind_ <- splist[which(is.na(splist$scientificName)),]
+
+all_names_new <- Find_Sci_Names(
+    sp_name = tofind_$species, 
+    kingdom = tofind_$kingdom)
+
+# ----------------
+#  Summary 
+# ----------------
+# 
+# N taxa:
+# 90
+# N taxa found:
+# |db   |  N|
+# |:----|--:|
+# |GBIF | 41|
+# N taxa not found:
+# 49
+
+```
+
+## Add found species names to the splist
+```{r}
+
+all(all_names_new$requested_name %in% tofind_$species)
+all(all_names_new$requested_name %in% splist$species)
+
+for(i in 1:length(all_names$requested_name)){
+    tofill <- unique(which(splist$species == all_names_new$requested_name[i]))
+    splist$scientificName[tofill] <- all_names_new$scientificName[i]
+    splist$kingdom[tofill] <- all_names_new$kingdom[i]
+    splist$phylum[tofill] <-all_names_new$phylum[i]
+    splist$class[tofill] <- all_names_new$class[i]
+    splist$order[tofill] <- all_names_new$order[i]
+    splist$family[tofill] <- all_names_new$family[i]
+    splist$db[tofill] <- all_names_new$db[i]
+    splist$db_code[tofill] <- all_names_new$db_code[i]
+    splist$method[tofill] <- paste(all_names_new$method[i],"based on bioshifts accepted name")
+}
+
+```
+
+# Keep original names for species we couldnt find at any database
+```{r }
+
+spnotfound <- unique(splist$reported_name[which(is.na(splist$scientificName))])
+
+for(i in 1:length(spnotfound)){ cat('\r',i)
+    tofill <- which(splist$reported_name == spnotfound[i] & is.na(splist$db))
+    db <- splist[tofill,2:3]
+    db <- as.character(na.omit(names(db)[which(db==1)]))
+    if(length(db) > 1) { db = "v1"}
+    if(db == "v1"){
+        v1row <- which(biov1$sp_reported_name_v1 == spnotfound[i])
+        splist$scientificName[tofill] <- unique(biov1$sp_name_v1[v1row])[1]
+        splist$kingdom[tofill] <- unique(biov1$Kingdom[v1row])[1]
+        splist$phylum[tofill] <- unique(biov1$Phylum[v1row])[1]
+        splist$class[tofill] <- unique(biov1$Class[v1row])[1]
+        splist$order[tofill] <- unique(biov1$Order[v1row])[1]
+        splist$family[tofill] <- unique(biov1$Family[v1row])[1]
+        splist$db[tofill] <- "Bioshifts_v1"
+        splist$method[tofill] <- "Accepted name not found. Using reported name in Bioshifts v1"
+    }
+    if(db == "v2"){
+        v2row <- which(biov2$sp_reported_name_v2 == spnotfound[i])
+        splist$scientificName[tofill] <- unique(biov2$sp_name_v2[v2row])[1]
+        splist$kingdom[tofill] <- unique(biov2$kingdom[v2row])[1]
+        splist$phylum[tofill] <- unique(biov2$phylum[v2row])[1]
+        splist$class[tofill] <- unique(biov2$class[v2row])[1]
+        splist$order[tofill] <- unique(biov2$order[v2row])[1]
+        splist$family[tofill] <- unique(biov2$family[v2row])[1]
+        splist$db[tofill] <- "Bioshifts_v2"
+        splist$method[tofill] <- "Accepted name not found. Using reported name in Bioshifts v2"
+    }
+}
+
+all(tofind$species %in% splist$species | tofind$species %in% splist$reported_name_fixed)
+
+table(splist$db)
+
+splist$scientificName <- gsub("  "," ",splist$scientificName)
+
+```
+
+
+
+# Remove duplicates
+```{r }
+
+splist$ID <- 1:nrow(splist)
+
+# check if there is any species name with >1 accepted name.
+test <- splist %>%
+    group_by(reported_name_fixed) %>%
+    summarise(N = length(unique(scientificName)))
+
+any(test$N>1)
+if(any(test$N>1)){
+    tmp <- test$reported_name_fixed[which(test$N>1)]
+    View(splist %>% filter(reported_name_fixed %in% tmp))
+}
+
+splist_ <- splist
+# splist <- splist_
+
+# fix manually
+splist <- splist[-which(splist$ID==11289),]
+splist <- splist[-which(splist$ID==11891),]
+splist <- splist[-which(splist$ID==12265),]
+splist <- splist[-which(splist$ID==13289),]
+
+
+```
+
+# Save species list
+```{r }
+
+write.csv(splist, "output/splist.csv", row.names = F)
+
+# species = accepted name from the DB (Genus+species) removing special characters 
+# reported_name = species name as published in the original paper extracted from the DBs
+# reported_name_fixed = original name removing special characters 
+# scientificName is the accepted name following taxonomy harmonization applied above. For species we didn't find a name, we used the accepted name as reported in the DBs.
+
+# upload to google drive
+drive_upload("output/splist.csv",
+             "BIOSHIFTS Working Group/DATA/BIOSHIFTS_v3/splist_v3.csv")
+
+```
+
+# Fix
+```{r}
+
+splist <- read.csv("output/splist.csv")
+
+splist$id_temp <- splist$reported_name
+
+# Fix
+# V1
+biov1$id_temp <- biov1$sp_reported_name_v1
+
+biov1 <- merge(biov1, 
+               splist[,c("scientificName", "reported_name_fixed","id_temp")], 
+               by = "id_temp", 
+               all.x = TRUE)
+biov1 <- biov1[,-which(colnames(biov1) == "id_temp")]
+
+names(biov1)[which(names(biov1) == "scientificName")] <- "sp_name_std_v1"
+biov1$sp_reported_name_v1 <- biov1$reported_name_fixed
+biov1 <- biov1[,-which(names(biov1) %in% "reported_name_fixed")]
+# remove duplicated rows
+biov1 <- biov1[-which(duplicated(biov1$S_ID_v1)),]
+dim(biov1)
+
+# V2
+biov2$id_temp <- biov2$sp_reported_name_v2
+biov2 <- merge(biov2, 
+               splist[,c("scientificName", "reported_name_fixed","id_temp")], 
+               by = "id_temp", 
+               all.x = TRUE)
+biov2 <- biov2[,-which(colnames(biov2) == "id_temp")]
+
+names(biov2)[which(names(biov2) == "scientificName")] <- "sp_name_std_v2"
+biov2$sp_reported_name_v2 <- biov2$reported_name_fixed
+biov2 <- biov2[,-which(names(biov2) %in% "reported_name_fixed")]
+# remove duplicated rows
+biov2 <- biov2[-which(duplicated(biov2$S_ID_v2)),]
+dim(biov2)
+
+###################
+# last step
+biov1$sp_name_v1 <- gsub(" ","_",biov1$sp_name_v1)
+biov1$sp_name_std_v1 <- gsub(" ","_",biov1$sp_name_std_v1)
+biov1$sp_reported_name_v1 <- gsub(" ","_",biov1$sp_reported_name_v1)
+
+biov2$sp_name_v2 <- gsub(" ","_",biov2$sp_name_v2)
+biov2$sp_name_std_v2 <- gsub(" ","_",biov2$sp_name_std_v2)
+biov2$sp_reported_name_v2 <- gsub(" ","_",biov2$sp_reported_name_v2)
+
+###################
+# sp_name_std = harmonized species name from 
+# sp_name_v1 = accepted species name extracted from DBs removing special characters 
+# sp_reported_name_v1 = species name reported from original papers, extracted from DBs, removing special characters 
+
+```
+
+# save DBs
+```{r }
+
+write.csv(biov1, "v1/biov1_fixednames.csv", row.names = F)
+write.csv(biov2, "v2/biov2_fixednames.csv", row.names = F)
+
+```
+
+
+
+
+***

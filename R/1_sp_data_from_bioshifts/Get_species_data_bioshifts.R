@@ -9,7 +9,7 @@ gc()
 
 list.of.packages <- c("stringr", "rgbif", "parallel", "pbapply", "raster", "dplyr", "here", "tidyr",
                       "data.table", "ggplot2", "readxl", "knitr","googledrive","googleAuthR",
-                      "sqldf","RSQLite", "scales")
+                      "sqldf","RSQLite", "scales","wikitaxa")
 
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
 
@@ -23,193 +23,202 @@ sapply(list.of.packages, require, character.only = TRUE)
 # set computer
 computer = "personal"
 
-if(computer == "muse"){
-    setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
-    work_dir <- getwd()
-}
-if(computer == "matrics"){
-    setwd("/users/boliveira/Exposure-SDM")
-    work_dir <- getwd()
-}
-if(computer == "personal"){
-    work_dir <- getwd()
-}
-
 # Load functions
 
-source("R/my_functions.R")
-source("R/round-up.R")
+# source("R/my_functions.R")
+# source("R/round-up.R")
 source("R/settings.R")
-
-range_env_data <- range(c(temporal_range_env_data("Ter"),temporal_range_env_data("Mar")))
-
-
-# *Load species list*
-
-splist <- read.csv("Data/Bioshifts/splist.csv", header = T)
-# remove duplicated sp_names
-splist <- splist %>%
-    dplyr::select(scientificName,kingdom,phylum,class,order,family,db,db_code) %>%
-    filter(!duplicated(scientificName))
-
-
+source("R/Find_Sci_Names.R")
+source("R/Clean_names.R")
 
 # Load raw bioshifts
-# *While we dont have a v3, just add papers from v2 to v1*
-    
-# Load v1
-biov1 <- read.csv("Data/Bioshifts/biov1_fixednames.csv", header = T)
+# Load v3
+bioshifts <- read.csv(here::here(Bioshifts_dir, Bioshifts_DB_v3), header = T)
 
-biov1$sp_name_std_v1 <- gsub("_"," ",biov1$sp_name_std_v1)
+bioshifts <- bioshifts %>%
+    filter(Type == "LAT") %>% # Use only latitudinal shifts
+    filter(Eco == "Ter" & (MIDPOINT_firstperiod_v3 >= (temporal_range_env_data("Ter")[1] + n_yr_bioclimatic)) | # Shifts Marine or Terrestrial + within time period of the environmental data
+               (Eco == "Mar" & (MIDPOINT_firstperiod_v3 >= (temporal_range_env_data("Mar")[1] + n_yr_bioclimatic)))) 
 
-biov1 <- biov1 %>%
-    mutate(
-        Type = case_when(
-            Type=="HOR" ~ "LAT",
-            TRUE ~ as.character(Type)),
-        Species = sp_name_std_v1) %>%
-    filter(Type == "LAT", # Use only latitudinal shifts
-           (ECO == "T" | ECO == "M")) # Shifts Marine or Terrestrial
+bioshifts$sp_reported_name_v1 <- gsub("_"," ",bioshifts$sp_reported_name_v1)
+bioshifts$sp_reported_name_v1 <- Clean_Names(bioshifts$sp_reported_name_v1)
+bioshifts$sp_reported_name_v1[which(bioshifts$sp_reported_name_v1=="NA")] <- NA
 
-biov1 <- biov1 %>%
-    filter(!is.na(sp_name_std_v1))
+bioshifts$sp_reported_name_v2 <- gsub("_"," ",bioshifts$sp_reported_name_v2)
+bioshifts$sp_reported_name_v2 <- Clean_Names(bioshifts$sp_reported_name_v2)
+bioshifts$sp_reported_name_v2[which(bioshifts$sp_reported_name_v2=="NA")] <- NA
 
-all(biov1$sp_name_std_v1 %in% splist$scientificName)
-
-
-# Load v2 
-biov2 <- read.csv("Data/Bioshifts/biov2_fixednames.csv", header = T)
-biov2$Scientific.Name <- gsub(" ","_",biov2$Scientific.Name)
-biov2$sp_name_std_v2 <- gsub("_"," ",biov2$sp_name_std_v2)
-
-biov2 <- biov2  %>%
-    mutate(
-        Type = case_when(
-            Dimension=="latitude" ~ "LAT",
-            Dimension=="elevation" ~ "ELE",
-            TRUE ~ as.character(Dimension)),
-        group=Taxonomic.Group,
-        ECO=case_when(
-            Ecosystem.Type=="terrestrial" ~ "T",
-            Ecosystem.Type=="marine" ~ "M",
-            Ecosystem.Type=="aquatic" ~ "A",
-            TRUE ~ as.character(Ecosystem.Type)),
-        Phylum=phylum,
-        Class=class,
-        Order=order,
-        Family=family,
-        Genus=genus,
-        Species=sp_name_std_v2) %>%
-    filter(Type == "LAT", # Use only latitudinal shifts
-           (ECO == "T" | ECO == "M")) # Shifts Marine or Terrestrial
-
-biov2 <- biov2 %>%
-    filter(!is.na(sp_name_std_v2))
-
-all(biov2$biov2 %in% splist$scientificName)
-
-# filter sp list
-splist <- splist %>% filter((scientificName %in% biov1$sp_name_std_v1) | (scientificName %in% biov2$sp_name_std_v2))
-
-## *Remove species identified to the genus level or cf.*
+# N species
+bioshifts$sp_name_v3 <- gsub("_"," ",bioshifts$sp_name_v3)
+bioshifts$sp_name_v3 <- Clean_Names(bioshifts$sp_name_v3)
+all_sps <- unique(bioshifts$sp_name_v3)
+length(all_sps) # 5555
 
 
+##############################
+# Fix species names
+mycols <- c("original_name","scientificName","kingdom","phylum","class","order","family","db_code")
+sps_accepted_names <- data.frame(matrix(ncol = length(mycols), nrow = length(unique(all_sps))))
+names(sps_accepted_names) <- mycols
 
-if(any(grep("sp[.]",biov1$sp_reported_name_v1))){
-    biov1 <- biov1 %>% filter(!grepl("sp[.]",sp_reported_name_v1))
-}
-if(any(grep("sp[.]",biov1$sp_name_std_v1))){
-    biov1 <- biov1 %>% filter(!grepl("sp[.]",sp_name_std_v1))
-}
-if(any(grep("cf[.]",biov1$sp_reported_name_v1))){
-    biov1 <- biov1 %>% filter(!grepl("cf[.]",sp_reported_name_v1))
-}
-if(any(grep("cf[.]",biov1$sp_name_std_v1))){
-    biov1 <- biov1 %>% filter(!grepl("cf[.]",sp_name_std_v1))
-}
+sps_accepted_names$original_name <- unique(all_sps)
 
-if(any(grep("sp[.]",biov2$sp_reported_name_v2))){
-    biov2 <- biov2 %>% filter(!grepl("sp[.]",sp_reported_name_v2))
-}
-if(any(grep("sp[.]",biov2$sp_name_std_v2))){
-    biov2 <- biov2 %>% filter(!grepl("sp[.]",sp_name_std_v2))
-}
-if(any(grep("cf[.]",biov2$sp_reported_name_v2))){
-    biov2 <- biov2 %>% filter(!grepl("cf[.]",sp_reported_name_v2))
-}
-if(any(grep("cf[.]",biov2$sp_name_std_v2))){
-    biov2 <- biov2 %>% filter(!grepl("cf[.]",sp_name_std_v2))
+# retrieve sp names
+sp_names_found <- Find_Sci_Names(sp_name = sps_accepted_names$original_name)
+# took ~6 min on my personal computer
+
+
+# ----------------
+#  Summary 
+# ----------------
+# N taxa:
+#     5555
+# N taxa found:
+#     |db   |    N|
+#     |:----|----:|
+#     |GBIF | 5525|
+#     |ITIS |    1|
+#     |NCBI |   21|
+#     N taxa not found:
+#     8
+
+all(sp_names_found$requested_name %in% sps_accepted_names$original_name)
+
+for(i in 1:length(sp_names_found$requested_name)){
+    tofill <- unique(which(sps_accepted_names$original_name == sp_names_found$requested_name[i]))
+    sps_accepted_names$scientificName[tofill] <- sp_names_found$scientificName[i]
+    sps_accepted_names$kingdom[tofill] <- sp_names_found$kingdom[i]
+    sps_accepted_names$phylum[tofill] <-sp_names_found$phylum[i]
+    sps_accepted_names$class[tofill] <- sp_names_found$class[i]
+    sps_accepted_names$order[tofill] <- sp_names_found$order[i]
+    sps_accepted_names$family[tofill] <- sp_names_found$family[i]
+    sps_accepted_names$db[tofill] <- sp_names_found$db[i]
+    sps_accepted_names$db_code[tofill] <- sp_names_found$db_code[i]
 }
 
 
-if(any(grep("sp[.]",splist$scientificName))){
-    splist <- splist %>% filter(!grepl("sp[.]",scientificName))
-}
-if(any(grep("sp[.]",splist$scientificName))){
-    splist <- splist %>% filter(!grepl("sp[.]",scientificName))
-}
-if(any(grep("cf[.]",splist$scientificName))){
-    splist <- splist %>% filter(!grepl("cf[.]",scientificName))
-}
-if(any(grep("cf[.]",splist$scientificName))){
-    splist <- splist %>% filter(!grepl("cf[.]",scientificName))
-}
-
-
+splist <- sps_accepted_names
 
 ## *Classify species*
+# Get taxonomic info for species missing
+for(i in 1:nrow(splist)){ cat("\r",i, "from",nrow(splist))
+    tmp <- splist[i,]
+    
+    if(any(is.na(tmp))){
+        tmp_sp <- tmp$original_name
+        missing_cols <- names(tmp[,c(2,3:7)])
+        missing_cols <- missing_cols[which(is.na(tmp[,missing_cols]))]
+        try_taxa <- try(wt_wikispecies(tmp_sp),silent = TRUE)
+        while(class(try_taxa) == "try-error"){
+            try_taxa <- try(wt_wikispecies(tmp_sp),silent = TRUE)
+        }
+        try_taxa <- try_taxa$classification
+        if(!all(is.na(try_taxa$rank))){
+            try_taxa <- data.frame(t(try_taxa))
+            colnames(try_taxa) <- try_taxa[1,]
+            try_taxa <- try_taxa[2,]
+            try_taxa$kingdom <- ifelse(is.null(try_taxa$Regnum),NA,try_taxa$Regnum)
+            try_taxa$phylum <- ifelse(is.null(try_taxa$Phylum),NA,try_taxa$Phylum)
+            try_taxa$class <-ifelse(is.null(try_taxa$Classis),NA,try_taxa$Classis)
+            try_taxa$order <- ifelse(is.null(try_taxa$Ordo),NA,try_taxa$Ordo)
+            if("scientificName" %in% missing_cols){
+                try_taxa$scientificName <- tmp_sp
+            }
+            if("family" %in% missing_cols){
+                try_taxa2 <- wt_wikispecies_search(tmp_sp)
+                try_taxa2 <- try_taxa2$query$search$snippet[1]
+                try_taxa2 <- strsplit(try_taxa2,":")[[1]][2]
+                try_taxa2 <- strsplit(try_taxa2," ")[[1]][2]
+                try_taxa$family <- try_taxa2
+            }
+            tmp[,missing_cols] <- try_taxa[,missing_cols]
+            splist[i,names(tmp)] <- tmp
+            if("scientificName" %in% missing_cols){
+                splist$db[i] <- "wiki"
+                splist$db_code[i] <- wt_data_id(tmp_sp)[1]
+            }
+        } 
+    }
+}
+
+# using itis
+for(i in 1:nrow(splist)){ cat("\r",i, "from",nrow(splist))
+    
+    tmp <- splist[i,]
+    
+    if(any(is.na(tmp))){
+        
+        tmp_sp <- tmp$original_name
+        missing_cols <- names(tmp[,c(2,3:7)])
+        missing_cols <- missing_cols[which(is.na(tmp[,missing_cols]))]
+        try_taxa <- taxize::tax_name(tmp_sp, get = missing_cols,messages = FALSE)
+        if(length(missing_cols)>1){
+            found_cols <- apply(try_taxa[,missing_cols],2,is.na)
+            found_cols <- missing_cols[!found_cols] 
+        } else {
+            if(!is.na(try_taxa[,missing_cols])){
+                found_cols <- missing_cols
+            }
+        }
+        if(length(found_cols)>0){
+            tmp[,found_cols] <- try_taxa[1,found_cols]
+            splist[i,names(tmp)] <- tmp
+        }
+    }
+}
 
 
+# using NCBI
+for(i in 1:nrow(splist)){ cat("\r",i, "from",nrow(splist))
+    
+    tmp <- splist[i,]
+    
+    if(any(is.na(tmp))){
+        
+        tmp_sp <- tmp$original_name
+        missing_cols <- names(tmp[,c(2,3:7)])
+        missing_cols <- missing_cols[which(is.na(tmp[,missing_cols]))]
+        try_taxa <- taxize::tax_name(tmp_sp, get = missing_cols,messages = FALSE, db="ncbi")
+        if(length(missing_cols)>1){
+            found_cols <- apply(try_taxa[,missing_cols],2,is.na)
+            found_cols <- missing_cols[!found_cols] 
+        } else {
+            if(!is.na(try_taxa[,missing_cols])){
+                found_cols <- missing_cols
+            }
+        }
+        if(length(found_cols)>0){
+            tmp[,found_cols] <- try_taxa[1,found_cols]
+            splist[i,names(tmp)] <- tmp
+        }
+    }
+}
 
-# Class species as Terrestrial, Marine or Freshwater
-Terv1 <- unique(biov1$sp_name_std_v1[which(biov1$ECO == "T")])
-Terv2 <- unique(biov2$sp_name_std_v2[which(biov2$ECO == "T")])
-Terrestrials = unique(c(Terv1,Terv2))
+splist2 <- splist
 
-Mar1 <- unique(biov1$sp_name_std_v1[which(biov1$ECO == "M")])
-Mar2 <- unique(biov2$sp_name_std_v2[which(biov2$ECO == "M")])
-Marine = unique(c(Mar1,Mar2))
+# add original names
+splist$sp_reported_name_v1 <- NA
+splist$sp_reported_name_v2 <- NA
 
-Aquatic = unique(biov2$sp_name_std_v2[which(biov2$ECO == "A")])
+for(i in 1:nrow(splist)){ cat("\r",i, "from",nrow(splist))
+    sp_i <- splist$original_name[i]
+    v3_pos <- which(bioshifts$sp_name_v3 == sp_i)
+    
+    splist$sp_reported_name_v1[i] <- paste(na.omit(unique(bioshifts$sp_reported_name_v1[v3_pos])),collapse = ", ")
+    splist$sp_reported_name_v2[i] <- paste(na.omit(unique(bioshifts$sp_reported_name_v2[v3_pos])),collapse = ", ")
+}
+splist$sp_reported_name_v1[which(splist$sp_reported_name_v1=="")] <- NA
+splist$sp_reported_name_v2[which(splist$sp_reported_name_v2=="")] <- NA
 
-# Freshwater fish
-FFishv1 <- unique(biov1$sp_name_std_v1[(biov1$Class == "Actinopterygii" | biov1$Class == "Cephalaspidomorphi") & biov1$ECO == "T"])
-FFishv2 <- unique(biov2$sp_name_std_v2[biov2$group == "Fish" & 
-                                           (biov2$ECO == "T" | biov2$ECO == "A")])
-FFish = unique(c(FFishv1,FFishv2))
+any(is.na(splist$sp_reported_name_v1) & is.na(splist$sp_reported_name_v2))
 
-# Marine fish
-MFishv1 <- unique(biov1$sp_name_std_v1[biov1$Class == "Actinopterygii" & biov1$ECO == "M"])
-MFishv2 <- unique(biov2$sp_name_std_v2[biov2$group == "Fish" & biov2$ECO == "M"])
-MFish = unique(c(MFishv1,MFishv2))
+all(splist$original_name %in% bioshifts$sp_name_v3)
 
-splist$ECO = NA
-splist$ECO[which(splist$scientificName %in% Terrestrials)] <- "T"
-splist$ECO[which(splist$scientificName %in% Marine)] <- "M"
-splist$ECO[which(splist$scientificName %in% Aquatic)] <- "A"
-splist$ECO[which(splist$scientificName %in% MFish)] <- "M"
-splist$ECO[which(splist$scientificName %in% FFish)] <- "A"
-
-biov1$ECO = NA
-biov1$ECO[which(biov1$sp_name_std_v1 %in% Terrestrials)] <- "T"
-biov1$ECO[which(biov1$sp_name_std_v1 %in% Marine)] <- "M"
-biov1$ECO[which(biov1$sp_name_std_v1 %in% Aquatic)] <- "A"
-biov1$ECO[which(biov1$sp_name_std_v1 %in% MFish)] <- "M"
-biov1$ECO[which(biov1$sp_name_std_v1 %in% FFish)] <- "A"
-
-biov2$ECO = NA
-biov2$ECO[which(biov2$sp_name_std_v2 %in% Terrestrials)] <- "T"
-biov2$ECO[which(biov2$sp_name_std_v2 %in% Marine)] <- "M"
-biov2$ECO[which(biov2$sp_name_std_v2 %in% Aquatic)] <- "A"
-biov2$ECO[which(biov2$sp_name_std_v2 %in% MFish)] <- "M"
-biov2$ECO[which(biov2$sp_name_std_v2 %in% FFish)] <- "A"
-
-
+## *Classify species*
 splist$Group = NA
 splist$kingdom[which(splist$class == "Phaeophyceae")] <- "Chromista"
-splist$Group[which(splist$kingdom == "Chromista")] <- "Chromista"
-
-splist$Group[which(splist$phylum == "Rhodophyta")] <- "Seaweed"
+splist$Group[which(splist$kingdom == "Chromista")] <- "Algae"
+splist$Group[which(splist$phylum == "Rhodophyta")] <- "Algae"
 splist$kingdom[which(splist$phylum == "Rhodophyta")] <- "Plantae"
 splist$Group[which(splist$family == "Elminiidae")] <- "Barnacles"
 splist$Group[which(splist$kingdom == "Bacteria")] <- "Bacteria"
@@ -226,9 +235,9 @@ splist$Group[which(splist$class == "Anthozoa")] <- "Sea anemones and corals"
 splist$Group[which(splist$class == "Polychaeta")] <- "Polychaetes"
 splist$Group[which(splist$phylum == "Mollusca")] <- "Molluscs"
 splist$Group[which(splist$class == "Malacostraca")] <- "Crustacean"
-splist$Group[which(splist$class == "Hexanauplia")] <- "Crustacean"
-splist$Group[which(splist$class == "Maxillopoda")] <- "Crustacean"
-splist$Group[which(splist$class == "Ostracoda")] <- "Crustacean"
+splist$Group[which(splist$class == "Hexanauplia")] <- "Zooplankton"
+splist$Group[which(splist$class == "Maxillopoda")] <- "Zooplankton"
+splist$Group[which(splist$class == "Ostracoda")] <- "Zooplankton"
 splist$Group[which(splist$class == "Branchiopoda")] <- "Crustacean"
 splist$Group[which(splist$class == "Asteroidea")] <- "Starfish"
 splist$Group[which(splist$class == "Ascidiacea")] <- "Ascidians tunicates and sea squirts"
@@ -245,221 +254,88 @@ splist$Group[which(splist$class == "Holothuroidea")] <- "Sea cucumber"
 splist$Group[which(splist$class == "Reptilia")] <- "Reptile"
 splist$Group[which(splist$order == "Squamata")] <- "Reptile"
 splist$Group[which(splist$class == "Ophiuroidea")] <- "Brittle stars"
-splist$Group[which(splist$class == "Chilopoda")] <- "Centipedes"
-splist$Group[which(splist$class == "Diplopoda")] <- "Millipedes"
+splist$Group[which(splist$class == "Chilopoda")] <- "Myriapoda"
+splist$Group[which(splist$class == "Diplopoda")] <- "Myriapoda"
 splist$Group[which(splist$class == "Amphibia")] <- "Amphibian"
 splist$Group[which(splist$kingdom == "Fungi")] <- "Fungi"
 splist$Group[which(splist$order == "Balanomorpha")] <- "Barnacles"
 splist$Group[which(splist$phylum == "Nematoda")] <- "Nematodes"
 splist$Group[which(splist$class == "Myxini")] <- "Hagfish"
-
-######################################
-biov1 <- merge(biov1[,-which(names(biov1) %in% c("Group","ECO"))], 
-               splist[,c("Group","ECO","scientificName")], 
-               by.x = "sp_name_std_v1", by.y = "scientificName", 
-               all.x = T)
-
-biov2 <- merge(biov2[,-which(names(biov2) %in% c("Group","ECO"))], splist[,c("Group","ECO","scientificName")], 
-               by.x = "sp_name_std_v2", by.y = "scientificName", 
-               all.x = T)
-
-table(biov1$ECO)
-table(biov2$ECO)
-table(splist$ECO)
-
-all(biov1$sp_name_std_v1 %in% splist$scientificName)
-
-any(duplicated(splist$scientificName))
+splist$Group[which(splist$class == "Testudines")] <- "Turtle"
+splist$Group[which(splist$class == "Teleostei")] <- "Fish"
+splist$Group[which(splist$class == "Copepoda")] <- "Zooplankton"
+splist$Group[which(splist$order == "Pleuronectiformes")] <- "Fish"
 
 
-## Filter fresh water fish and marine birds
+# Class species as Terrestrial, Marine or Freshwater
+Terrestrials <- unique(bioshifts$sp_name_v3[which(bioshifts$Eco == "Ter")])
+Marine <- unique(bioshifts$sp_name_v3[which(bioshifts$Eco == "Mar")])
 
+# Freshwater fish
+FFish <- unique(splist$original_name[which(splist$Group == "Fish")])
+FFish <- FFish[which(FFish %in% Terrestrials)]
 
-#remove freshwater fishes
-splist <- splist[-which((splist$class == "Actinopterygii" | splist$Group == "Fish") & splist$ECO=="A"),]
+# Marine fish
+MFish <- unique(splist$original_name[which(splist$Group == "Fish")])
+MFish <- MFish[which(MFish %in% Marine)]
 
-#remove marine birds
-splist <- splist[-which(splist$class == "Aves" & splist$ECO=="M"),]
+splist$Eco = NA
+splist$Eco[which(splist$original_name %in% Terrestrials)] <- "Ter"
+splist$Eco[which(splist$original_name %in% Marine)] <- "Mar"
+splist$Eco[which(splist$original_name %in% MFish)] <- "Mar"
+splist$Eco[which(splist$original_name %in% FFish)] <- "Aqua"
 
+# save species list
+write.csv(splist, "Data/Bioshifts/splist_v3_hamonized.csv", row.names = FALSE)
+# splist <- read.csv("Data/Bioshifts/splist_v3_hamonized.csv")
 
-
-# Subset
-
-## Filter species with GBIF data
-
-
-# splist
-splist <- splist[which(splist$db == "gbif"),]
-
-
-
-## Filter shifts within the temporal range of the environmental data
-## work with v1 only as we dont have v3 yet
-## remove fresh water shifts
-
-biov1 <- biov1 %>%
-    dplyr::filter(
-        # For terrestrials
-        ((ECO == "T") & 
-             # start > beginning env data
-             (START >= temporal_range_env_data("Ter")[1])) |
-            # For marine
-            ((ECO == "M") & 
-                 # start > beginning env data
-                 (START >= temporal_range_env_data("Mar")[1]))
-    )
-
-# splist
-splist <- splist %>% filter(scientificName %in% unique(biov1$sp_name_std_v1))
-
-table(splist$ECO)
-
-table(biov1$ECO)
-
-
-
+######################
 # N occurrences GBIF
 
 # Retrieve a summary table with N occurrence per species.
-# We only retrieve N occurrences for records based:
+# We only retrieve N occurrences for rEcords based:
 # 1) "HUMAN_OBSERVATION" "OBSERVATION" "OCCURRENCE"
-# 2) from which there was coordinates recorded
+# 2) from which there was coordinates rEcorded
 # 3) Registered after 1901 
 
 
 ncores = parallelly::availableCores()
 
-cl <- makeCluster(ncores)
-clusterExport(cl, c("splist","basisOfRecord","range_env_data"))
+splist_GBIF <- splist %>% filter(db == "GBIF")
 
-N_OCC <- pbsapply(1:length(splist$db_code), function(i) {
-    
-    code <- gsub("GBIF:","",splist$db_code[i])
+cl <- makeCluster(ncores)
+clusterExport(cl, c("splist_GBIF","basisOfRecord","temporal_range_env_data"))
+
+N_OCC <- pbsapply(1:nrow(splist_GBIF), function(i) {
+    # N_OCC <- list()
+    # for(i in 1:nrow(splist_GBIF)){
+        
+    code_i <- gsub("GBIF:","",splist_GBIF$db_code[i])
+    tr_i <- temporal_range_env_data(splist_GBIF$Eco[i])
+    tr_i <- paste(tr_i[1],tr_i[2],sep = ";")
     
     records <- sapply(basisOfRecord, function(b) {
-        rgbif::occ_count(taxonKey = code,
+        rgbif::occ_count(taxonKey = code_i,
                          hasGeospatialIssue = FALSE,
                          basisOfRecord = b,
-                         from = range_env_data[1], 
-                         to = range_env_data[2]) 
+                         year = tr_i) 
     })
     
-    sum(records)
+    return(sum(records))
+    
+    # N_OCC[[i]] <- sum(records)
 }
 ,
 cl = cl)
 
+
 stopCluster(cl)
 
-# Took 9min FRB
-# Took 3min MESO
+# Took 9min my computer
 
-length(N_OCC) == length(splist$scientificName)
+splist_GBIF$N_OCC <- N_OCC
 
-N_OCC <- data.frame(splist, n_occ = N_OCC)
+write.csv(splist_GBIF, "Data/N_OCC.csv", row.names = F)
 
-write.csv(N_OCC, "Data/n_occ.csv", row.names = F)
-
-N_OCC <- read.csv("Data/n_occ.csv")
-
-
-# N species
-length(unique(N_OCC$scientificName))
-
-tmp <- N_OCC %>%
-    filter(n_occ > 30) 
-length(unique(tmp$scientificName))
-
-sort(table(tmp$Group))
-
-tmp %>%
-    group_by(ECO, Group) %>%
-    tally() 
-sort(table(tmp$ECO))
-
-# N shifts
-biov1 %>%
-    filter(sp_name_std_v1 %in% tmp$scientificName) %>%
-    nrow()
-tmp2 <- splist %>%
-    filter(scientificName %in% tmp$scientificName) 
-sort(table(tmp2$Group))
-sort(table(tmp2$ECO))
-
-
-
-# Stats
-
-
-
-
-## N occurrences by group
-
-# Occ by Class
-ggplot(N_OCC, aes(x = Group, y = n_occ))+
-    geom_col()+
-    theme_classic()+
-    # coord_flip()+
-    ylab("N occurrences")+xlab("Class")+
-    theme(axis.text.x = element_text(angle = 45, hjust=1))+
-    facet_wrap(.~ECO, scales = "free")
-
-
-
-## N species by group
-
-toplot <- N_OCC %>%
-    filter(n_occ > 30) %>%
-    group_by(kingdom, Group, ECO) %>%
-    dplyr::summarise(n_occ = length(unique(scientificName)))
-
-# Occ by Class
-ggplot(toplot, aes(x = Group, y = n_occ))+
-    geom_col()+
-    theme_classic()+
-    # coord_flip()+
-    ylab("N species")+xlab("Class")+
-    theme(axis.text.x = element_text(angle = 45, hjust=1))+
-    facet_wrap(.~ECO, scales = "free")
-
-
-# % bioshift with occ
-
-
-
-splist <- read.csv("Data/Bioshifts/splist.csv", header = T)
-# remove duplicated sp_names
-splist <- splist %>%
-    dplyr::select(scientificName,kingdom,phylum,class,order,family,db) %>%
-    filter(!duplicated(scientificName))
-
-bio <- data.frame(table(splist$class))
-names(bio) <- c("Class","Bioshifts_Freq")
-
-gbifocc <- data.frame(table(N_OCC$class))
-names(gbifocc) <- c("Class","GBIF_Freq")
-
-bio <- merge(bio, gbifocc)
-bio$percent = paste(round((bio$GBIF_Freq/bio$Bioshifts_Freq)*100,2),"%")
-
-melted <- reshape::melt(bio[,c(1:3)], id="Class")
-melted <- merge(melted, bio[,c(1,4)])
-melted$percent[which(melted$variable == "GBIF_Freq")] = NA
-
-keep <- unique(melted$Class[which(melted$value > 20)])
-toplot = melted[which(melted$Class %in% keep),]
-toplot$Class <- factor(toplot$Class, levels = unique(toplot$Class[order(toplot$value)]))
-
-ggplot(toplot, 
-       aes(x = Class, y = value, fill = variable))+
-    geom_bar(stat="identity",position = "identity", alpha = .5) +
-    geom_text(aes(label=percent),
-              stat='identity', size = 3, hjust = "inward")+
-    coord_flip()+
-    ylab("N species")+
-    theme_classic()+
-    theme(legend.position="bottom",
-          legend.title = element_blank()) 
-
-
+N_OCC <- read.csv("Data/N_OCC.csv")
 
