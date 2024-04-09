@@ -86,6 +86,7 @@ for(j in 1:length(realms)){
         
         sp_i <- all_sps[i]
         sp_i_realm <- realm
+        
         # get studies for species i
         shift_info <- read.csv(here::here(sdm_dir(realm),sp_i,paste(sp_i,"shift_info.csv")))
         ID_i <- shift_info$ID
@@ -95,21 +96,24 @@ for(j in 1:length(realms)){
                           ID=ID_i)
         
         tmp$I_have_sdms <- sapply(ID_i, function(x){
-            years_ID_i <- round(shift_info$START[1],0):round(shift_info$END[1],0)
+            shift_info_i <- shift_info[which(shift_info$ID==x),]
+            years_ID_i <- round(shift_info_i$START,0):round(shift_info_i$END,0)
             # check
             # Focus on SA for now
             sdms_sp_i <- list.files(paste(sdm_dir(sp_i_realm),sp_i,gsub("_",".",sp_i),sep = "/"),pattern = "SA")
             # get ensemble models
             sdms_sp_i_ens <- sdms_sp_i[grep(" ens",sdms_sp_i)]
+            # get ID_i models
+            sdms_sp_i_ens <- sdms_sp_i_ens[grep(x,sdms_sp_i_ens)]
             # check if all years exist
             sdms_sp_i_ens <- all(sapply(years_ID_i, function(x){any(grepl(x,sdms_sp_i_ens))}))
             sdms_sp_i_ens
         })
         I_have_sdms <- rbind(I_have_sdms,tmp)
     }
-    nrow(I_have_sdms)
+    nrow(I_have_sdms) # these are all possible sdms (species + ID)
     I_have_sdms <- I_have_sdms[which(I_have_sdms$I_have_sdms),]
-    nrow(I_have_sdms)
+    nrow(I_have_sdms) # these are the ones with projections for all years
     
     # sps I have shifts calculated
     I_have_shift <- list.files(shift_dir(realm))
@@ -131,7 +135,7 @@ for(j in 1:length(realms)){
     
     N_jobs_at_a_time = 20
     
-    cat("Running for", length(missing), realm, "species\n")
+    cat("Running for", nrow(missing), realm, "species\n")
     
     for(i in 1:nrow(missing)){ 
         
@@ -156,9 +160,12 @@ for(j in 1:length(realms)){
         if(realmtogo=="Ter"){
             cat("#SBATCH --time=20:00:00\n")
             cat("#SBATCH --partition=bigmem\n")
+            # for normal jobs 
             cat("#SBATCH -c 5\n")
             cat("#SBATCH --mem=100G\n")
-            # cat("#SBATCH --mem=500G\n") # for big jobs that crash
+            # for big jobs that crash
+            cat("#SBATCH --mem=500G\n") 
+            cat("#SBATCH -c 5\n")
         } else {
             cat("#SBATCH --partition=normal\n")
             cat("#SBATCH --mem=50G\n")

@@ -1,0 +1,369 @@
+---
+title: "Get species data for SDMs"
+author: "Brunno F Oliveira & Bioshifts group"
+date: "Last compiled on `r Sys.Date()`"
+output:
+    html_document:
+        toc: true
+        toc_float: true
+        number_sections: true
+        code_folding: hide
+---
+
+# *Setup*
+
+```{r setup, message = FALSE, warning = FALSE, include = FALSE}
+
+rm(list=ls())
+gc()
+
+list.of.packages <- c("dplyr", "here", "tidyr","data.table", "ggplot2", "pbapply","ggvenn")
+
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+
+if(length(new.packages)) install.packages(new.packages)
+
+sapply(list.of.packages, require, character.only = TRUE)
+
+```
+
+# *Load species list*
+
+```{r}
+computer = "personal"
+
+source(here("R/settings.R"))
+source(here("R/bioshifts_fix_columns.R"))
+
+N_OCC <- read.csv(here("Data/N_OCC.csv"))
+splist <- read.csv(here("Data/Bioshifts/splist_v3.csv"), header = T)
+
+```
+
+
+# *N species*
+N species in bioshifts
+```{r}
+# remove duplicated sp_names
+splist <- splist %>%
+    dplyr::select(scientificName,kingdom,phylum,class,order,family,db,db_code) %>%
+    filter(!duplicated(scientificName))
+
+# original N species v1
+nrow(splist)
+```
+
+N species in bioshifts with GBIF data. This are only species with > 30 occurrence records
+```{r}
+# subset species with occurrences in GBIF after removing the species mentioned above
+gbifocc <- N_OCC %>%
+    dplyr::select(scientificName,kingdom,phylum,class,order,family,db,N_OCC,Eco) %>%
+    filter(!duplicated(scientificName))
+N_OCC <- gbifocc %>%
+    filter(N_OCC > 30)
+nrow(N_OCC)
+
+all(N_OCC$scientificName %in% splist$scientificName)
+```
+
+By Eco and group
+
+```{r}
+## Terrestrials
+N_OCC %>%
+    filter(Eco == "Ter") %>%
+    group_by(class) %>%
+    tally() %>%
+    arrange(by = desc(n))
+
+## Marine
+N_OCC %>%
+    filter(Eco == "Mar") %>%
+    group_by(class) %>%
+    tally() %>%
+    arrange(by = desc(n))
+
+table(N_OCC$Eco)
+
+####################
+#### Plot
+my_levels <- names(sort(table(N_OCC$class)))
+ggplot(N_OCC %>%
+           mutate(class = factor(class, levels = my_levels)), 
+       aes(y = class))+
+    geom_bar()+
+    theme_classic()+
+    # coord_flip()+
+    xlab("N species")+ylab("")+
+    # theme(axis.text.x = element_text(angle = 45, hjust=1))+
+    facet_wrap(.~Eco, scales = "free")
+
+```
+
+
+# *N shifts*
+N shifts in bioshifts
+```{r}
+bioshifts <- read.csv(here::here(Bioshifts_dir, Bioshifts_DB_v3), header = T)
+bioshifts <- bioshifts_fix_columns(bioshifts)
+length(unique(bioshifts$sp_name_std))
+```
+
+N shifts in bioshifts for the species with GBIF data
+```{r}
+# subset species with occurrences in GBIF after removing the species mentioned above
+bioshifts <- bioshifts %>% 
+    filter(sp_name_std %in% N_OCC$scientificName)
+length(unique(bioshifts$sp_name_std))
+
+all(N_OCC$scientificName %in% splist$scientificName)
+
+bioshifts %>%
+    group_by(class,Eco,Type,Param) %>%
+    tally()
+
+####################
+#### Plot
+my_levels <- names(sort(table(bioshifts$class)))
+
+ggplot(bioshifts %>%
+           mutate(class = factor(class, levels = my_levels)) %>%
+           filter(Eco == "Ter" | Eco == "Mar"), 
+       aes(x = class))+
+    geom_bar()+
+    theme_classic()+
+    # coord_flip()+
+    ylab("N shifts")+xlab("")+
+    theme(axis.text.x = element_text(angle = 45, hjust=1))+
+    facet_wrap(.~Eco, scales = "free")
+
+```
+
+Per range position
+```{r fig.height=7, fig.width=5}
+
+ggplot(bioshifts %>%
+           filter(Eco == "Ter" | Eco == "Mar"), 
+       aes(y = class))+
+    ggtitle("Terrestrial")+
+    geom_bar()+
+    theme_classic()+
+    # coord_flip()+
+    xlab("N shifts")+ylab("")+
+    theme(axis.text.x = element_text(angle = 45, hjust=1))+
+    facet_grid(Eco~Param, scales = "free")
+
+```
+
+# *Percent of data with GBIF occurrences*
+
+```{r fig.height=10, fig.width=4}
+# all species
+all_spp <- read.csv(here("Data/Bioshifts/splist_v3.csv"), header = T)
+length(unique(all_spp$scientificName)) # 12410
+all_spp <- all_spp %>% select(class,scientificName)
+all_spp <- unique(all_spp)
+nrow(all_spp)
+
+# bioshifts Lat
+bioshifts <- read.csv(here::here(Bioshifts_dir, Bioshifts_DB_v3), header = T)
+bioshifts <- bioshifts_fix_columns(bioshifts)
+length(unique(bioshifts$sp_name_std)) # 12410
+# Select latitude shifts 
+lat_spp <- bioshifts %>%
+    filter(Type == "LAT") %>%
+    select(class,sp_name_std)
+lat_spp <- unique(lat_spp)
+nrow(lat_spp) # 6257
+
+# select shifts within the temporal extent of environmental data
+temp_spp <- bioshifts  %>%
+    filter(Type == "LAT") %>%
+    filter(Eco == "Ter" & (Start >= (temporal_range_env_data("Ter")[1] + n_yr_bioclimatic)) | # Shifts Marine or Terrestrial + within time period of the environmental data
+               (Eco == "Mar" & (Start >= (temporal_range_env_data("Mar")[1] + n_yr_bioclimatic))))  %>%
+    select(class,sp_name_std)
+temp_spp <- unique(temp_spp)
+nrow(temp_spp) # 5508
+
+# N_Occ > 30
+N_OCC <- read.csv(here("Data/N_OCC.csv"))
+N_OCC <- N_OCC %>% 
+    filter(db=="GBIF",
+           N_OCC > 30) %>%
+    select(class, scientificName)
+N_OCC <- unique(N_OCC)
+nrow(N_OCC) # 5243
+```
+
+
+```{r fig.height=5, fig.width=7}
+
+x <- list(Temp_Range = temp_spp$sp_name_std,
+          GBIF = N_OCC$scientificName,
+          Latitude = lat_spp$sp_name_std,
+          All_spp = all_spp$scientificName)
+
+names(x) = c("Temperature\nrange", "GBIF","Latitude","Bioshifts")
+
+ggvenn(
+    x,
+    # fill_color = c("#0073C2FF", "#CD534CFF"),
+    stroke_size = 0.5, set_name_size = 4
+)
+
+```
+
+This includes elevational shifts. If we considering only latitudinal shifts...
+
+```{r fig.height=5, fig.width=5}
+
+x <- list(Temp_Range = temp_spp$sp_name_std,
+          GBIF = N_OCC$scientificName,
+          Latitude = lat_spp$sp_name_std)
+
+names(x) = c("Temperature range", "GBIF","Latitude")
+
+ggvenn(
+    x,
+    # fill_color = c("#0073C2FF", "#CD534CFF"),
+    stroke_size = 0.5, set_name_size = 4
+)
+
+
+```
+
+```{r fig.height=10, fig.width=4}
+# Freq tables
+# all_spp
+all_spp <- data.frame(table(all_spp$class))
+names(all_spp) <- c("Class","Bioshifts_Freq")
+
+# N_OCC
+N_OCC <- data.frame(table(N_OCC$class))
+names(N_OCC) <- c("Class","GBIF_Freq")
+
+# lat data
+lat_spp <- data.frame(table(lat_spp$class))
+names(lat_spp) <- c("Class","Lat_Freq")
+
+# temporal data
+temp_spp <- data.frame(table(temp_spp$class))
+names(temp_spp) <- c("Class","Temp_Freq")
+
+bio <- merge(all_spp, N_OCC, all.x = TRUE)
+bio <- merge(bio, lat_spp, all.x = TRUE)
+bio <- merge(bio, temp_spp, all.x = TRUE)
+bio[is.na(bio)] <- 0
+
+bio$GBIF_perc = paste(round((bio$GBIF_Freq/bio$Bioshifts_Freq)*100,2),"%")
+# bio$Lat_perc = paste(round((bio$Lat_Freq/bio$Bioshifts_Freq)*100,2),"%")
+# bio$Temp_perc = paste(round((bio$Temp_Freq/bio$Bioshifts_Freq)*100,2),"%")
+
+bio_freq_melted <- reshape::melt(bio[,c(1:5)], id="Class")
+bio_freq_melted$variable <- gsub("_Freq","",bio_freq_melted$variable)
+bio_freq_melted$Freq <- bio_freq_melted$value
+
+bio_perc_melted <- reshape::melt(bio[,c(1,6)], id="Class")
+bio_perc_melted$variable <- gsub("_perc","",bio_perc_melted$variable)
+bio_perc_melted$Perc <- bio_perc_melted$value
+
+bio_melted <- merge(bio_freq_melted[,-3], bio_perc_melted[,-3],
+                    by=c("Class","variable"),
+                    all.x = TRUE)
+
+# 
+# melted <- merge(melted, bio[,c(1,4)])
+# melted$percent[which(melted$variable == "GBIF_Freq")] = NA
+# melted
+# keep <- unique(melted$Class[which(melted$value > 20)])
+# toplot = melted[which(melted$Class %in% keep),]
+# levels_plot <- toplot %>%
+#     filter(!is.na(percent))
+```
+
+
+```{r fig.height=10, fig.width=7}
+
+bio_melted$Class <- factor(bio_melted$Class, levels = unique(bio_melted$Class[order(bio_melted$Freq)]))
+
+ggplot(bio_melted, 
+       aes(x = Class, y = Freq, fill = variable))+
+    geom_bar(stat="identity", position = "identity", alpha = .5) +
+    geom_text(aes(label=Perc),
+              stat='identity', size = 3, hjust = "inward")+
+    coord_flip()+
+    ylab("N species")+
+    theme_classic()+
+    theme(legend.position="bottom",
+          legend.title = element_blank())
+
+```
+
+Filter classes with > 10 species
+
+```{r}
+# > 10 species
+my_sel <- bio_melted %>%
+    filter(variable == "Bioshifts" & Freq > 10)
+my_sel <- bio_melted %>%
+    filter(Class %in% my_sel$Class)
+my_sel
+
+ggplot(my_sel, aes(x = Class, y = Freq, fill = variable))+
+    geom_bar(stat="identity", position = "identity", alpha = .5) +
+    geom_text(aes(label=Perc),
+              stat='identity', size = 3, hjust = "inward")+
+    coord_flip()+
+    ylab("N species")+
+    theme_classic()+
+    theme(legend.position="bottom",
+          legend.title = element_blank())
+```
+
+Filter latitude shifts only
+
+```{r}
+
+bio <- merge(N_OCC, lat_spp, all.x = TRUE)
+bio <- merge(bio, temp_spp, all.x = TRUE)
+bio[is.na(bio)] <- 0
+
+bio$GBIF_perc = paste(round((bio$GBIF_Freq/bio$Lat_Freq)*100,2),"%")
+# bio$Lat_perc = paste(round((bio$Lat_Freq/bio$Bioshifts_Freq)*100,2),"%")
+# bio$Temp_perc = paste(round((bio$Temp_Freq/bio$Bioshifts_Freq)*100,2),"%")
+
+bio_freq_melted <- reshape::melt(bio[,c(1:4)], id="Class")
+bio_freq_melted$variable <- gsub("_Freq","",bio_freq_melted$variable)
+bio_freq_melted$Freq <- bio_freq_melted$value
+
+bio_perc_melted <- reshape::melt(bio[,c(1,5)], id="Class")
+bio_perc_melted$variable <- gsub("_perc","",bio_perc_melted$variable)
+bio_perc_melted$Perc <- bio_perc_melted$value
+
+bio_melted <- merge(bio_freq_melted[,-3], bio_perc_melted[,-3],
+                    by=c("Class","variable"),
+                    all.x = TRUE)
+bio_melted$Class <- factor(bio_melted$Class, levels = unique(bio_melted$Class[order(bio_melted$Freq)]))
+
+# > 10 species
+my_sel <- bio_melted %>%
+    filter(variable == "Lat" & Freq > 10)
+my_sel <- bio_melted %>%
+    filter(Class %in% my_sel$Class)
+my_sel
+
+ggplot(my_sel, aes(x = Class, y = Freq, fill = variable))+
+    geom_bar(stat="identity", position = "identity", alpha = .5) +
+    geom_text(aes(label=Perc),
+              stat='identity', size = 3, hjust = "inward")+
+    coord_flip()+
+    ylab("N species")+
+    theme_classic()+
+    theme(legend.position="bottom",
+          legend.title = element_blank())
+```
+
+```{r}
+sessionInfo()
+```
+

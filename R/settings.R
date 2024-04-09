@@ -18,7 +18,7 @@ mar_data <- "oras"
 # Bioshifts database
 Bioshifts_DB_v1 <- "biov1_fixednames.csv"
 Bioshifts_DB_v2 <- "biov2_fixednames.csv"
-Bioshifts_DB_v3 <- "BIOSHIFTS_v3_24032024_methodo_rate.csv"
+Bioshifts_DB_v3 <- "bioshifts_v3_harmonized.csv"
 
 # basis of records for downloading GBIF data
 basisOfRecord = c("HUMAN_OBSERVATION", "OBSERVATION", "OCCURRENCE")

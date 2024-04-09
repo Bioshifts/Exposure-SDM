@@ -12,9 +12,6 @@ library(here)
 # set computer
 computer = "matrics"
 
-if(computer == "muse"){
-    setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
-    }
 if(computer == "matrics"){
     setwd("/users/boliveira/Exposure-SDM")
 }
@@ -40,59 +37,49 @@ if(!dir.exists(jobdir)){
 Rscript_file = here::here(sdm_script_dir,"1_run_sdm.R")
 
 ########################
-
-# sp list
+# sp I have environmental data
 all_sps <- list.files(here::here(sps.dir), pattern = '.qs', recursive = TRUE)
-all_sps <- gsub("_"," ",all_sps)
 all_sps <- gsub(".qs","",all_sps)
 all_sps <- sapply(all_sps, function(x){
     tmp <- strsplit(x,"/")[[1]][2]
-    tmp <- strsplit(tmp," ")[[1]][1:2]
-    return(paste(tmp,collapse = " "))
+    tmp <- strsplit(tmp,"_")[[1]][1:2]
+    return(paste(tmp,collapse = "_"))
 })
 
-length(all_sps)
+length(all_sps) # 1857
 
-# select only v1 species for now
-biov1 <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v1), header = T)
-length(unique(biov1$ssp))
+#####################
+# v1 species for now
+bioshifts <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v3), header = T)
 
 # v1 from IDs we have selected for v3
 v3_selected <- unique(c(
     list.files(bios_SA_dir("Ter")),
     list.files(bios_SA_dir("Mar"))))
-biov1 <- biov1[biov1$ID %in% v3_selected,]
+bioshifts <- bioshifts[bioshifts$ID %in% v3_selected,]
+length(unique(bioshifts$sp_name_std_v1)) # 12198
 
 # only LAT
-biov1$Type[which(biov1$Type=="HOR")] <- "LAT"
-biov1 <- biov1[which(biov1$Type=="LAT"),]
-all_sps <- all_sps[all_sps %in% gsub("_"," ",biov1$sp_name_std_v1)]
-length(all_sps)
-
-#####################
+bioshifts <- bioshifts[which(bioshifts$Type=="LAT"),]
 # Separate terrestrials from marines
-terrestrials <- gsub("_"," ",biov1$sp_name_std_v1[which(biov1$ECO == "T")])
-marines <- gsub("_"," ",biov1$sp_name_std_v1[which(biov1$ECO == "M")])
-
+terrestrials <- bioshifts$sp_name_std_v1[which(bioshifts$ECO == "T")]
+marines <- bioshifts$sp_name_std_v1[which(bioshifts$ECO == "M")]
 # Use temporal period from the environmental data
-biov1_ter <- biov1 %>% filter(START >= temporal_range_env_data("Ter")[1] + n_yr_bioclimatic,
-                              sp_name_std_v1 %in% terrestrials)
-biov1_mar <- biov1 %>% filter(START >= temporal_range_env_data("Mar")[1] + n_yr_bioclimatic,
-                              sp_name_std_v1 %in% marines)
+bioshifts_ter <- bioshifts[bioshifts$START >= temporal_range_env_data("Ter")[1] + n_yr_bioclimatic & bioshifts$sp_name_std_v1 %in% terrestrials,]
+bioshifts_mar <- bioshifts[bioshifts$START >= temporal_range_env_data("Mar")[1] + n_yr_bioclimatic & bioshifts$sp_name_std_v1 %in% marines,]
+bioshifts <- rbind(bioshifts_ter,
+               bioshifts_mar)
 
-biov1 <- rbind(biov1_ter,
-               biov1_mar)
-
-all_sps <- all_sps[all_sps %in% gsub("_"," ",biov1$sp_name_std_v1)]
-length(all_sps)
+all_sps <- all_sps[all_sps %in% bioshifts$sp_name_std_v1]
+length(all_sps) # 1748
 
 ter_sps <- all_sps[which(all_sps %in% terrestrials)]
 ter_sps <- data.frame(sps = ter_sps, realm = "Ter")
-nrow(ter_sps)
+nrow(ter_sps) # 1366
 
 mar_sps <- all_sps[which(all_sps %in% marines)]
 mar_sps <- data.frame(sps = mar_sps, realm = "Mar")
-nrow(mar_sps)
+nrow(mar_sps) # 382
 
 # pipe line of species: first marines (because they run faster due to coarser resolution data) then terrestrials
 all_sps <- rbind(mar_sps, ter_sps)
@@ -108,7 +95,7 @@ for(i in 1:nrow(all_sps)){
     
     # models
     files_sdms <- list.files(
-        here::here(sdm_dir(all_sps$realm[i]),gsub(" ","_",all_sps$sps[i]),gsub(" ",".",all_sps$sps[i]),"models"), 
+        here::here(sdm_dir(all_sps$realm[i]),all_sps$sps[i],gsub("_",".",all_sps$sps[i]),"models"), 
         full.names = TRUE)  
     
     if(length(files_sdms) > 1){ # if there are > 1 model, keep the most recent one
@@ -119,7 +106,7 @@ for(i in 1:nrow(all_sps)){
     
     # link to models
     files_sdms_model <- list.files(
-        here::here(sdm_dir(all_sps$realm[i]),gsub(" ","_",all_sps$sps[i]),gsub(" ",".",all_sps$sps[i])), 
+        here::here(sdm_dir(all_sps$realm[i]),all_sps$sps[i],gsub("_",".",all_sps$sps[i])), 
         pattern = "models.out",
         full.names = TRUE)  
     
@@ -141,31 +128,28 @@ for(i in 1:nrow(all_sps)){
 
 #####################
 # 2nd) get missing species
-# species we have env data but dont have sdms
-I_have <- c()
-for(i in 1:nrow(all_sps)) { cat(i, "from", nrow(all_sps),"\r")
-    sp_i <- gsub(" ","_",all_sps$sps[i])
-    sp_i_realm <- gsub(" ","_",all_sps$realm[i])
-    # get studies for species i
-    ID_i <- unique(biov1$ID[which(biov1$sp_name_std_v1 == sp_i)])
-    # for each ID_i, look if has projections for all years
-    I_have[i] <- all(sapply(ID_i, function(x){
-        bio_i <- biov1[which(biov1$ID == x),]
-        years_ID_i <- round(bio_i$START[1],0):round(bio_i$END[1],0)
-        # check
-        # Focus on SA for now
-        sdms_sp_i <- list.files(paste(sdm_dir(sp_i_realm),sp_i,gsub("_",".",sp_i),sep = "/"),pattern = "SA")
-        # get ensemble models
-        sdms_sp_i_ens <- sdms_sp_i[grep(" ens",sdms_sp_i)]
-        # get single algorithms
-        # sdms_sp_i <- sdms_sp_i[-grep(" ens",sdms_sp_i)]
-        # check if all years exist
-        sdms_sp_i_ens <- all(sapply(years_ID_i, function(x){any(grepl(x,sdms_sp_i_ens))}))
-        # sdms_sp_i <- all(sapply(years_ID_i, function(x){any(grepl(x,sdms_sp_i))}))
-        # all(sdms_sp_i,sdms_sp_i_ens)
-        sdms_sp_i_ens
-    }))
-}
+# species we have env data but dont have sdms 
+# sp list I have sdms
+all_sps_ter_ter <- list.dirs(here::here(sdm_dir("Ter")), recursive = FALSE, full.names = FALSE)
+length(all_sps_ter_ter)
+
+test <- sapply(all_sps_ter, function(x){
+    file.exists(here::here(sdm_dir("Ter"),x,paste(x,"shift_info.csv")))
+})
+all_sps_ter <- all_sps_ter[test]
+length(all_sps_ter)
+
+all_sps_mar <- list.dirs(here::here(sdm_dir("Mar")), recursive = FALSE, full.names = FALSE)
+length(all_sps_mar_mar)
+
+test <- sapply(all_sps_mar, function(x){
+    file.exists(here::here(sdm_dir("Mar"),x,paste(x,"shift_info.csv")))
+})
+all_sps_mar <- all_sps_mar[test]
+length(all_sps_mar)
+
+I_have_SDMs <- rbind(data.frame(sps = all_sps_ter, realm = "Ter"),
+                     data.frame(sps = all_sps_mar, realm = "Mar"))
 
 missing_sps <- !I_have
 

@@ -36,6 +36,10 @@ IDtogo <- as.character(paste(command_args[3], collapse = " "))
 # realm <- "Mar"
 # IDtogo = "A176_P1"
 
+# sptogo="Abies_balsamea"
+# realm <- "Ter"
+# IDtogo = "A40_P1"
+
 print(sptogo)
 print(realm)
 print(IDtogo)
@@ -58,6 +62,11 @@ sdm_dir <- sdm_dir(realm)
 # create dirs
 if(!dir.exists(shift_dir)){
     dir.create(shift_dir,recursive = TRUE)
+}
+# create dirs
+tmp_dir_sps <- here::here(tmp_dir,paste(sptogo,IDtogo,realm))
+if(!dir.exists(tmp_dir_sps)){
+    dir.create(tmp_dir_sps,recursive = TRUE)
 }
 
 ########################
@@ -149,7 +158,7 @@ sdms_i <- terra::project(sdms_i,Eckt)
 # calculate the trend (C/year)
 cat("calculate the trend\n")
 
-ttrend_file <- here::here(tmp_dir, paste0("trend_",shift_ID,".tif"))
+ttrend_file <- here::here(tmp_dir_sps, paste0("trend_",shift_ID,".tif"))
 ttrend <- try(terra::rast(ttrend_file),silent = TRUE)
 if(class(ttrend)=="try-error"){
     ttrend = temp_grad(
@@ -157,12 +166,12 @@ if(class(ttrend)=="try-error"){
         th = 0.25*nlyr(sdms_i), ## set minimum N obs. to 1/4 time series length
         tempfile = ttrend_file,
         overwrite = TRUE,
-        ncores = ncores)
+        ncores = NULL) # no improvement in speed for trend function
 }
 
 #######
 # Get averaged climate layers
-avg_sdm_file <- here::here(tmp_dir, paste0("AvgSDM_",shift_ID,".tif"))
+avg_sdm_file <- here::here(tmp_dir_sps, paste0("AvgSDM_",shift_ID,".tif"))
 avg_sdms <- try(terra::rast(avg_sdm_file),silent = TRUE)
 if(class(avg_sdms)=="try-error"){
     avg_sdms <- terra::app(
@@ -178,7 +187,7 @@ if(class(avg_sdms)=="try-error"){
 # Get the spatial gradient (C/km)
 cat("calculate the spatial gradient\n")
 
-spgrad_file <- here::here(tmp_dir, paste0("spgrad_",shift_ID,".qs"))
+spgrad_file <- here::here(tmp_dir_sps, paste0("spgrad_",shift_ID,".qs"))
 spgrad <- try(qs::qread(spgrad_file, nthreads = ncores),silent = TRUE)
 if(any(class(spgrad)=="try-error")){
     
@@ -192,44 +201,44 @@ if(any(class(spgrad)=="try-error")){
         big <- area_i > 10^4
         
         if(big){
+            
+            # Make tiles for faster processing
             avg_sdms_tiles <- avg_sdms
             # define tile resolution 
             nrow(avg_sdms_tiles) <- round(nrow(avg_sdms)/100,0)
             ncol(avg_sdms_tiles) <- round(ncol(avg_sdms)/100,0)
             avg_sdms_tiles[] <- 1:ncell(avg_sdms_tiles)
-            # mask raster
-            SA_i_Eck <- terra::project(SA_i,avg_sdms_tiles)
-            avg_sdms_tiles <- terra::mask(avg_sdms_tiles, SA_i_Eck)
+            filename <- here::here(tmp_dir_sps, paste0("spgrad_tile_",shift_ID,".tif"))
+            avg_sdms_tiles <- makeTiles(avg_sdms,avg_sdms_tiles,filename,
+                                        na.rm=TRUE,# tiles with empty cells are ignored
+                                        extend=TRUE)
             
-            # plot(avg_sdms_tiles);plot(SA_i_Eck,add=T);dev.off()
-            
-            parallel::mclapply(terra::cells(avg_sdms_tiles), function(x) {
-                tmp_file <- here::here(tmp_dir, paste0("spgrad_tile",x,"_",shift_ID,".qs"))
-                test <- try(qs::qread(tmp_file),silent = TRUE)
+            # parallelize spatial gradient over tiles
+            trash <- parallel::mclapply(1:length(avg_sdms_tiles), function(i) {
+                tmp_file <- avg_sdms_tiles[i]
+                tmp_done_file <- gsub("spgrad_tile_","spgrad_done_tile_",tmp_file)
+                test <- try(terra::rast(tmp_done_file),silent = TRUE)
                 if(any(class(test)=="try-error")){
-                    tmp_ext <- ext(avg_sdms_tiles, x)
-                    terra::window(avg_sdms) <- tmp_ext
-                    tmp_data <- spatial_grad(avg_sdms)
-                    terra::window(avg_sdms) <- NULL
-                    # plug in "real" icells
-                    real_cells <- terra::cells(avg_sdms, tmp_ext)
-                    tmp_data$icell <- real_cells
-                    qs::qsave(tmp_data, tmp_file)
+                    tmp_data_rast <- rast(tmp_file)
+                    tmp_data <- spatial_grad(tmp_data_rast)
+                    tmp_data <- data.frame(tmp_data)
+                    tmp_data_columns <- names(tmp_data[,2:5])
+                    # save rasters for each spgrad var
+                    tmp_data_rast <- lapply(tmp_data_columns, function(i){
+                        tmp_data_rast[tmp_data$icell] <- as.numeric(tmp_data[,i])
+                        return(tmp_data_rast)
+                    })
+                    tmp_data_rast <- rast(tmp_data_rast)
+                    names(tmp_data_rast) <- tmp_data_columns
+                    writeRaster(tmp_data_rast, tmp_done_file, overwrite = TRUE)
                 }
             }, mc.cores = ncores)
             
-            spgrad <- lapply(terra::cells(avg_sdms_tiles), function(x) {
-                tmp_file <- here::here(tmp_dir, paste0("spgrad_tile",x,"_",shift_ID,".qs"))
-                qs::qread(tmp_file)
-            })
+            # group tiles back together
+            spgrad <- vrt(gsub("spgrad_tile_","spgrad_done_tile_",avg_sdms_tiles))
             
-            spgrad <- data.frame(data.table::rbindlist(spgrad))
-            
-            # delete temporary files
-            del_files <- lapply(terra::cells(avg_sdms_tiles), function(x) {
-                tmp_file <- here::here(tmp_dir, paste0("spgrad_tile",x,"_",shift_ID,".qs"))
-                unlink(tmp_file)
-            })
+            spgrad <- as.data.frame(spgrad, cells=TRUE)
+            names(spgrad) <- c("icell", "WE", "NS", "angle", "Grad")
             
             qs::qsave(spgrad, spgrad_file)
             
@@ -336,6 +345,13 @@ shifts_SA_ens <- data.frame(bv.trend.mean, bv.trend.sd,
                             bv.lat.mean, bv.lat.median, bv.lat.sd,
                             edge_lat)
 
+if(nrow(shifts_SA_ens)>0){
+    write.csv(shifts_SA_ens, 
+              here::here(shift_dir,
+                         paste0(shift_ID,".csv")),
+              row.names = FALSE)
+    
+}
 
 #######
 cat("Save bioclimatic velocity maps\n")
@@ -350,16 +366,8 @@ terra::writeRaster(bVelLat,
 
 #######
 # delete temporary files
-unlink(ttrend_file)
-unlink(spgrad_file)
-unlink(avg_sdm_file)
+unlink(tmp_dir_sps,recursive = TRUE)
 
 
-if(nrow(shifts_SA_ens)>0){
-    write.csv(shifts_SA_ens, 
-              here::here(shift_dir,
-                         paste0(shift_ID,".csv")),
-              row.names = FALSE)
-    
-}
+
 
