@@ -23,28 +23,18 @@ computer = "personal"
 
 # Load functions
 source("R/settings.R")
-source("R/bioshifts_fix_columns.R")
+source("R/my_functions.R")
 
 # load sp list
 splist <- read.csv(here::here(Bioshifts_dir, "splist_v3.csv"))
-length(unique(splist$scientificName)) # 12410
+splist <- splist %>% filter(db == "GBIF")
+length(unique(splist$scientificName)) # 12360
 
 # Load raw bioshifts
 # Load v3
 bioshifts <- read.csv(here::here(Bioshifts_dir, Bioshifts_DB_v3), header = T)
-bioshifts <- bioshifts_fix_columns(bioshifts)
-length(unique(bioshifts$sp_name_std)) # 12410
-
-# Select latitude shifts 
-bioshifts <- bioshifts %>%
-    filter(Type == "LAT") 
-length(unique(bioshifts$sp_name_std)) # 6257
-
-# select shifts within the temporal extent of environmental data
-bioshifts <- bioshifts %>%
-    filter(Eco == "Ter" & (Start >= (temporal_range_env_data("Ter")[1] + n_yr_bioclimatic)) | # Shifts Marine or Terrestrial + within time period of the environmental data
-               (Eco == "Mar" & (Start >= (temporal_range_env_data("Mar")[1] + n_yr_bioclimatic)))) 
-length(unique(bioshifts$sp_name_std)) # 5508
+bioshifts <- bioshifts_sdms_selection(bioshifts)
+length(unique(bioshifts$sp_name_std)) # 5495
 
 all_sps <- unique(bioshifts$sp_name_std)
 
@@ -56,7 +46,7 @@ splist <- merge(splist, bioshifts[,c("sp_name_std","Eco")],
                 all.x = TRUE)
 
 splist <- unique(splist)
-length(unique(splist$db_code)) # 5508
+length(unique(splist$scientificName)) # 5471
 
 ######################
 # N occurrences GBIF
@@ -85,6 +75,8 @@ N_OCC <- pbsapply(1:nrow(splist_GBIF), function(i) {
         rgbif::occ_count(taxonKey = code_i,
                          hasGeospatialIssue = FALSE,
                          basisOfRecord = b,
+                         hasCoordinate = TRUE, 
+                         occurrenceStatus = "PRESENT",
                          year = tr_i) 
     })
     

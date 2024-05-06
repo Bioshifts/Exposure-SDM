@@ -171,7 +171,7 @@ PCA_env <- function(
     
     ## all bios SA
     all_bios_SA <- sapply(1:nrow(shift_info), function(i) {
-        paste0(shift_info$ID[i], " bios ", round(shift_info$START[i],0):round(shift_info$END[i],0), ".tif")
+        paste0(shift_info$ID[i], " bios ", round(shift_info$Start[i],0):round(shift_info$End[i],0), ".tif")
     })
     all_bios_SA <- as.vector(unlist(all_bios_SA))
     ## all bios SA PC 

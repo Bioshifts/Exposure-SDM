@@ -24,38 +24,34 @@ if(computer == "matrics"){
 
 # source settings
 source("R/settings.R")
-
-script.dir <- velocity_SA_scrit_dir
+source("R/my_functions.R")
 
 # create dir for log files
-logdir <- here::here(script.dir,"slurm-log")
+logdir <- here::here(velocity_script_dir,"slurm-log")
 if(!dir.exists(logdir)){
     dir.create(logdir,recursive = TRUE)
 }
 
 # create dir for job files
-jobdir <- here::here(script.dir,"job")
+jobdir <- here::here(velocity_script_dir,"job")
 if(!dir.exists(jobdir)){
     dir.create(jobdir,recursive = TRUE)
 }
 
-Rscript_file = here::here(script.dir,"1_get_velocity_SA.R")
+Rscript_file = here::here(velocity_script_dir,"1_get_velocity_SA.R")
 
 # Load study areas v3
 v3_polygons <- gsub(".shp","",list.files(SA_shps_dir,pattern = ".shp"))
 
-
-Bioshifts_DB_v1 <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v1))
-Bioshifts_DB_v2 <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v2))
-Bioshifts_DB_v2$ID <- paste0("B",Bioshifts_DB_v2$Paper.ID,"_",Bioshifts_DB_v2$Study.Period)
-Bioshifts_DB_v2$ECO <- ifelse(Bioshifts_DB_v2$Ecosystem.Type=="marine","M","T")
-
-Bioshifts_DB_v1 <- Bioshifts_DB_v1[,c("ID","ECO")]
-Bioshifts_DB_v2 <- Bioshifts_DB_v2[,c("ID","ECO")]
-
-Bioshifts_DB <- rbind(Bioshifts_DB_v1,
-                      Bioshifts_DB_v2)
-Bioshifts_DB <- Bioshifts_DB[-which(duplicated(Bioshifts_DB$ID)),]
+Bioshifts_DB <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v3))
+Bioshifts_DB <- bioshifts_fix_columns(Bioshifts_DB)
+Bioshifts_DB <- Bioshifts_DB %>%
+    mutate(new_eco = ifelse(
+        Eco == "Mar", "Mar", ifelse(Eco != "Mar", "Ter", NA))) %>%
+    mutate(Eco = new_eco)
+Bioshifts_DB <- Bioshifts_DB %>%
+    select(ID, Eco) %>%
+    unique()
 
 ##############################
 # Rerun just for marines
@@ -65,26 +61,33 @@ Bioshifts_DB <- Bioshifts_DB[-which(duplicated(Bioshifts_DB$ID)),]
 # Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$ECO=="T"),]
 ##############################
 
+any(!Bioshifts_DB$ID %in% v3_polygons)
+
 # Filter Polygons in Study areas v3
 v3_polygons <- v3_polygons[v3_polygons %in% Bioshifts_DB$ID]
 
-# Get polygons metadata
-v3_polygons_metadata <- read.csv(here::here(Bioshifts_dir,"Geodatabase_Bioshiftsv3_metadata.csv"))
-v3_polygons_metadata <- v3_polygons_metadata[v3_polygons_metadata$Name %in% v3_polygons,]
-v3_polygons_metadata$ECO <- ifelse(is.na(v3_polygons_metadata$EleExtentm),"Mar","Ter")
+# missing 
+I_have <- sapply(Bioshifts_DB$ID, function(x){
+    file.exists(here::here(velocity_SA_dir, paste0(x,".csv")))
+})
+   
+missing <- Bioshifts_DB[which(!I_have),]
+nrow(missing)
 
 ########################
 # submit jobs
 
 N_jobs_at_a_time = 50
+N_Nodes = 1
+tasks_per_core = 1
 
 # Check if file exists
-check_if_file_exists <- FALSE
+check_if_file_exists <- TRUE
 
-for(i in 1:nrow(v3_polygons_metadata)){
+for(i in 1:nrow(Bioshifts_DB)){
     
-    SAtogo <- v3_polygons_metadata$Name[i]
-    ECO <- v3_polygons_metadata$ECO[i]
+    SAtogo <- Bioshifts_DB$ID[i]
+    ECO <- Bioshifts_DB$Eco[i]
     
     args = SAtogo
     
@@ -99,58 +102,53 @@ for(i in 1:nrow(v3_polygons_metadata)){
         RUN <- TRUE
     }
     if(RUN){
-        # Start writing to this file
-        sink(here::here(jobdir,paste0(SAtogo,'.sh')))
         
-        # the basic job submission script is a bash script
-        cat("#!/bin/bash\n")
+        # check if job for this SA is running
+        test <- system("squeue --format='%.50j' --me", intern = TRUE)
+        test <- gsub(" ","",test)
         
-        cat("#SBATCH -N 1\n")
-        cat("#SBATCH -n 1\n")
-        
-        if(ECO=="Ter"){
-            cat("#SBATCH --time=2-20:00:00\n")
-            cat("#SBATCH --partition=bigmem-amd\n")
-            cat("#SBATCH -c 5\n")
-            # cat("#SBATCH --mem=100G\n")
-            cat("#SBATCH --mem=500G\n") # for big jobs that crash
-        } else {
-            cat("#SBATCH --partition=normal\n")
-            cat("#SBATCH --mem=50G\n")
-            cat("#SBATCH --time=1-24:00:00\n")
-            cat("#SBATCH -c 1\n")
-        }
-        
-        cat("#SBATCH --job-name=",SAtogo,"\n", sep="")
-        cat("#SBATCH --output=",here::here(logdir,paste0(SAtogo,".out")),"\n", sep="")
-        cat("#SBATCH --error=",here::here(logdir,paste0(SAtogo,".err")),"\n", sep="")
-        # cat("#SBATCH --mail-type=ALL\n")
-        # cat("#SBATCH --mail-user=brunno.oliveira@fondationbiodiversite.fr\n")
-        
-        cat(paste0("IMG_DIR='",singularity_image,"'\n"))
-        
-        cat("module purge\n")
-        cat("module load singularity\n")
-        
-        cat("singularity exec --disable-cache $IMG_DIR Rscript",Rscript_file, args,"\n", sep=" ")
-        
-        # Close the sink!
-        sink()
-        
-        # Submit to run on cluster
-        system(paste("sbatch", here::here(jobdir, paste0(SAtogo,'.sh'))))
-        
-        # check how many jobs in progress
-        n_sps_going <- system("squeue -u $USER",intern = T)
-        
-        # N sps going
-        n_sps_going <- length(n_sps_going) -1
-        while(n_sps_going>N_jobs_at_a_time){
+        if(!SAtogo %in% test){
             
-            Sys.sleep(10)
+            if(ECO == "Mar"){ # for the Marine use this
+                cores = 1
+                time = "24:00:00"
+                memory = "8G"
+                partition = "bigmem-amd"
+            }
+            if(ECO == "Ter"){ # for the Terrestrial use this (bigger jobs) 
+                cores = 5 # reduce N cores because of out-of-memory issue
+                time = "1-24:00:00"
+                # memory = "100G" # for big jobs that crash
+                memory = "400G" # for big jobs that crash
+                memory = "64G"
+                partition = "bigmem-amd"
+            }
+            
+            slurm_job_singularity(jobdir = jobdir,
+                                  logdir = logdir, 
+                                  sptogo = SAtogo, 
+                                  args = args,
+                                  N_Nodes = N_Nodes, 
+                                  tasks_per_core = tasks_per_core, 
+                                  cores = cores, 
+                                  time = time, 
+                                  memory = memory, 
+                                  partition = partition, 
+                                  singularity_image = singularity_image, 
+                                  Rscript_file = Rscript_file)
+            
+            # check how many jobs in progress
             n_sps_going <- system("squeue -u $USER",intern = T)
-            n_sps_going <- length(n_sps_going) -1
             
+            # N sps going
+            n_sps_going <- length(n_sps_going) -1
+            while(n_sps_going>N_jobs_at_a_time){
+                
+                Sys.sleep(10)
+                n_sps_going <- system("squeue -u $USER",intern = T)
+                n_sps_going <- length(n_sps_going) -1
+                
+            }
         }
     }
 }
@@ -160,19 +158,21 @@ for(i in 1:nrow(v3_polygons_metadata)){
 # list of SA we got data
 SA_got <- list.files(velocity_SA_dir,pattern = "csv")
 SA_got <- gsub(".csv","",SA_got)
-missing_SA <- v3_polygons_metadata$Name[!v3_polygons_metadata$Name %in% SA_got]
+missing_SA <- Bioshifts_DB$Name[!Bioshifts_DB$Name %in% SA_got]
 missing_SA
 
 v3_polygons <- missing_SA
-v3_polygons_metadata <- v3_polygons_metadata[v3_polygons_metadata$Name %in% v3_polygons,]
+Bioshifts_DB <- Bioshifts_DB[Bioshifts_DB$Name %in% v3_polygons,]
 
-head(v3_polygons_metadata)
+head(Bioshifts_DB)
 
 # Check error file
 error_f <- lapply(missing_SA, function(x){
-    tmp <- read.csv(here::here(script.dir,"slurm-log",paste0(x,".err")))
+    tmp <- read.csv(here::here(velocity_script_dir,"slurm-log",paste0(x,".err")))
     tmp[nrow(tmp),]
 })
 error_f
+error_f[1]
 
-
+# A100_P1, A171_P1, A191_P1 = too small area to calculate velocities (not enough grid-cells)
+# A220_P1 = period outside the range of the environmental data

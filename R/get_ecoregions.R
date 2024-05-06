@@ -1,5 +1,5 @@
 # load ecoregions
-get_ecoregions <- function(realm, sptogo, PresAbs, mask.ras, return.shp = TRUE, return.raster = TRUE, varsdir, check_if_exists = TRUE, output_dir){
+get_ecoregions <- function(realm, sptogo, PresAbs, mask.ras, return.shp = TRUE, return.raster = TRUE, varsdir, check_if_exists = TRUE, output_dir=NULL){
     
     if(all(!return.shp,!return.raster)){
         stop("Use return.shp = TRUE or return.raster = TRUE.\nAt least one type of file should be returned.")

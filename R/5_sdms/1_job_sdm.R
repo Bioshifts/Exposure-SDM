@@ -8,6 +8,7 @@ gc()
 
 library(tictoc)
 library(here)
+library(dplyr)
 
 # set computer
 computer = "matrics"
@@ -19,6 +20,7 @@ work_dir <- getwd()
 
 # source settings
 source("R/settings.R")
+source("R/my_functions.R")
 
 sps.dir <- here::here(work_dir,"Data/Env_data")
 
@@ -43,125 +45,116 @@ all_sps <- gsub(".qs","",all_sps)
 all_sps <- sapply(all_sps, function(x){
     tmp <- strsplit(x,"/")[[1]][2]
     tmp <- strsplit(tmp,"_")[[1]][1:2]
-    return(paste(tmp,collapse = "_"))
+    return(paste(tmp,collapse = " "))
 })
 
-length(all_sps) # 1857
+length(all_sps) # 2656
 
 #####################
-# v1 species for now
-bioshifts <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v3), header = T)
-
-# v1 from IDs we have selected for v3
-v3_selected <- unique(c(
-    list.files(bios_SA_dir("Ter")),
-    list.files(bios_SA_dir("Mar"))))
-bioshifts <- bioshifts[bioshifts$ID %in% v3_selected,]
-length(unique(bioshifts$sp_name_std_v1)) # 12198
-
-# only LAT
-bioshifts <- bioshifts[which(bioshifts$Type=="LAT"),]
 # Separate terrestrials from marines
-terrestrials <- bioshifts$sp_name_std_v1[which(bioshifts$ECO == "T")]
-marines <- bioshifts$sp_name_std_v1[which(bioshifts$ECO == "M")]
-# Use temporal period from the environmental data
-bioshifts_ter <- bioshifts[bioshifts$START >= temporal_range_env_data("Ter")[1] + n_yr_bioclimatic & bioshifts$sp_name_std_v1 %in% terrestrials,]
-bioshifts_mar <- bioshifts[bioshifts$START >= temporal_range_env_data("Mar")[1] + n_yr_bioclimatic & bioshifts$sp_name_std_v1 %in% marines,]
-bioshifts <- rbind(bioshifts_ter,
-               bioshifts_mar)
+bioshifts <- read.csv(here(Bioshifts_dir,Bioshifts_DB_v3), header = T)
+bioshifts <- bioshifts_sdms_selection(bioshifts)
+bioshifts <- filter(bioshifts, gsub("_"," ",sp_name_std) %in% all_sps)
+head(bioshifts)
 
-all_sps <- all_sps[all_sps %in% bioshifts$sp_name_std_v1]
-length(all_sps) # 1748
+terrestrials <- bioshifts$sp_name_std[which(bioshifts$Eco == "Ter")]
+marines <- bioshifts$sp_name_std[which(bioshifts$Eco == "Mar")]
 
-ter_sps <- all_sps[which(all_sps %in% terrestrials)]
+bioshifts_ter <- bioshifts[bioshifts$sp_name_std %in% terrestrials,]
+bioshifts_mar <- bioshifts[bioshifts$sp_name_std %in% marines,]
+
+ter_sps <- all_sps[which(all_sps %in% gsub("_"," ",terrestrials))]
 ter_sps <- data.frame(sps = ter_sps, realm = "Ter")
-nrow(ter_sps) # 1366
+nrow(ter_sps) # 2055
 
-mar_sps <- all_sps[which(all_sps %in% marines)]
+mar_sps <- all_sps[which(all_sps %in% gsub("_"," ",marines))]
 mar_sps <- data.frame(sps = mar_sps, realm = "Mar")
-nrow(mar_sps) # 382
+nrow(mar_sps) # 602
 
 # pipe line of species: first marines (because they run faster due to coarser resolution data) then terrestrials
 all_sps <- rbind(mar_sps, ter_sps)
-# all_sps = ter_sps
-# all_sps = mar_sps
 nrow(all_sps)
+head(all_sps)
 
 #####################
-# 1st) delete all duplicated sdms
-for(i in 1:nrow(all_sps)){ 
+# 1nd) get missing species
+# Species with sdms projections for all possible shifts
+my_sdms <- data.frame()
+for(i in 1:nrow(all_sps)) { cat(i, "from", nrow(all_sps),"\r")
     
-    cat("\r",i, "from", nrow(all_sps))
+    sp_i <- gsub(" ","_",all_sps$sps[i])
+    sp_i_realm <- all_sps$realm[i]
     
-    # models
-    files_sdms <- list.files(
-        here::here(sdm_dir(all_sps$realm[i]),all_sps$sps[i],gsub("_",".",all_sps$sps[i]),"models"), 
-        full.names = TRUE)  
+    # test if have sdm for sp_i
+    test <- list.files(
+        here::here(sdm_dir(sp_i_realm),sp_i,gsub("_",".",sp_i)), 
+        pattern = "ensemble.models.out")
     
-    if(length(files_sdms) > 1){ # if there are > 1 model, keep the most recent one
-        del <- order(file.info(files_sdms)$ctime,decreasing = TRUE)[-1]
+    test <- length(test) > 0
+    
+    if(test){ # if yes, check if have projections for all possible shifts
         
-        unlink(files_sdms[del],recursive = TRUE)
+        # all possible shifts for sp_i?
+        shift_info <- filter(bioshifts, sp_name_std == sp_i)
+        shift_info <- select(shift_info, c(ID, Start, End))
+        shift_info <- unique(shift_info)
+        
+        ID_i <- unique(shift_info$ID)
+        # for each ID_i, look if has projections for all years
+        tmp <- data.frame(sps=sp_i,
+                          realm=sp_i_realm,
+                          ID=ID_i)
+        
+        tmp$I_have_sdms <- sapply(ID_i, function(x){
+            shift_info_i <- shift_info[which(shift_info$ID==x),]
+            years_ID_i <- round(shift_info_i$Start,0):round(shift_info_i$End,0)
+            # check
+            # Focus on SA for now
+            sdms_sp_i <- list.files(paste(sdm_dir(sp_i_realm),sp_i,gsub("_",".",sp_i),sep = "/"),pattern = "SA")
+            # get ensemble models
+            sdms_sp_i_ens <- sdms_sp_i[grep(" ens",sdms_sp_i)]
+            # get ID_i models
+            sdms_sp_i_ens <- sdms_sp_i_ens[grep(x,sdms_sp_i_ens)]
+            # check if all years exist
+            sdms_sp_i_ens <- all(sapply(years_ID_i, function(x){any(grepl(x,sdms_sp_i_ens))}))
+            sdms_sp_i_ens
+        })
+        
+        
+    } else {
+        tmp <- data.frame(sps = sp_i, realm = sp_i_realm, ID = NA, I_have_sdms = FALSE)
     }
-    
-    # link to models
-    files_sdms_model <- list.files(
-        here::here(sdm_dir(all_sps$realm[i]),all_sps$sps[i],gsub("_",".",all_sps$sps[i])), 
-        pattern = "models.out",
-        full.names = TRUE)  
-    
-    if(length(files_sdms)==0){ # if there are mo models, delete all
-        unlink(files_sdms_model)
-    }
-    
-    if(length(files_sdms_model) > 2){ # if there are > 2 (simple + ensemble)
-        
-        which_sdm <- strsplit(files_sdms,split = "/")[[1]]
-        which_sdm <- which_sdm[length(which_sdm)]
-        
-        del <- files_sdms_model[!grepl(which_sdm, files_sdms_model)]
-        
-        unlink(del)
-        
-    }
+    my_sdms <- rbind(my_sdms,tmp)
 }
+# these are all possible sdms (species + ID)
+nrow(my_sdms) # 3930
+# these are the ones with projections for all years
+I_have_sdms <- my_sdms[which(my_sdms$I_have_sdms),]
+nrow(I_have_sdms) # 1651
+# N species I have sdms with projections for all years
+length(unique(I_have_sdms$sps)) # 1056
 
-#####################
-# 2nd) get missing species
-# species we have env data but dont have sdms 
-# sp list I have sdms
-all_sps_ter_ter <- list.dirs(here::here(sdm_dir("Ter")), recursive = FALSE, full.names = FALSE)
-length(all_sps_ter_ter)
 
-test <- sapply(all_sps_ter, function(x){
-    file.exists(here::here(sdm_dir("Ter"),x,paste(x,"shift_info.csv")))
-})
-all_sps_ter <- all_sps_ter[test]
-length(all_sps_ter)
+# missing species (== dont have sdms projected for all years)
+all_sps <- my_sdms[which(!my_sdms$I_have_sdms),]
+length(unique(all_sps$sps)) # 1670
 
-all_sps_mar <- list.dirs(here::here(sdm_dir("Mar")), recursive = FALSE, full.names = FALSE)
-length(all_sps_mar_mar)
+all_sps <- unique(all_sps[,1:2])
 
-test <- sapply(all_sps_mar, function(x){
-    file.exists(here::here(sdm_dir("Mar"),x,paste(x,"shift_info.csv")))
-})
-all_sps_mar <- all_sps_mar[test]
-length(all_sps_mar)
-
-I_have_SDMs <- rbind(data.frame(sps = all_sps_ter, realm = "Ter"),
-                     data.frame(sps = all_sps_mar, realm = "Mar"))
-
-missing_sps <- !I_have
-
-# I have
-length(which(I_have))
-# 1079
-
-# missing species
-all_sps <- all_sps[missing_sps,]
+# put species with SDMs fitted on the top of the list
+I_have_sdms <- all_sps[which(all_sps$sps %in% I_have_sdms$sps),] 
+I_dont_have_sdms <- all_sps[which(!all_sps$sps %in% I_have_sdms$sps),] 
+all_sps <- rbind(I_have_sdms,I_dont_have_sdms)
 nrow(all_sps)
-# 670
 
+# put marine species on the top of the list
+all_sps <- rbind(all_sps[which(all_sps$realm=="Mar"),],
+                 all_sps[which(all_sps$realm=="Ter"),])
+
+# select only marine or only terrestrials?
+# all_sps <- all_sps[which(all_sps$realm=="Mar"),]
+# all_sps <- all_sps[which(all_sps$realm=="Ter"),]
+nrow(all_sps)
 
 #####################
 # 3rd) submit jobs
@@ -172,9 +165,8 @@ tasks_per_core = 1
 for(i in 1:nrow(all_sps)){
     
     sptogo <- all_sps$sps[i]
-    sptogo <- gsub(" ","_",sptogo)
     
-    # check the job for this species is running
+    # check if job for this species is running
     test <- system("squeue --format='%.50j' --me", intern = TRUE)
     test <- gsub(" ","",test)
     
@@ -185,49 +177,30 @@ for(i in 1:nrow(all_sps)){
         args = paste(sptogo, realm)
         
         if(realm == "Mar"){ # for the Marine use this
-            cores = 10
+            cores = 20
             time = "24:00:00"
-            memory = "20G"
-            partition= "normal"
+            memory = "16G"
+            partition = "normal"
         }
         if(realm == "Ter"){ # for the Terrestrial use this (bigger jobs) 
-            cores = 5 # reduce N cores because of out-of-memory issue
+            cores = 10 # reduce N cores because of out-of-memory issue
             time = "1-24:00:00"
-            memory = "100G"
-            partition = "bigmem-amd"
+            memory = "32G"
+            partition = "bigmem"
         }
         
-        # Start writing to this file
-        sink(here::here(jobdir,paste0(sptogo,'.sh')))
-        
-        # the basic job submission script is a bash script
-        cat("#!/bin/bash\n")
-        
-        cat("#SBATCH -N",N_Nodes,"\n")
-        cat("#SBATCH -n",tasks_per_core,"\n")
-        cat("#SBATCH -c",cores,"\n")
-        cat("#SBATCH --mem=",memory,"\n", sep="")
-        cat("#SBATCH --partition=",partition,"\n", sep="")
-        
-        cat("#SBATCH --job-name=",sptogo,"\n", sep="")
-        cat("#SBATCH --output=",here::here(logdir,paste0(sptogo,".out")),"\n", sep="")
-        cat("#SBATCH --error=",here::here(logdir,paste0(sptogo,".err")),"\n", sep="")
-        cat("#SBATCH --time=",time,"\n", sep="")
-        # cat("#SBATCH --mail-type=ALL\n")
-        # cat("#SBATCH --mail-user=brunno.oliveira@fondationbiodiversite.fr\n")
-        
-        cat(paste0("IMG_DIR='",singularity_image,"'\n"))
-        
-        cat("module purge\n")
-        cat("module load singularity\n")
-        
-        cat("singularity exec --disable-cache $IMG_DIR Rscript",Rscript_file, args,"\n", sep=" ")
-        
-        # Close the sink!
-        sink()
-        
-        # Submit to run on cluster
-        system(paste("sbatch", here::here(jobdir, paste0(sptogo,'.sh'))))
+        slurm_job_singularity(jobdir = jobdir,
+                              logdir = logdir, 
+                              sptogo = sptogo, 
+                              args = args,
+                              N_Nodes = N_Nodes, 
+                              tasks_per_core = tasks_per_core, 
+                              cores = cores, 
+                              time = time, 
+                              memory = memory, 
+                              partition = partition, 
+                              singularity_image = singularity_image, 
+                              Rscript_file = Rscript_file)
         
         # check how many jobs in progress
         tmp <- system("squeue -u $USER",intern = T)
@@ -239,7 +212,6 @@ for(i in 1:nrow(all_sps)){
             
         }
     }
-    
 }
 
 

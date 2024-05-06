@@ -32,8 +32,14 @@ source("R/settings.R")
 source("R/velocity_functions.R")
 
 # create dir to store temporary files
+tmp_dir <- here(scratch_dir,"Data/vel_global")
 if(!dir.exists(tmp_dir)){
-    dir.create(tmp_dir)
+    dir.create(tmp_dir, recursive = TRUE)
+}
+# create dir to store results
+vel_dir <- here(work_dir,"Data/Velocity_global")
+if(!dir.exists(vel_dir)){
+    dir.create(vel_dir, recursive = TRUE)
 }
 
 ########################
@@ -58,49 +64,41 @@ ncores <- parallelly::availableCores()
 
 cat("Calculating for", ECO, velocity_variable, "\n")
 
-# get climate layers
-if(ECO=="Ter"){
-    vars_dir <- here::here(vars_dir(ECO),paste0("bio_proj_",my_res))
-}
-if(ECO=="Mar"){
-    vars_dir <- here::here(vars_dir(ECO),"bio_proj")
-}
-climate_layers <- list.files(vars_dir)
-climate_layers_pos <- grepl(paste(S_time,collapse = "|"),climate_layers)
-climate_layers <- climate_layers[climate_layers_pos]
-climate_layers <- terra::rast(here::here(vars_dir,climate_layers))
-
-
 # If terrestrial
 # Calculate velocity for LAT and ELE and for each climatic variable
 if(ECO=="Ter"){
     
-    # get elevation
-    elevation <- terra::rast(here::here(work_dir,"Data/elevation_1km.tif"))
+    ttrend_file <- here::here(vel_dir,paste(ECO,velocity_variable,"trend",paste0(S_time_name,".tif"), sep = "_"))
+    avg_climate_layers_file <- here::here(vel_dir,paste(ECO,velocity_variable,"avg_climate_layers",paste0(S_time_name,".tif"), sep = "_"))
+    spgrad_file <- here::here(vel_dir,paste(ECO,velocity_variable,"spgrad",paste0(S_time_name,".tif"), sep = "_"))
+    spgrad_ele_file <- here::here(vel_dir,paste(ECO,velocity_variable,"spgrad_ele",paste0(S_time_name,".tif"), sep = "_"))
     
-    # get elevation slope
-    elevation_slope <- terra::rast(here::here(work_dir,"Data/elevation_slp_1km.tif"))
-    
-    # select the climate variable
-    climate_layers <- climate_layers[[which(names(climate_layers)==velocity_variable)]]
-    
-    # project to equal-area
-    climate_layers <- terra::project(climate_layers,Eckt)
-    
-    # force raster to pair
-    elevation <- terra::project(elevation,climate_layers)
-    elevation_slope <- terra::project(elevation_slope,climate_layers)
-    
-    # in CHELSA, temperature is *10
-    if(velocity_variable=="mat"){
-        climate_layers <- climate_layers/10
+    test_if_exists <- all(sapply(c(ttrend_file,avg_climate_layers_file,spgrad_file,spgrad_ele_file),
+                                 file.exists))
+    if(!test_if_exists){
+        # get elevation
+        elevation <- terra::rast(here::here(work_dir,"Data/elevation_1km.tif"))
+        
+        # select the climate variable
+        climate_layers <- list.files(bios_dir(ECO))
+        # temporal range
+        climate_layers_pos <- grepl(paste(S_time,collapse = "|"),climate_layers)
+        climate_layers <- climate_layers[climate_layers_pos]
+        # climate layer
+        climate_layers <- terra::rast(here::here(bios_dir(ECO),climate_layers))
+        climate_layers <- climate_layers[[which(names(climate_layers)==velocity_variable)]]
+        
+        # force raster to pair
+        cat("force raster to pair\n")
+        elevation <- terra::project(elevation, climate_layers, threads=TRUE, use_gdal=TRUE, gdal=TRUE)
     }
+    
     
     #######
     # calculate the trend (C/year)
     cat("calculate the trend\n")
     
-    ttrend_file <- here::here(work_dir,"Data",
+    ttrend_file <- here::here(vel_dir,
                               paste(ECO,velocity_variable,"trend",paste0(S_time_name,".tif"), sep = "_"))
     ttrend <- try(terra::rast(ttrend_file),silent = TRUE)
     if(class(ttrend)=="try-error"){
@@ -112,11 +110,8 @@ if(ECO=="Ter"){
             ncores = ncores)
     }
     
-    
     #######
     # Get averaged climate layers
-    avg_climate_layers_file <- here::here(work_dir,"Data",
-                                          paste(ECO,velocity_variable,"avg_climate_layers",paste0(polygontogo,".tif"), sep = "_"))
     avg_climate_layers <- try(terra::rast(avg_climate_layers_file),silent = TRUE)
     if(class(avg_climate_layers)=="try-error"){
         avg_climate_layers <- terra::app(
@@ -133,54 +128,51 @@ if(ECO=="Ter"){
     # Get the spatial gradient (C/km)
     cat("calculate the spatial gradient\n")
     
-    spgrad_file <- here::here(work_dir,"Data",
-                              paste(ECO,velocity_variable,"spgrad",paste0(S_time_name,".qs"), sep = "_"))
-    spgrad <- try(qs::qread(spgrad_file,nthreads = ncores),silent = TRUE)
+    spgrad <- try(terra::rast(spgrad_file),silent = TRUE)
     if(any(class(spgrad)=="try-error")){
         
         avg_climate_layers_tiles <- avg_climate_layers
         # define tile resolution 
         nrow(avg_climate_layers_tiles) <- round(nrow(avg_climate_layers)/100,0)
         ncol(avg_climate_layers_tiles) <- round(ncol(avg_climate_layers)/100,0)
-        avg_climate_layers_tiles[] <- 1:ncell(avg_climate_layers_tiles)
-        # mask raster
-        SA_i_Eck <- terra::project(SA_i,avg_climate_layers_tiles)
-        avg_climate_layers_tiles <- terra::mask(avg_climate_layers_tiles, SA_i_Eck)
+        avg_climate_layers_tiles <- terra::makeTiles(
+            avg_climate_layers, 
+            avg_climate_layers_tiles, 
+            filename = here::here(tmp_dir,paste(Eco,velocity_variable,S_time_name,"tile_.tif",sep="_")),
+            extend = TRUE, na.rm = TRUE, overwrite=TRUE)
         
-        # plot(avg_climate_layers_tiles);dev.off()
-        
-        parallel::mclapply(terra::cells(avg_climate_layers_tiles), function(x) {
-            tmp_file <- here::here(tmp_dir,
-                                   paste(ECO,velocity_variable,"spgrad_tile",x,paste0(polygontogo,".qs"), sep = "_"))
-            test <- try(qs::qread(tmp_file),silent = TRUE)
+        # x=avg_climate_layers_tiles[227]
+        test <- parallel::mclapply(avg_climate_layers_tiles, function(x) {
+            tmp_file <- gsub("tile","spgrad",x)
+            test <- try(rast(tmp_file),silent = TRUE)
             if(any(class(test)=="try-error")){
-                tmp_ext <- ext(avg_climate_layers_tiles, x)
-                terra::window(avg_climate_layers) <- tmp_ext
-                tmp_data <- spatial_grad(avg_climate_layers)
-                terra::window(avg_climate_layers) <- NULL
-                # plug in "real" icells
-                real_cells <- terra::cells(avg_climate_layers, tmp_ext)
-                tmp_data$icell <- real_cells
-                qs::qsave(tmp_data, tmp_file)
+                tmp_tile <- terra::rast(x)
+                tmp_data <- spatial_grad(tmp_tile)
+                terra::writeRaster(tmp_data,tmp_file,overwrite = TRUE)
             }
         }, mc.cores = ncores)
         
-        spgrad <- lapply(terra::cells(avg_climate_layers_tiles), function(x) {
-            tmp_file <- here::here(tmp_dir,
-                                   paste(ECO,velocity_variable,"spgrad_tile",x,paste0(polygontogo,".qs"), sep = "_"))
-            qs::qread(tmp_file)
-        })
+        test <- sapply(test,class)
+        remove_these <- which(test=="try-error")
+        if(length(remove_these)>0){
+            tiles_good <- avg_climate_layers_tiles[-remove_these]
+        } else {
+            tiles_good <- avg_climate_layers_tiles
+        }
         
-        spgrad <- data.frame(data.table::rbindlist(spgrad))
+        spgrad <- terra::vrt(gsub("tile","spgrad",tiles_good),
+                             set_names = TRUE,
+                             overwrite = TRUE)
+        
+        terra::writeRaster(spgrad,
+                           spgrad_file, 
+                           overwrite = TRUE)
+        
+        spgrad <- terra::rast(spgrad_file)
         
         # delete temporary files
-        del_files <- lapply(terra::cells(avg_climate_layers_tiles), function(x) {
-            tmp_file <- here::here(tmp_dir,
-                                   paste(ECO,velocity_variable,"spgrad_tile",x,paste0(S_time_name,".qs"), sep = "_"))
-            unlink(tmp_file)
-        })
-        
-        qs::qsave(spgrad, spgrad_file)
+        unlink(avg_climate_layers_tiles)
+        unlink(gsub("tile","spgrad",avg_climate_layers_tiles))
         
     }
     
@@ -188,76 +180,62 @@ if(ECO=="Ter"){
     # Get the spatial gradient up slope (elevation/km)
     cat("Get the spatial gradient up slope \n")
     
-    spgrad_ele_file <- here::here(work_dir,"Data",
-                                  paste(ECO,velocity_variable,"spgrad_ele",paste0(S_time_name,".qs"), sep = "_"))
-    spgrad_ele <- try(qs::qread(spgrad_ele_file,nthreads = ncores),silent = TRUE)
+    spgrad_ele <- try(terra::rast(spgrad_ele_file),silent = TRUE)
     if(any(class(spgrad_ele)=="try-error")){
         
-        # force rasters to pair
-        elevation <- terra::project(elevation,avg_climate_layers)
-        elevation_slope <- terra::project(elevation_slope,avg_climate_layers)
-        # remove oceans
-        elevation[is.na(avg_climate_layers)] <- NA
-        elevation_slope[is.na(avg_climate_layers)] <- NA
-        
-        # remove Antarctica
-        avg_climate_layers_tiles <- avg_climate_layers
-        ext_crop <- ext(avg_climate_layers_tiles)
-        ext_crop[3] <- -62
-        avg_climate_layers_tiles <- crop(avg_climate_layers_tiles,ext_crop)
+        elevation_tiles <- elevation
         # define tile resolution 
-        nrow(avg_climate_layers_tiles) <- round(nrow(avg_climate_layers)/100,0)
-        ncol(avg_climate_layers_tiles) <- round(ncol(avg_climate_layers)/100,0)
-        avg_climate_layers_tiles[] <- 1:ncell(avg_climate_layers_tiles)
-        # mask raster
-        land <- vect(rnaturalearthdata::coastline110)
-        land <- terra::project(land,avg_climate_layers_tiles)
-        countries <- vect(rnaturalearthdata::countries110) # this is needed for masking
-        countries <- terra::project(countries,avg_climate_layers_tiles)
-        avg_climate_layers_tiles <- terra::mask(avg_climate_layers_tiles, countries)
+        nrow(elevation_tiles) <- round(nrow(elevation)/100,0)
+        ncol(elevation_tiles) <- round(ncol(elevation)/100,0)
+        elevation_tiles <- terra::makeTiles(
+            elevation, 
+            elevation_tiles, 
+            filename = here::here(tmp_dir,paste(Eco,velocity_variable,S_time_name,"tile_.tif",sep="_")),
+            na.rm = TRUE, overwrite=TRUE)
         
-        parallel::mclapply(terra::cells(avg_climate_layers_tiles), function(x) {
-            tmp_file <- here::here(tmp_dir,
-                                   paste(ECO,velocity_variable,"spgrad_ele_tile",x,paste0(S_time_name,".qs"), sep = "_"))
-            test <- try(qs::qread(tmp_file),silent = TRUE)
+        # x=elevation_tiles[1]
+        test <- parallel::mclapply(elevation_tiles, function(x) {
+            tmp_file <- gsub("tile","spgrad_ele",x)
+            test <- try(rast(tmp_file),silent = TRUE)
             if(any(class(test)=="try-error")){
-                tmp_ext <- ext(avg_climate_layers_tiles, x)
-                terra::window(elevation) <- tmp_ext
-                tmp_data <- spatial_grad(elevation)
-                terra::window(elevation) <- NULL
-                # plug in "real" icells
-                real_cells <- terra::cells(elevation, tmp_ext)
-                tmp_data$icell <- real_cells
-                qs::qsave(tmp_data, tmp_file)
+                tmp_tile <- terra::rast(x)
+                tmp_data <- spatial_grad(tmp_tile)
+                terra::writeRaster(tmp_data,tmp_file,overwrite = TRUE)
             }
         }, mc.cores = ncores)
         
-        spgrad_ele <- lapply(terra::cells(avg_climate_layers_tiles), function(x) {
-            tmp_file <- here::here(tmp_dir,
-                                   paste(ECO,velocity_variable,"spgrad_ele_tile",x,paste0(S_time_name,".qs"), sep = "_"))
-            qs::qread(tmp_file)
-        })
+        test <- sapply(test,class)
+        remove_these <- which(test=="try-error")
+        if(length(remove_these)>0){
+            tiles_good <- elevation_tiles[-remove_these]
+        } else {
+            tiles_good <- elevation_tiles
+        }
         
-        spgrad_ele <- data.frame(data.table::rbindlist(spgrad_ele))
+        spgrad_ele <- terra::vrt(gsub("tile","spgrad_ele",tiles_good), 
+                                 set_names = TRUE,
+                                 overwrite = TRUE)
         
-        qs::qsave(spgrad_ele, spgrad_ele_file)
+        terra::writeRaster(spgrad_ele,
+                           spgrad_ele_file, 
+                           overwrite = TRUE)
+        
+        spgrad_ele <- terra::rast(spgrad_ele_file)
         
         # delete temporary files
-        del_files <- lapply(terra::cells(avg_climate_layers_tiles), function(x) {
-            tmp_file <- here::here(tmp_dir,
-                                   paste(ECO,velocity_variable,"spgrad_ele_tile",x,paste0(S_time_name,".qs"), sep = "_"))
-            unlink(tmp_file)
-        })
+        unlink(elevation_tiles)
+        unlink(gsub("tile","spgrad_ele",elevation_tiles))
+        
     }
     
+    # force pair
+    if(!ext(spgrad_ele)==ext(spgrad)){
+        spgrad <- terra::project(spgrad,avg_climate_layers)
+        spgrad_ele <- terra::project(spgrad_ele,avg_climate_layers)
+    }
     # What is the environmental gradient up slope? (C/Elev)
     # Divide the environmental gradient (C/km) by the elevation gradient (Elev/km)
     spgrad_ele$Grad_ele <- spgrad$Grad / spgrad_ele$Grad
-    
-    # What is the distance upslope needed to cover the same distance in the flat terrain? (C/km up slope)
-    # Divide the environmental gradient by the cosine of the elevation slope 
-    # This is the same as the formula to find the hypotenuse if provided the basis (gradient C/km) and the angle (elevation slope) of the triangle.
-    spgrad_ele$Grad_ele_dist <- spgrad$Grad / cos(deg_to_rad(elevation_slope[spgrad_ele$icell]))
     
     #######
     ## calculate gradient-based climate velocity:
@@ -268,13 +246,9 @@ if(ECO=="Ter"){
     gVel <- gVelocity(grad = spgrad, slope = ttrend, truncate = TRUE)
     
     ## Across elevation 
-    cat("Velocity across elevation (method elevation)\n")
-    gVelEleUp <- gVelocity(grad = spgrad_ele, slope = ttrend, 
-                           grad_col = "Grad_ele", truncate = TRUE)
-    
-    cat("Velocity across elevation (method distance)\n")
-    gVelEleDist <- gVelocity(grad = spgrad_ele, slope = ttrend, 
-                             grad_col = "Grad_ele_dist", truncate = TRUE)
+    cat("Velocity across elevation\n")
+    gVelEle <- gVelocity(grad = spgrad_ele, slope = ttrend, 
+                         grad_col = "Grad_ele", truncate = TRUE)
     
     ## Across latitude
     cat("Velocity across latitude\n")
@@ -289,37 +263,41 @@ if(ECO=="Ter"){
     }
     
     
-    # in CHELSA, temperature is *10
-    if(velocity_variable=="mat"){
-        gVel$Vel <- gVel$Vel/10
-        gVelEleUp$Vel <- gVelEleUp$Vel/10
-        gVelEleDist$Vel <- gVelEleDist$Vel/10
-        gVelLat <- gVelLat/10
-    }
-    
     #######
     # Save rasters
     cat("Save velocity maps\n")
     
-    terra::writeRaster(
-        gVelLat,
-        filename = here::here("Data",paste(ECO,velocity_variable,"gVelLat",paste0(S_time_name,".tif"), sep = "_")),
-        overwrite = TRUE)
-    terra::writeRaster(
-        gVelEleUp$Vel,
-        filename = here::here("Data",paste(ECO,velocity_variable,"gVelEleUp",paste0(S_time_name,".tif"), sep = "_")),
-        overwrite = TRUE)
-    terra::writeRaster(
-        gVelEleDist$Vel,
-        filename = here::here("Data",paste(ECO,velocity_variable,"gVelEleDist",paste0(S_time_name,".tif"), sep = "_")),
-        overwrite = TRUE)
+    #######
+    ## Project to equal area before saving
+    cat("Project to equal area\n")
+    
+    model_raster_file <- here(vars_dir(ECO),paste("model_raster_ter",my_res,"Eckt.tif",sep="_"))
+    if(file.exists(model_raster_file)){
+        model_raster <- rast(model_raster_file)
+    } else {
+        model_raster <- rast(here(vars_dir(ECO),paste0("model_raster_ter_",my_res,".tif")))
+        model_raster <- terra::project(model_raster, Eckt, threads=TRUE, use_gdal=TRUE, gdal=TRUE)
+        writeRaster(model_raster, model_raster_file)
+    }
+    gVel <- terra::project(gVel, model_raster, threads=TRUE, use_gdal=TRUE, gdal=TRUE)
+    gVelLat <- terra::project(gVelLat, model_raster, threads=TRUE, use_gdal=TRUE, gdal=TRUE)
+    gVelEle <- terra::project(gVelEle, model_raster, threads=TRUE, use_gdal=TRUE, gdal=TRUE)
+    
     terra::writeRaster(
         gVel$Vel,
-        filename = here::here("Data",paste(ECO,velocity_variable,"gVel",paste0(S_time_name,".tif"), sep = "_")),
+        filename = here::here(vel_dir,paste(ECO,velocity_variable,"gVel",paste0(S_time_name,".tif"), sep = "_")),
+        overwrite = TRUE)
+    terra::writeRaster(
+        gVelLat,
+        filename = here::here(vel_dir,paste(ECO,velocity_variable,"gVelLat",paste0(S_time_name,".tif"), sep = "_")),
+        overwrite = TRUE)
+    terra::writeRaster(
+        gVelEle$Vel,
+        filename = here::here(vel_dir,paste(ECO,velocity_variable,"gVelEle",paste0(S_time_name,".tif"), sep = "_")),
         overwrite = TRUE)
     terra::writeRaster(
         gVel$Ang,
-        filename = here::here("Data",paste(ECO,velocity_variable,"gVelAngle",paste0(S_time_name,".tif"), sep = "_")),
+        filename = here::here(vel_dir,paste(ECO,velocity_variable,"gVelAngle",paste0(S_time_name,".tif"), sep = "_")),
         overwrite = TRUE)
     
     
@@ -328,14 +306,28 @@ if(ECO=="Ter"){
     # If marine
     # Calculate only for SST
     
-    # select the climate variable
-    climate_layers <- climate_layers[[which(names(climate_layers)==velocity_variable)]]
+    ttrend_file <- here::here(vel_dir,paste(ECO,velocity_variable,"trend",paste0(S_time_name,".tif"), sep = "_"))
+    avg_climate_layers_file <- here::here(vel_dir,paste(ECO,velocity_variable,"avg_climate_layers",paste0(S_time_name,".tif"), sep = "_"))
+    spgrad_file <- here::here(vel_dir,paste(ECO,velocity_variable,"spgrad",paste0(S_time_name,".tif"), sep = "_"))
+    
+    test_if_exists <- all(sapply(c(ttrend_file,avg_climate_layers_file,spgrad_file),
+                                 file.exists))
+    if(!test_if_exists){
+        # select the climate variable
+        climate_layers <- list.files(bios_dir(ECO))
+        # temporal range
+        climate_layers_pos <- grepl(paste(S_time,collapse = "|"),climate_layers)
+        climate_layers <- climate_layers[climate_layers_pos]
+        # climate layer
+        climate_layers <- terra::rast(here::here(bios_dir(ECO),climate_layers))
+        climate_layers <- climate_layers[[which(names(climate_layers)==velocity_variable)]]
+    }
     
     #######
     # calculate the trend (C/year)
     cat("calculate the trend\n")
     
-    ttrend_file <- here::here(work_dir,"Data",
+    ttrend_file <- here::here(vel_dir,
                               paste(ECO,velocity_variable,"trend",paste0(S_time_name,".tif"), sep = "_"))
     ttrend <- try(terra::rast(ttrend_file),silent = TRUE)
     if(class(ttrend)=="try-error"){
@@ -352,8 +344,6 @@ if(ECO=="Ter"){
     cat("calculate the spatial gradient\n")
     
     # calculate averaged climate layers
-    avg_climate_layers_file <- here::here(work_dir,"Data",
-                                          paste(ECO,velocity_variable,"avg_climate_layers",paste0(S_time_name,".tif"), sep = "_"))
     avg_climate_layers <- try(terra::rast(avg_climate_layers_file),silent = TRUE)
     if(class(avg_climate_layers)=="try-error"){
         avg_climate_layers <- terra::app(
@@ -363,11 +353,11 @@ if(ECO=="Ter"){
             overwrite=TRUE)
     }
     
-    spgrad_file <- here::here(work_dir,"Data",
-                              paste(ECO,velocity_variable,"spgrad",paste0(S_time_name,".qs"), sep = "_"))
-    spgrad <- try(qs::qread(spgrad_file,nthreads = ncores),silent = TRUE)
+    spgrad <- try(terra::rast(spgrad_file),silent = TRUE)
     if(any(class(spgrad)=="try-error")){
-        spgrad <- spatial_grad(avg_climate_layers)
+        spgrad = spatial_grad(avg_climate_layers)
+        terra::writeRaster(spgrad, spgrad_file)
+        
     }
     
     #######
@@ -392,17 +382,34 @@ if(ECO=="Ter"){
     #######
     # Save rasters
     cat("Save velocity maps\n")
+    
+    #######
+    ## Project to equal area before saving
+    cat("Project to equal area\n")
+    
+    model_raster_file <- here(vars_dir(ECO),"model_raster_mar_Eckt.tif")
+    if(file.exists(model_raster_file)){
+        model_raster <- rast(model_raster_file)
+    } else {
+        model_raster <- rast(here(vars_dir(ECO),"model_raster_mar.tif"))
+        model_raster <- terra::project(model_raster, Eckt, threads=TRUE, use_gdal=TRUE, gdal=TRUE)
+        writeRaster(model_raster, model_raster_file)
+    }
+    gVel <- terra::project(gVel, model_raster, threads=TRUE, use_gdal=TRUE, gdal=TRUE)
+    gVelLat <- terra::project(gVelLat, model_raster, threads=TRUE, use_gdal=TRUE, gdal=TRUE)
+    gVelEle <- terra::project(gVelEle, model_raster, threads=TRUE, use_gdal=TRUE, gdal=TRUE)
+    
     terra::writeRaster(
         gVelLat,
-        filename = here::here("Data",paste(ECO,velocity_variable,"gVelLat",paste0(S_time_name,".tif"), sep = "_")),
+        filename = here::here(vel_dir,paste(ECO,velocity_variable,"gVelLat",paste0(S_time_name,".tif"), sep = "_")),
         overwrite = TRUE)
     terra::writeRaster(
         gVel$Vel,
-        filename = here::here("Data",paste(ECO,velocity_variable,"gVel",paste0(S_time_name,".tif"), sep = "_")),
+        filename = here::here(vel_dir,paste(ECO,velocity_variable,"gVel",paste0(S_time_name,".tif"), sep = "_")),
         overwrite = TRUE)
     terra::writeRaster(
         gVel$Ang,
-        filename = here::here("Data",paste(ECO,velocity_variable,"gVelAngle",paste0(S_time_name,".tif"), sep = "_")),
+        filename = here::here(vel_dir,paste(ECO,velocity_variable,"gVelAngle",paste0(S_time_name,".tif"), sep = "_")),
         overwrite = TRUE)
     
 }

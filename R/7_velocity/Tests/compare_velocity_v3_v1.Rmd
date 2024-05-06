@@ -19,63 +19,47 @@ library(data.table)
 library(dplyr)
 library(ggplot2)
 library(tidyverse)
-library(terra)
-library(RColorBrewer)
-library(VoCC1)
+library(here)
 
 # set computer
-# computer = "muse"
-# 
-# if(computer == "muse"){
-#     setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
-# 
-#     work_dir <- getwd()
-#     here::i_am("R/7_velocity/2_compare_velocity_v3_v1.R")
-# } else {
-#   work_dir <- here::here(work_dir)
-# }
+computer = "personal"
 
-# source settings
-source(here::here("R/settings.R"))
-
-# Global continental lines
-globe_lines <- vect(rnaturalearth::ne_countries(scale = "small"))
-globe_lines <- terra::aggregate(globe_lines)
+source(here("R/settings.R"))
 
 ```
 
 # Load in v3 velocities
 ```{r}
 
-SAs <- list.files(here::here("Data/Velocity_SA"))
-SAs <- gsub(".csv","",SAs)
-SA_got <- list.files(here::here("Data/Velocity_SA"), full.names = TRUE)
+SA_got <- list.files(here::here("Data/Velocity_SA"), full.names = TRUE, pattern = ".csv")
 SA_got <- lapply(1:length(SA_got), function(i) {
-  tmp <- read.csv(SA_got[i])
-  tmp$ID = SAs[i]
-  tmp
+  read.csv(SA_got[i])
 })
+
+
 SA_got <- rbindlist(SA_got, fill = TRUE)
 
 SA_got <- SA_got %>% 
-  dplyr::select(c(v.lat.median.mat,baseline.mat,trend.mean.mat,v.ele.median.mat,baseline.sst,trend.mean.sst,v.lat.median.sst,ID))
+  dplyr::select(c(v.lat.median.mat,v.lat.mean.mat,
+                  baseline.mat,trend.mean.mat,
+                  v.ele.median.mat,v.ele.mean.mat,
+                  baseline.sst,trend.mean.sst,
+                  v.lat.median.sst,v.lat.mean.sst,ID))
+names(SA_got)[1:10] <- paste0(names(SA_got)[1:10],".v3")
 
-SA_got$ECO <- ifelse(is.na(SA_got$v.lat.median.sst), "T", "M")
-
-SA_got <- SA_got %>%
-  mutate(vel_v3 = ifelse(ECO == "T", v.lat.median.mat, v.lat.median.sst),
-         baseline.temp_v3 = ifelse(ECO == "T", baseline.mat, baseline.sst),
-         Trend = ifelse(ECO == "T", trend.mean.mat, trend.mean.sst)) %>%
-  dplyr::select(ECO, vel_v3, Trend, ID, baseline.temp_v3)
-
-
-SA_got$vel_v3 <- SA_got$vel_v3 * -1
+# v <- rast(here("Data/Velocity_SA/A88_P1_mat_gVel.tif"))
+# v.lat <- rast(here("Data/Velocity_SA/A88_P1_mat_gVelLat.tif"))
+# 
+# plot(v)
+# plot(v.lat)
+# global(v,median,na.rm = TRUE)
+# global(v.lat,median,na.rm = TRUE)
 
 ```
 
 # Load in Bioshifts v1
 ```{r}
-Bioshifts_DB <- read.csv(here::here("Data/Bioshifts/biov1_fixednames.csv"))
+Bioshifts_DB <- read.csv(here::here(Bioshifts_dir,Bioshifts_DB_v1))
 
 # Filter Polygons in Study areas v3
 Bioshifts_DB <- Bioshifts_DB[Bioshifts_DB$ID %in% unique(SA_got$ID),]
@@ -90,24 +74,32 @@ Bioshifts_DB <- Bioshifts_DB %>%
     SHIFT = case_when(
       UNIT == "m/year" ~ SHIFT/1000, 
       UNIT == "km/year" ~ SHIFT, 
-      TRUE ~ NA_real_))
+      TRUE ~ NA_real_)) %>%
+  filter(Type %in% c("LAT","ELE"))
 
 ```
 
 # Merge v1 to v3
 ```{r}
-Bioshifts_vel <- merge(Bioshifts_DB %>%
-                         filter(Type %in% c("LAT","ELE")) %>%
-                         mutate(vel_v1 = ifelse(Type == "LAT", v.lat.mean, v.ele.mean),
-                                baseline.temp_v1 = baseline.temp,
-                                trend_v1 = trend.mean) %>% 
-                         dplyr::select(ID, vel_v1, Type, ECO, SHIFT, baseline.temp_v1, trend_v1), 
-                       SA_got  %>%
-                         dplyr::select(ID, vel_v3, ECO, baseline.temp_v3, Trend) %>%
-                         mutate(trend_v3 = Trend) %>%
-                         dplyr::select(-Trend), 
-                       by = c("ID","ECO"))
-head(Bioshifts_vel)
+
+Bioshifts_vel <- merge(Bioshifts_DB,
+                       SA_got,
+                       by = "ID",
+                       all.x = TRUE)
+
+Bioshifts_vel <- Bioshifts_vel %>%
+  mutate(vel_v1 = ifelse(Type == "LAT", v.lat.mean, v.ele.mean),
+         vel_v3 = ifelse(Type == "LAT" & ECO == "T", v.lat.median.mat.v3, 
+                         ifelse(Type == "ELE" & ECO == "T", v.ele.median.mat.v3, v.lat.median.sst.v3)),
+         baseline.temp_v1 = baseline.temp,
+         baseline.temp_v3 = ifelse(ECO == "T", baseline.mat.v3, baseline.sst.v3),
+         trend_v1 = trend.mean,
+         trend_v3 = ifelse(ECO == "T", trend.mean.mat.v3, trend.mean.sst.v3)) %>% 
+  dplyr::select(ID, Type, ECO, SHIFT, 
+                baseline.temp_v1, trend_v1, vel_v1, 
+                baseline.temp_v3, trend_v3, vel_v3, 
+                DUR, START, END)
+
 
 ```
 
@@ -164,7 +156,7 @@ ggplot(tmp %>% filter(ECO=="M"),
 
 ```
 
-V3 velocity values are mainly negative (towards the tropics).
+
 
 ## Velocity scatter plots
 ```{r}
@@ -188,9 +180,10 @@ ggplot(Bioshifts_vel %>% filter(ECO == "M"),
   facet_wrap(.~Type, scales = "free") +
   labs(x = "Velocity v3", y = "Velocity v1")+
   geom_abline(slope = 1, intercept = 0)
+
 ```
 
-Velocity values from v3 and v1 are highly decoupled, and tend to be negatively correlated to each other.
+Velocities are highly correlated for elevation. Latitudinal velocities are not so correlated in both terrestrial and marine environments. The magnitude of terrestrial velocities are much smaller (~10x) than in v3 then v1.
 
 ## Baseline temperature
 ```{r}
@@ -202,7 +195,7 @@ ggplot(Bioshifts_vel %>% filter(ECO == "T"),
   geom_point()+
   theme_classic()+
   facet_wrap(.~Type, scales = "free") +
-  labs(x = "Trend v3", y = "Trend v1")+
+  labs(x = "Baseline temperature v3", y = "Baseline temperature v1")+
   geom_abline(slope = 1, intercept = 0)
 
 # Marine
@@ -212,9 +205,11 @@ ggplot(Bioshifts_vel %>% filter(ECO == "M"),
   geom_point()+
   theme_classic()+
   facet_wrap(.~Type, scales = "free") +
-  labs(x = "Trend v3", y = "Trend v1")+
+  labs(x = "Baseline temperature v3", y = "Baseline temperature v1")+
   geom_abline(slope = 1, intercept = 0)
 ```
+
+Baseline temperatures are highly similar.
 
 ## Trend
 ```{r}
@@ -240,15 +235,43 @@ ggplot(Bioshifts_vel %>% filter(ECO == "M"),
 
 ```
 
-When comparing trend values between v1 and v3, they seem to be correlated. This means that the decoupling in velocity values between v1 and v3 comes from differences in the way the spatial gradient is calculated.
+Trend is very similar!
+
+If trend and baseline temperatures are very similar, this means that difference in velocities from v1 and v3 can be due to differences in the way the gradient component was calculated. In v1, the gradient was calculated using the fixed climatology from Worldclim. Test if the difference between velocities from v1 and v3 can be explained by duration of the study.
+
+```{r}
+
+# Terrestrial
+ggplot(Bioshifts_vel %>% filter(ECO == "T"), 
+       aes(x = DUR, y = vel_v1-vel_v3)) +
+  ggtitle("Terrestrials") + 
+  geom_point()+
+  theme_classic()+
+  facet_wrap(.~Type, scales = "free") +
+  labs(x = "Duration", y = "Difference\nVelocity v1 - Velocity v3")
+
+# Marine
+ggplot(Bioshifts_vel %>% filter(ECO == "M"), 
+       aes(x = DUR, y = vel_v1-vel_v3)) +
+  ggtitle("Marine") + 
+  geom_point()+
+  theme_classic()+
+  facet_wrap(.~Type, scales = "free") +
+  labs(x = "Duration", y = "Difference\nVelocity v1 - Velocity v3")
+
+```
+
+We can see larger decoupling in velocities from v1 and v3 under study duration < 50 years. This indicates that differences in velocities between v1 and v3 are explained by duration.
+
 
 ## Velocity vs shift
-```{r}
+
+
+```{r fig.height=5,fig.width=15}
 
 # Velocity v1 vs Shift
 ggplot(Bioshifts_vel, 
        aes(x = vel_v1, y = SHIFT)) +
-  ggtitle("Terrestrial") + 
   geom_point()+
   theme_classic()+
   facet_wrap(ECO~Type, scales = "free") +
@@ -257,7 +280,6 @@ ggplot(Bioshifts_vel,
 # Velocity v3 vs Shift
 ggplot(Bioshifts_vel, 
        aes(x = vel_v3, y = SHIFT)) +
-  ggtitle("Terrestrial") + 
   geom_point()+
   theme_classic()+
   facet_wrap(ECO~Type, scales = "free") +

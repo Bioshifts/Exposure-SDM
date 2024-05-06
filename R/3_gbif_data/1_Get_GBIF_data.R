@@ -49,7 +49,8 @@ I_have_GBIF <- list.files("Data/GBIF_data")
 I_have_GBIF <- gsub(".qs","",I_have_GBIF)
 I_have_GBIF <- gsub("_"," ",I_have_GBIF)
 
-N_OCC <- N_OCC %>% filter(!scientificName %in% I_have_GBIF)
+N_OCC <- N_OCC %>% filter(!scientificName %in% I_have_GBIF,
+                          Rank_accepted == "species")
 nrow(N_OCC)
 
 # GBIF requests ----
@@ -321,6 +322,7 @@ for(i in 1:length(keystogo)){ cat("\rChecking file", i, "from", length(keystogo)
 
 
 
+
 # Filter and save species occurrences ----
 GBIF_zip_dir <- here::here(scratch_dir,"Data/GBIF/")
 if(!dir.exists(GBIF_zip_dir)){
@@ -390,6 +392,8 @@ test_if_work <- mclapply(1:length(occs), function(i){
     
     if(length(tmp_species)>0){
         
+        tmp <- tmp %>% dplyr::filter(species %in% tmp_species)
+        
         # subset terrestrials
         ter. <- tmp[which(tmp$species %in% terrestrials),]
         # get cells
@@ -426,7 +430,7 @@ test_if_work <- mclapply(1:length(occs), function(i){
         rm(ter., mar.);gc()
         
         # Remove duplicates: same species in the same location and date
-        rm <- duplicated(sps.[,c("scientificName", "cell", "year", "month")])
+        rm <- duplicated(sps.[,c("species", "cell", "year", "month")])
         if(any(rm)){
             sps. <- sps.[-which(rm),]
         }
@@ -468,84 +472,3 @@ test_if_work <- mclapply(1:length(occs), function(i){
 # delete tmp dir used to decompress zipfiles
 unlink(tmp.dir, recursive = TRUE)
 unlink(GBIF_zip_dir, recursive = TRUE)
-
-
-#####################
-# how many species?
-
-all_sps <- list.files(here::here(occ_dir), pattern = '.qs')
-all_sps <- gsub("_"," ",all_sps)
-all_sps <- gsub(".qs","",all_sps)
-
-length(all_sps)
-# 8515
-
-N_OCC <- read.csv("Data/N_OCC.csv")
-nrow(N_OCC)
-
-
-all_sps[which(!all_sps %in% N_OCC$scientificName)]
-
-N_OCC <- N_OCC %>% filter(scientificName %in% all_sps)
-
-# how many clean occurrences?
-all_sps_c <- list.files(here::here(occ_dir), pattern = '.qs')
-all_sps_c <- pbsapply(all_sps_c, function(x){
-    # read in
-    sp_i <- qs::qread(here::here(occ_dir,x))
-    # count
-    nrow(sp_i)
-})
-# N occurrence per species
-summary(all_sps_c)
-# Min. 1st Qu.  Median    Mean 3rd Qu.    Max.
-# 30     373    2441   39063   15682 3092867
-
-# how many marine species?
-length(which(marines %in% all_sps))
-# 385
-
-# how many terrestrial species?
-length(which(terrestrials %in% all_sps))
-# 6924
-
-# original sp list after removing species with < 30 occs from GBIF
-nrow(N_OCC)
-# 10895
-
-# % bioshift with occ
-
-splist <- read.csv("Data/Bioshifts/splist.csv", header = T)
-# remove duplicated sp_names
-splist <- splist %>%
-    dplyr::select(scientificName,kingdom,phylum,class,order,family,db) %>%
-    filter(!duplicated(scientificName))
-
-bio <- data.frame(table(splist$class))
-names(bio) <- c("Class","Bioshifts_Freq")
-
-gbifocc <- data.frame(table(N_OCC$class))
-names(gbifocc) <- c("Class","GBIF_Freq")
-
-bio <- merge(bio, gbifocc)
-bio$percent = paste0(round((bio$GBIF_Freq/bio$Bioshifts_Freq)*100,2)," % (N = ", bio$GBIF_Freq,")")
-
-melted <- reshape::melt(bio[,c(1:3)], id="Class")
-melted <- merge(melted, bio[,c(1,4)])
-melted$percent[which(melted$variable == "GBIF_Freq")] = NA
-
-keep <- unique(melted$Class[which(melted$value > 20)])
-toplot = melted[which(melted$Class %in% keep),]
-toplot$Class <- factor(toplot$Class, levels = unique(toplot$Class[order(toplot$value)]))
-
-ggplot(toplot, 
-       aes(x = Class, y = value, fill = variable))+
-    geom_bar(stat="identity",position = "identity", alpha = .5) +
-    geom_text(aes(label=percent),
-              stat='identity', size = 3, hjust = "inward")+
-    coord_flip()+
-    ylab("N species")+
-    theme_classic()+
-    theme(legend.position="bottom",
-          legend.title = element_blank()) 
-

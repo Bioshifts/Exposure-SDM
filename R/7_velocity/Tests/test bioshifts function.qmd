@@ -59,26 +59,25 @@ spgrad_test <- spatial_grad(grad_rast)
 # *Map angle*
 
 ```{r}
-angle_rast <- grad_rast
-angle_rast[spgrad_test$icell] <- spgrad_test$angle
 
-angle_map(angle_rast, main = "Angle")
+angle_rast <- spgrad_test$angle
+
+plot(angle_rast, main = "Angle")
+
 ```
 
-*This is the angle of the environmental gradient. Here, temperature decreases towards the poles. Therefore, the angle at the north hemisphere is 180 (south). Likewise, at the south hemisphere the angle in 0 (north), meaning temperatures increasing towards the equator.*
+*This is the angle of the environmental gradient. Here, temperature decreases towards the poles. Therefore, the direction of the environmental gradient at the north hemisphere is 180 (South, because temperature decrease as we go North). Likewise, at the South hemisphere the angle in 0 (North, because temperatures decreases as we go South).*
 
-# *Map gradient NS and gradient undirectional*
+# *Map gradient NS and gradient unprojected*
 
 ```{r}
-grad_N_rast <- grad_rast
-grad_N_rast[spgrad_test$icell] <- spgrad_test$NS
+grad_N_rast <- spgrad_test$NS
 
-grad_rast <- grad_rast
-grad_rast[spgrad_test$icell] <- spgrad_test$Grad
+grad_rast <- spgrad_test$Grad
 
 {
     par(mfrow=c(1,2))
-    velocity_map(grad_rast, main = "Gradient undirectional")
+    velocity_map(grad_rast, main = "Gradient unprojected")
     velocity_map(grad_N_rast, main = "Gradient North")
     par(mfrow=c(1,1))
 }
@@ -86,7 +85,7 @@ grad_rast[spgrad_test$icell] <- spgrad_test$Grad
 # correlation grad and grad North
 plot(spgrad_test$NS,spgrad_test$Grad,
      xlab = "Gradient NS",
-     ylab = "Gradient undirectional")
+     ylab = "Gradient unprojected")
 ```
 
 *According to the exponential simulated gradient, the gradients calculated and shown here are also more intense towards the poles. Note that the gradient North is positive in the south hemisphere because temperature increase from the south pole to the equator, while the gradient North is negative at the North hemisphere because temperatures decrease from the equator towards the north pole.*
@@ -102,49 +101,35 @@ trend[] <- 2
 vel <- gVelocity(grad = spgrad_test,
                  slope = trend)
 
-vel_NS <- gVelocity(grad = spgrad_test,
-                    slope = trend,
-                    grad_col = "NS")
+vel_NS <- vel$Vel * cos(deg_to_rad(vel$Ang))
 
 # correlation grad and vel
 {
     par(mfrow=c(1,2))
-    plot(log(spgrad_test$Grad), vel$GradVel[spgrad_test$icell][,1],
+    plot(log(spgrad_test$Grad), vel$Vel,
          xlab = "Gradient (log)",
-         ylab = "Velocity")
-    velocity_map(vel$GradVel, main = "Velocity undirectional")
+         ylab = "Velocity",
+         cex=1)
+    velocity_map(vel$Vel, main = "Velocity unprojected")
     par(mfrow=c(1,1))
 }
 
 # correlation grad and vel North
 {
     par(mfrow=c(1,2))
-    plot(log(spgrad_test$Grad), vel_NS$GradVel[spgrad_test$icell][,1],
+    plot(log(spgrad_test$Grad), vel_NS$Vel,
          xlab = "Gradient (log)",
-         ylab = "Velocity North")
-    velocity_map(vel_NS$GradVel, main = "Velocity North")
+         ylab = "Velocity North",
+         cex=1)
+    velocity_map(vel_NS$Vel, main = "Velocity North")
     par(mfrow=c(1,1))
 }
 
 ```
 
-*Greatest velocity when gradient is close to zero. Velocities NS are positive in the North hemisphere and negative in the south hemisphere, representative of the direction of the velocity gradient (away of the tropics).*
+*Greatest velocity when gradient is small. Velocities NS are positive in the North hemisphere and negative in the south hemisphere, representative of the direction of the velocity gradient (away from the tropics).*
 
 
-# *Get velocity NS from undirection velocity + angle*
-
-```{r}
-
-vel_NS_2 <- vel$GradVel / cos(deg_to_rad(vel$GradAng))
-
-plot(vel_NS$GradVel[][,1],
-     vel_NS_2[][,1],
-     xlab = "Velocity NS",
-     ylab = "Velocity NS obtained from angle")
-
-all.equal(vel_NS$GradVel,vel_NS_2)
-
-```
 
 # *Extra*
 
@@ -185,25 +170,37 @@ spgrad_test <- spatial_grad(grad_rast)
 ## *Map angle*
 
 ```{r}
-angle_rast <- grad_rast 
-angle_rast[spgrad_test$icell] <- spgrad_test$angle  
-angle_map(angle_rast, main = "Angle")
+angle_rast <- spgrad_test$angle  
+angle_map(angle_rast, main = "Angle gradient")
+
+
 ```
 
 *This is the angle of the environmental gradient. Here, temperature decreases towards the poles. Therefore, the angle at the north hemisphere is 180 (south). Likewise, at the south hemisphere the angle in 0 (north), meaning temperatures increasing towards the equator.*
 
-## *Map gradient NS and gradient undirectional*
+*To get the angle the trajectories, we have to flip the angles*
+```{r}
+
+angle_map((angle_rast + 180) %% 360, main = "Angle trajectory")
+
+# same as what is in the output of the velocity function
+vel <- gVelocity(grad = spgrad_test,
+                 slope = trend)
+
+angle_map(vel$Ang, main = "Angle trajectory")
+
+```
+
+## *Map gradient NS and gradient unprojected*
 
 ```{r}
-grad_N_rast <- grad_rast 
-grad_N_rast[spgrad_test$icell] <- spgrad_test$NS  
+grad_N_rast <- spgrad_test$NS  
 
-grad_rast <- grad_rast 
-grad_rast[spgrad_test$icell] <- spgrad_test$Grad  
+grad_rast <- spgrad_test$Grad  
 
 {
     par(mfrow=c(1,2))     
-    velocity_map(grad_rast, main = "Gradient undirectional")     
+    velocity_map(grad_rast, main = "Gradient unprojected")     
     velocity_map(grad_N_rast, main = "Gradient North")     
     par(mfrow=c(1,1)) 
 }  
@@ -211,7 +208,7 @@ grad_rast[spgrad_test$icell] <- spgrad_test$Grad
 # correlation grad and grad North 
 plot(spgrad_test$NS,spgrad_test$Grad,      
      xlab = "Gradient NS",      
-     ylab = "Gradient undirectional")
+     ylab = "Gradient unprojected")
 ```
 
 *According to the exponential simulated gradient, the gradients calculated and shown here are also more intense towards the poles. Note that the gradient North is positive in the south hemisphere because temperature increase from the south pole to the equator, while the gradient North is negative at the North hemisphere because temperatures decrease from the equator towards the north pole.*
@@ -223,27 +220,28 @@ plot(spgrad_test$NS,spgrad_test$Grad,
 ## Create a constant trend  
 trend <- grad_rast 
 trend[] <- 2  
+
 vel <- gVelocity(grad = spgrad_test,                  
                  slope = trend)  
-vel_NS <- gVelocity(grad = spgrad_test,                     
-                    slope = trend,                     
-                    grad_col = "NS")  
+vel_NS <- vel$Vel * cos(deg_to_rad(vel$Ang))
+
 # correlation grad and vel 
 {     
   par(mfrow=c(1,2))     
-  plot(log(spgrad_test$Grad), vel$GradVel[spgrad_test$icell][,1],          
+  plot(log(spgrad_test$Grad), vel$Vel,          
        xlab = "Gradient (log)",          
        ylab = "Velocity")     
-  velocity_map(vel$GradVel, main = "Velocity undirectional")     
+  velocity_map(vel$Vel, main = "Velocity unprojected")     
   par(mfrow=c(1,1)) 
 }  
+
 # correlation grad and vel North 
 {     
   par(mfrow=c(1,2))     
-  plot(log(spgrad_test$Grad), vel_NS$GradVel[spgrad_test$icell][,1],          
+  plot(log(spgrad_test$Grad), vel_NS$Vel,          
        xlab = "Gradient (log)",          
        ylab = "Velocity North")     
-  velocity_map(vel_NS$GradVel, main = "Velocity North")     
+  velocity_map(vel_NS$Vel, main = "Velocity North")     
   par(mfrow=c(1,1)) 
 }
 
@@ -251,15 +249,3 @@ vel_NS <- gVelocity(grad = spgrad_test,
 
 *Greatest velocity when gradient is close to zero. Velocities NS are positive in the North hemisphere and negative in the south hemisphere, representative of the direction of the velocity gradient (away of the tropics).*
 
-
-## *Get velocity NS from undirection velocity + angle*
-
-```{r}  
-vel_NS_2 <- vel$GradVel / cos(deg_to_rad(vel$GradAng))  
-plot(vel_NS$GradVel[][,1],      
-     vel_NS_2[][,1],      
-     xlab = "Velocity NS",      
-     ylab = "Velocity NS obtained from angle")  
-all.equal(vel_NS$GradVel,vel_NS_2)
-
-```

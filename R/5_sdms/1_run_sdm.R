@@ -24,16 +24,16 @@ realm <- as.character(paste(command_args[2], collapse = " "))
 print(sptogo)
 print(realm)
 
-# sptogo="Abra_alba"
+# sptogo="Anguilla_anguilla"
 # realm <- "Mar"
-# sptogo="Calanus_helgolandicus"
+# sptogo="Centropristis_striata"
 # realm <- "Mar"
 # 
 # sptogo="Abies_alba"
 # realm <- "Ter"
 # sptogo="Abies_concolor"
 # realm <- "Ter"
-# sptogo="Hypericum_humifusum"
+# sptogo="Centropristis_striata"
 # realm <- "Ter"
 
 
@@ -64,23 +64,15 @@ source("R/settings.R")
 # N cpus to use
 N_cpus <- parallelly::availableCores()
 
-########################
-# get directories
-bios_SA_dir <- bios_SA_dir(realm)
-bios_dir <- bios_dir(realm)
+# output dir
 output_dir <- here::here(sdm_dir(realm), sptogo)
-occ_dir <- env_data_dir
-vars_dir <- vars_dir(realm)
-
-# create dirs
 if(!dir.exists(output_dir)){
     dir.create(output_dir,recursive = TRUE)
 }
 
 ########################
 # Load env data for species i
-PresAbs <- qs::qread(here::here(occ_dir(realm),paste0(sptogo,"_",realm,".qs")))
-PresAbs <- na.omit(PresAbs)
+PresAbs <- qs::qread(here::here(env_data_dir(realm),paste0(sptogo,"_",realm,".qs")))
 
 table(PresAbs$pa)
 
@@ -94,46 +86,28 @@ back_occ <- PresAbs %>% filter(pa == 0)
 
 ########################
 # Study info
-
-biov1 <- read.csv(here::here(Bioshifts_dir,"biov1_fixednames.csv"))
-# v1 from IDs we have selected for v3
-v3_selected <- unique(c(
-    list.files(bios_SA_dir("Ter")),
-    list.files(bios_SA_dir("Mar"))))
-biov1 <- biov1[biov1$ID %in% v3_selected,]
-# only LAT
-biov1$Type[which(biov1$Type=="HOR")] <- "LAT"
-biov1 <- biov1[which(biov1$Type=="LAT"),]
-
-biov1 <- biov1 %>% filter(sp_name_std_v1 == sptogo)
-
-# Use LAT ELE shifts
-biov1$Type[which(!is.na(biov1$Azimuth))] <- "LAT" # All obs type == HOR contain Azimuth value
-biov1 <- biov1[which(biov1$Type=="ELE" | biov1$Type=="LAT"),]
-biov1[,c("ID","START")]
-
-# Use temporal period from the environmental data
-biov1 <- biov1 %>% filter(START >= temporal_range_env_data(realm)[1] + n_yr_bioclimatic)
+bioshifts <- read.csv(here(Bioshifts_dir,Bioshifts_DB_v3), header = T)
+bioshifts <- bioshifts_sdms_selection(bioshifts)
+bioshifts <- filter(bioshifts, sp_name_std == sptogo)
 
 # save
-write.csv(biov1, here::here(output_dir,paste(sptogo,"bioshift.csv")),row.names = FALSE)
+write.csv(bioshifts, here::here(output_dir,paste(sptogo,"bioshift.csv")),row.names = FALSE)
 
 # get info relevant for SDM  
-shift_info<- biov1[,c("ID","START","END")]
+shift_info<- bioshifts[,c("ID","Start","End")]
 if(any(duplicated(shift_info))){
     shift_info<- shift_info[-which(duplicated(shift_info)),]
 }
-shift_info$time_period <- paste(round(shift_info$START), round(shift_info$END), sep = "-")
+shift_info$time_period <- paste(round(shift_info$Start), round(shift_info$End), sep = "-")
 shift_info$Species <- sptogo
 #save
 write.csv(shift_info, here::here(output_dir,paste(sptogo,"shift_info.csv")),row.names = FALSE)
 
 # shift duration
 S_time <- lapply(1:nrow(shift_info), function(i) {
-    shift_info$START[i]:shift_info$END[i]
+    shift_info$Start[i]:shift_info$End[i]
 })
 S_time <- unique(round(do.call(c,S_time),0))
-
 
 ########################
 # Load ecoregions
@@ -141,17 +115,17 @@ cat("Load ecoregions\n")
 
 # load mask raster
 mask.ras <- if(realm=="Ter") { 
-    terra::rast(here::here(vars_dir,paste0("model_raster_ter_",my_res,".tif")))
+    terra::rast(here::here(vars_dir(realm),paste0("model_raster_ter_",my_res,".tif")))
 } else {
     if(realm=="Mar") { 
-        terra::rast(here::here(vars_dir,"model_raster_mar.tif")) 
+        terra::rast(here::here(vars_dir(realm),"model_raster_mar.tif")) 
     }
 }
 
 BA <- get_ecoregions(realm = realm, 
                      sptogo = sptogo,
                      PresAbs = unique(sp_occ[,c('x','y')]), # to remove duplicated coordinates (in the same dates) 
-                     varsdir = vars_dir, 
+                     varsdir = vars_dir(realm), 
                      output_dir = output_dir,
                      mask.ras = mask.ras,
                      return.shp = TRUE,
@@ -192,12 +166,12 @@ plot_SA_location(sptogo,
 # Get bioclimatics for the BG at each time period
 
 # select bioclimatics
-bioclimatics_BG <- list.files(bios_dir)
+bioclimatics_BG <- list.files(bios_dir(realm))
 bioclimatics_BG_pos <- grepl(paste(S_time,collapse = "|"),bioclimatics_BG)
 bioclimatics_BG <- bioclimatics_BG[bioclimatics_BG_pos]
 
 # load in bioclimatics
-bioclimatics_BG <- lapply(bioclimatics_BG, function(x) terra::rast(here::here(bios_dir,x)))
+bioclimatics_BG <- lapply(bioclimatics_BG, function(x) terra::rast(here::here(bios_dir(realm),x)))
 names_bioclimatics_BG <- sapply(bioclimatics_BG, function(x){
     tmp <- strsplit(terra::sources(x),"/")[[1]]
     tmp <- tmp[length(tmp)]
@@ -218,15 +192,15 @@ if(!dir.exists(output_BG)){
     dir.create(output_BG)
 }
 
-bioclimatics_BG <- mask_bios_BG(bioclimatics_BG, output_BG)
+bioclimatics_BG <- mask_bios_BG(bioclimatics_BG, output_BG, BA$shape_file)
 
 
 ########################
 # Load in bioclimatics at the SA 
 bioclimatics_SA <- lapply(StudyID, function(x) {
-    tmp_names <- list.files(here::here(bios_SA_dir,x))
+    tmp_names <- list.files(here::here(bios_SA_dir(realm),x))
     tmp_names <- gsub(paste0(c(x,"bios",".tif"," "),collapse = "|"),"",tmp_names)
-    tmp <- list.files(here::here(bios_SA_dir,x), full.names = TRUE)
+    tmp <- list.files(here::here(bios_SA_dir(realm),x), full.names = TRUE)
     tmp <- lapply(tmp, terra::rast)
     names(tmp) <- tmp_names
     return(tmp)
@@ -269,7 +243,7 @@ rm(new_data)
 cat("Fitting SDMs\n")
 # P.S.: The code bellow works using the version 4.2-3 of biomod2
 # installation :
-# devtools::install_github("biomodhub/biomod2", dependencies = TRUE)
+# devtools::install_github("biomodhub/biomod2", depEndencies = TRUE)
 
 # Documentation for functions can be found here: 
 # https://biomodhub.github.io/biomod2/index.html
@@ -293,14 +267,30 @@ data_sp <- BIOMOD_FormatingData(
 
 
 # check if model exists
+delete_duplicated_models(realm = realm, species = sptogo)
+
 models_sp <- list.files(here::here(output_dir, gsub("_",".",sptogo)),
                         pattern = "ensemble.models.out",full.names = TRUE)
 
-if(length(models_sp)>1){
-    delete_duplicated_models(realm = realm,species = sptogo)
-}
-
-if(length(models_sp) == 0){
+# model exists?
+if(length(models_sp)>0){
+    
+    # Load sdms
+    files_sdms <- list.files(
+        here::here(output_dir,gsub("_",".",sptogo)), 
+        full.names = TRUE,
+        pattern = "models.out")  
+    
+    pos <- grep("ensemble",files_sdms)
+    files_sdms_ensemble <- files_sdms[pos]
+    files_sdms <- files_sdms[-pos]
+    
+    model_sp <- get(load(files_sdms))
+    
+    ens_model_sp <- get(load(files_sdms_ensemble))
+    
+    
+} else {
     
     # Fit sdms
     model_sp <- BIOMOD_Modeling(
@@ -319,22 +309,6 @@ if(length(models_sp) == 0){
         model_sp, 
         metric.select = "TSS",
         metric.eval = "TSS")
-    
-} else {
-    
-    # Load sdms
-    files_sdms <- list.files(
-        here::here(output_dir,gsub("_",".",sptogo)), 
-        full.names = TRUE,
-        pattern = "models.out")  
-    
-    pos <- grep("ensemble",files_sdms)
-    files_sdms_ensemble <- files_sdms[pos]
-    files_sdms <- files_sdms[-pos]
-    
-    model_sp <- get(load(files_sdms))
-    
-    ens_model_sp <- get(load(files_sdms_ensemble))
     
 }
 
@@ -391,6 +365,7 @@ if(!file.exists(file_proj)){
         proj.name = projname,
         new.env = bioclimatics_BG[[1]],
         nb.cpu = N_cpus,
+        build.clamping.mask = FALSE,
         keep.in.memory = FALSE)
 }
 
@@ -446,6 +421,14 @@ gc()
 #     gc()
 #     
 # }
+# 
+# delete temporary data
+# possible_sdms_BG <- here::here(output_dir,gsub("_",".",sptogo),paste(paste0("proj_",sptogo),S_time,"BG"))
+# 
+# if(all(dir.exists(possible_sdms_BG))){
+#     unlink(here::here(output_dir,"BG"), recursive = TRUE)
+#     unlink(here::here(output_dir,"BG_PC"), recursive = TRUE)
+# } 
 
 ### Project to each SA and each time period
 
@@ -453,41 +436,45 @@ for(j in 1:length(bioclimatics_SA)){
     
     bioclimatics_SA_j <- bioclimatics_SA[[j]]
     
-    for(i in 1:length(bioclimatics_SA_j)){
-        
-        projname <- paste(sptogo, 
-                          names(bioclimatics_SA)[[j]],
-                          names(bioclimatics_SA_j)[[i]],
-                          "SA")
-        
-        file_proj <- here::here(output_dir,gsub("_",".",sptogo),
-                                paste0("proj_",projname),
-                                paste0(gsub("_",".",sptogo),".",projname,".projection.out"))
-        
-        projname_ens <- paste(projname,"ens")
-        
-        file_ens <- gsub("SA","SA ens",file_proj)
-        file_ens <- gsub(".projection.out",".ensemble.projection.out",file_ens)
-        
-        if(!file.exists(file_proj)){
-            m <- BIOMOD_Projection(
-                bm.mod = model_sp, 
-                proj.name = projname, 
-                new.env = bioclimatics_SA_j[[i]],
-                nb.cpu = N_cpus,
-                keep.in.memory = FALSE)
+    if(length(bioclimatics_SA_j)>0){
+        for(i in 1:length(bioclimatics_SA_j)){
+            
+            projname <- paste(sptogo, 
+                              names(bioclimatics_SA)[[j]],
+                              names(bioclimatics_SA_j)[[i]],
+                              "SA")
+            
+            file_proj <- here::here(output_dir,gsub("_",".",sptogo),
+                                    paste0("proj_",projname),
+                                    paste0(gsub("_",".",sptogo),".",projname,".projection.out"))
+            
+            projname_ens <- paste(projname,"ens")
+            
+            file_ens <- gsub("SA","SA ens",file_proj)
+            file_ens <- gsub(".projection.out",".ensemble.projection.out",file_ens)
+            
+            if(!file.exists(file_proj)){
+                m <- BIOMOD_Projection(
+                    bm.mod = model_sp, 
+                    proj.name = projname, 
+                    new.env = bioclimatics_SA_j[[i]],
+                    nb.cpu = N_cpus,
+                    build.clamping.mask = FALSE,
+                    keep.in.memory = FALSE)
+            }
+            
+            if(!file.exists(file_ens)){
+                ens_m <- BIOMOD_EnsembleForecasting(
+                    bm.em = ens_model_sp, 
+                    bm.proj = m,
+                    proj.name = projname_ens,
+                    nb.cpu = N_cpus,
+                    keep.in.memory = FALSE)
+            }
+            
+            gc()
         }
         
-        if(!file.exists(file_ens)){
-            ens_m <- BIOMOD_EnsembleForecasting(
-                bm.em = ens_model_sp, 
-                bm.proj = m,
-                proj.name = projname_ens,
-                nb.cpu = N_cpus,
-                keep.in.memory = FALSE)
-        }
-        
-        gc()
         
     }
     
@@ -495,12 +482,6 @@ for(j in 1:length(bioclimatics_SA)){
 
 # delete temporary data
 possible_sdms_SA <- here::here(output_dir,gsub("_",".",sptogo),paste(paste0("proj_",sptogo),shift_info$ID,S_time,"SA"))
-possible_sdms_BG <- here::here(output_dir,gsub("_",".",sptogo),paste(paste0("proj_",sptogo),S_time,"BG"))
-
-if(all(dir.exists(possible_sdms_BG))){
-    unlink(here::here(output_dir,"BG"), recursive = TRUE)
-    unlink(here::here(output_dir,"BG_PC"), recursive = TRUE)
-} 
 
 if(all(dir.exists(possible_sdms_SA))){
     unlink(here::here(output_dir,"SA_PC"), recursive = TRUE)

@@ -7,6 +7,7 @@ library(parallel)
 library(tictoc)
 library(dplyr)
 library(ggrepel)
+library(data.table)
 
 source(here::here("R/my_functions.R"))
 

@@ -24,22 +24,21 @@ if(computer == "matrics"){
 
 # source settings
 source("R/settings.R")
-
-script.dir <- here::here(work_dir,"R/7_velocity")
+source("R/my_functions.R")
 
 # create dir for log files
-logdir <- here::here(script.dir,"slurm-log")
+logdir <- here::here(velocity_script_dir,"slurm-log")
 if(!dir.exists(logdir)){
     dir.create(logdir,recursive = TRUE)
 }
 
 # create dir for job files
-jobdir <- here::here(script.dir,"job")
+jobdir <- here::here(velocity_script_dir,"job")
 if(!dir.exists(jobdir)){
     dir.create(jobdir,recursive = TRUE)
 }
 
-Rscript_file = here::here(script.dir,"2_get_velocity_global.R")
+Rscript_file = here::here(velocity_script_dir,"2_get_velocity_global.R")
 
 
 # jobs dataframe
@@ -48,6 +47,8 @@ jobs_data <- data.frame(ECO = c("Ter","Ter","Mar"),
 
 ########################
 # submit jobs
+N_Nodes = 1
+tasks_per_core = 1
 
 for(i in 1:nrow(jobs_data)){
     
@@ -62,46 +63,31 @@ for(i in 1:nrow(jobs_data)){
     
     job_name <- paste("gVel",paste(args,collapse ="_"), sep = "_")
     
-    # Start writing to this file
-    sink(here::here(jobdir,paste0(job_name,'.sh')))
-    
-    # the basic job submission script is a bash script
-    cat("#!/bin/bash\n")
-    
-    cat("#SBATCH -N 1\n")
-    cat("#SBATCH -n 1\n")
-    
-    if(ECO=="Ter"){
-        cat("#SBATCH --partition=bigmem\n")
-        cat("#SBATCH --mem=500G\n")
-        cat("#SBATCH --time=2-20:00:00\n")
-        cat("#SBATCH -c 5\n")
-    } 
-    if(ECO=="Mar"){
-        cat("#SBATCH --partition=normal\n")
-        cat("#SBATCH --mem=50G\n")
-        cat("#SBATCH --time=24:00:00\n")
-        cat("#SBATCH -c 1\n")
+    if(ECO == "Mar"){ # for the Marine use this
+        cores = 1
+        time = "24:00:00"
+        memory = "50G"
+        partition = "normal-amd"
+    }
+    if(ECO == "Ter"){ # for the Terrestrial use this (bigger jobs) 
+        cores = 5 # reduce N cores because of out-of-memory issue
+        time = "1-24:00:00"
+        memory = "500G"
+        partition = "bigmem-amd"
     }
     
-    cat("#SBATCH --job-name=",job_name,"\n", sep="")
-    cat("#SBATCH --output=",here::here(logdir,paste0(job_name,".out")),"\n", sep="")
-    cat("#SBATCH --error=",here::here(logdir,paste0(job_name,".err")),"\n", sep="")
-    # cat("#SBATCH --mail-type=ALL\n")
-    # cat("#SBATCH --mail-user=brunno.oliveira@fondationbiodiversite.fr\n")
-    
-    cat(paste0("IMG_DIR='",singularity_image,"'\n"))
-    
-    cat("module purge\n")
-    cat("module load singularity\n")
-    
-    cat("singularity exec --disable-cache $IMG_DIR Rscript",Rscript_file, args,"\n", sep=" ")
-    
-    # Close the sink!
-    sink()
-    
-    # Submit to run on cluster
-    system(paste("sbatch", here::here(jobdir, paste0(job_name,'.sh'))))
+    slurm_job_singularity(jobdir = jobdir,
+                          logdir = logdir, 
+                          sptogo = job_name, 
+                          args = args,
+                          N_Nodes = N_Nodes, 
+                          tasks_per_core = tasks_per_core, 
+                          cores = cores, 
+                          time = time, 
+                          memory = memory, 
+                          partition = partition, 
+                          singularity_image = singularity_image, 
+                          Rscript_file = Rscript_file)
     
 }
 

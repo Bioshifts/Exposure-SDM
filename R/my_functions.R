@@ -1,4 +1,155 @@
 
+###############################################
+slurm_job_singularity <- function(jobdir, logdir, sptogo, args,
+                                  N_Nodes = 1, tasks_per_core = 1, cores = 1, time = "24:00:00", memory = "8G", partition = "normal",
+                                  singularity_image,Rscript_file){
+    
+    # Start writing to this file
+    sink(here::here(jobdir,paste0(sptogo,'.sh')))
+    
+    # the basic job submission script is a bash script
+    cat("#!/bin/bash\n")
+    
+    cat("#SBATCH -N",N_Nodes,"\n")
+    cat("#SBATCH -n",tasks_per_core,"\n")
+    cat("#SBATCH -c",cores,"\n")
+    cat("#SBATCH --partition",partition,"\n")
+    cat("#SBATCH --mem=",memory,"\n", sep="")
+    cat("#SBATCH --time=",time,"\n", sep="")
+    
+    cat("#SBATCH --job-name=",sptogo,"\n", sep="")
+    cat("#SBATCH --output=",here::here(logdir,paste0(sptogo,".out")),"\n", sep="")
+    cat("#SBATCH --error=",here::here(logdir,paste0(sptogo,".err")),"\n", sep="")
+    # cat("#SBATCH --mail-type=ALL\n")
+    # cat("#SBATCH --mail-user=brunno.oliveira@fondationbiodiversite.fr\n")
+    
+    cat(paste0("IMG_DIR='",singularity_image,"'\n"))
+    
+    cat("module purge\n")
+    cat("module load singularity\n")
+    
+    cat("singularity exec --disable-cache $IMG_DIR Rscript",Rscript_file, args,"\n", sep=" ")
+    
+    # Close the sink!
+    sink()
+    
+    # Submit to run on cluster
+    system(paste("sbatch", here::here(jobdir, paste0(sptogo,'.sh'))))
+    
+}
+
+
+###############################################
+# create temporal pseudo-absences
+# BA = raster of the background area to draw pseudo records
+# env_range = range of environmental data to generate pseudo records vector of 
+# sp_occ = species presence data. Should include the columns year, month, and cell numbers. Used to remove from the pseudo-absence data the same cells within the same dates as in the sp_occ.
+create_temporal_pseudo_absences <- function(BA, env_range, sp_occ){
+    # 1) get cells at the BA
+    cells_BA <- terra::cells(BA, 1)[[1]]
+    # 2) get dates
+    env_range[1] <- env_range[1] + n_yr_bioclimatic # + n_yr_bioclimatic to be able to calculate bioclimatics for the previous n_yr_bioclimatic
+    all_dates <- format(
+        seq.Date(from = as.Date(paste0(env_range[1],"/01/01")), 
+                 to = as.Date(paste0(env_range[2],"/12/01")), 
+                 by = "month"), 
+        "%m_%Y")
+    # 3) sample random cells and dates
+    random_cells <- sample(cells_BA, size = nrow(sp_occ), replace = TRUE)
+    random_dates <- sample(all_dates, size = nrow(sp_occ), replace = TRUE)
+    PA_cell_dates <- paste(random_cells,random_dates)
+    # 4) check for the existence of any combination of cell dates from PA in sp_occ
+    occ_cell_dates <- paste(sp_occ$cell, paste(sp_occ$month,sp_occ$year,sep="_"))
+    while(any(PA_cell_dates %in% occ_cell_dates)){
+        # resample
+        random_cells <- sample(cells_BA, size = nrow(sp_occ), replace = TRUE)
+        random_dates <- sample(all_dates, size = nrow(sp_occ), replace = TRUE)
+        PA_cell_dates <- paste(random_cells,random_dates)
+    }
+    # Create a PA dataset
+    tmp <- lapply(random_dates, function(x) strsplit(x, "_")[[1]])
+    PA_years <- sapply(tmp, function(x) x[2])
+    PA_months <- sapply(tmp, function(x) x[1])
+    
+    PA_occ <- data.frame(year = PA_years, 
+                         month = PA_months,
+                         species = sp_occ$species[1],
+                         cell = random_cells,
+                         pa = 0)
+    PA_xy <- terra::xyFromCell(BA,random_cells)    
+    PA_occ <- cbind(PA_occ, PA_xy) 
+    return(PA_occ)
+}
+
+
+###############################################
+# make bioshifts v3 workable
+# change colnames to reflect names in v1
+bioshifts_fix_columns <- function(bioshifts){
+    require(dplyr)
+    bioshifts %>%
+        dplyr::mutate(sp_name_std = sp_name_checked,
+                      Start = MIDPOINT_firstperiod,
+                      End = MIDPOINT_secondperiod,
+                      ShiftRate = case_when(
+                          UnitRate == "m/year" ~ Rate/1000, 
+                          UnitRate == "km/year" ~ Rate, 
+                          TRUE ~ NA_real_),
+                      UnitRate = "km/year") %>%
+        dplyr::select(ID,
+                      Type,
+                      Param,
+                      sp_name_std,
+                      Start, 
+                      End,
+                      
+                      Grain_size, 
+                      N_periodes, 
+                      Sampling, 
+                      Category, 
+                      Obs_type, 
+                      Uncertainty_distribution,
+                      Duration,
+                      
+                      ShiftRate,
+                      UnitRate,
+                      Areakm2,
+                      LatExtentk,
+                      Eco,
+                      kingdom,
+                      phylum,
+                      class,
+                      family)
+}
+
+###############################################
+# subset bioshifts for use in sdms:
+# 1) Latitude shifts
+# 2) Terrestrial or marine shifts
+# 3) Range shifts within the time-period that matches the environmental data
+bioshifts_sdms_selection <- function(x){
+    
+    x %>%
+        bioshifts_fix_columns %>%
+        filter(!Eco=="Aqu") %>%
+        mutate(new_eco = ifelse(
+            Eco == "Mar", "Mar", ifelse(Eco != "Mar", "Ter", NA))) %>%
+        mutate(Eco = new_eco) %>%
+        # filter latitude shifts
+        filter(Type == "LAT") %>%
+        # filter terrestrial or marine shifts
+        filter(Eco == "Ter" | Eco == "Mar") %>%
+        # Shifts marine or terrestrial within time period of the environmental data
+        filter(Eco == "Ter" & (Start >= (temporal_range_env_data("Ter")[1] + n_yr_bioclimatic)) | 
+                   (Eco == "Mar" & (Start >= (temporal_range_env_data("Mar")[1] + n_yr_bioclimatic)))) %>%
+        # Remove marine birds
+        filter(!(Eco == "Mar" & class == "Aves")) %>%
+        # Remove freshwater fish
+        filter(!(Eco == "Ter" & class == "Actinopterygii"))
+    
+}
+
+###############################################
 # from a distance object to data.frame
 dist.to.df <- function(d){
     size <- attr(d, "Size")
@@ -11,6 +162,7 @@ dist.to.df <- function(d){
     )
 }
 
+###############################################
 # Markdown table
 nice_table <- function(x){
     DT::datatable(
@@ -20,12 +172,13 @@ nice_table <- function(x){
         options = list(pageLength = 100, 
                        scrollY = "400px",
                        scrollX = T,
-                       dom = 'Blfrtip',
-                       buttons = c('csv', 'excel'),
+                       dom = 'Bft',
+                       buttons = c('csv'),
                        lengthMenu = list(c(10,25,50,-1),
                                          c(10,25,50,"All"))))
 }
 
+###############################################
 # submit system job
 # args = spgoing
 # code_dir= here::here("R/get_data_sps_sdms.R")
@@ -37,21 +190,9 @@ systemjob <- function(args,code_dir,Rout_file){
                  Rout_file))
 }
 
-slurmjobsingularity <- function(job_args, slurm_args, Rscript_file){
-    
-    slurm_cmd <- paste("srun",
-                       "-N", slurm_args$n_nodes, 
-                       "-n", slurm_args$n_task_per_node, 
-                       "-c", slurm_args$n_cores, 
-                       paste0("--time=", slurm_args$time), 
-                       paste0("--mem=", slurm_args$mem), 
-                       "-J", slurm_args$job_name,
-                       "singularity exec --disable-cache $HOME/work_t_cesab/brunno/brunnospatial.sif",
-                       "Rscript", Rscript_file, job_args)
-    
-    system(slurm_cmd)
-}
 
+
+###############################################
 # clean var names from raster files
 cleanNamesFiles <- function(orinames, tile = F){
     # rename layers for easy reading
@@ -82,6 +223,7 @@ cleanNamesFiles <- function(orinames, tile = F){
     return(orinames)
 }
 
+###############################################
 cleanNamesLayers <- function(orinames, tile = F){
     # rename layers for easy reading
     if(any(grepl("ph|o2",orinames))){
@@ -159,36 +301,6 @@ bioclimatics_ocean_simple <- function(env_data){
     return(data.frame(mean = amean, sd = asd, min = amin, max = amax))
 }
 
-# calculate bioclimatic variables from time series
-bioclimatics_ocean <- function(env_data){
-    tmp <- bioclimatics_ocean_inside(env_data)
-    return(tmp)
-}
-bioclimatics_ocean_inside <- function(x){
-    
-    window <- function(x)  { 
-        lng <- length(x)
-        x <- c(x,  x[1:3])
-        m <- matrix(ncol=3, nrow=lng)
-        for (i in 1:3) { m[,i] <- x[i:(lng+i-1)] }
-        apply(m, MARGIN=1, FUN=sum)
-    }
-    
-    # annual average (equivalent to mean annual temperature)
-    amean <- apply(x, 1, mean, na.rm = T) 
-    
-    tmp <- t(apply(x, 1, window)) / 3
-    
-    # seasonality (equivalent to temperature seasonality)
-    asd <- apply(x, 1, sd, na.rm = T) 
-    # minimum (equivalent to Mean Temperature of Coldest Quarter
-    amin <- apply(tmp, 1, min, na.rm = T)
-    # maximum (equivalent to Mean Temperature of Warmest Quarter 
-    amax <- apply(tmp, 1, max, na.rm = T)
-    
-    return(data.frame(mean = amean, sd = asd, min = amin, max = amax))
-}
-
 ##################################
 # calculate bioclimatic (terrestrial like >> tas, tasmim, tasmax, pr) variables from timeseries
 bioclimatics_land_simple <- function(env_data){
@@ -220,53 +332,64 @@ bioclimatics_land_simple <- function(env_data){
                       map = pmean, seap = psd, minp = pmin, maxp = pmax))
 }
 
-# calculate bioclimatic (terrestrial like >> tas, tasmim, tasmax, pr) variables from timeseries
-bioclimatics_land <- function(env_data){
-    resp <- bioclimatics_land_inside(env_data)
-    return(resp)
-}
-bioclimatics_land_inside <- function(env_data){
+# calculate bioclimatics from a given date
+# enter the date and calculate bioclimatics for the previous N years
+# date_i = date to calculate the bioclimatics for the previous N years
+# realm = realm to find the environmental data and function associated realm level bioclimatics
+# sp_occ = to find cells and dates bioclimatics will be attached
+# n_yr_bioclimatic = N previous years to calculate bioclimatics
+bioclimatics_from_date <- function(all_layers,date_i,realm,sp_occ,n_yr_bioclimatic,n_cores=NULL){
     
-    window <- function(x)  { 
-        lng <- length(x)
-        x <- c(x,  x[1:3])
-        m <- matrix(ncol=3, nrow=lng)
-        for (i in 1:3) { m[,i] <- x[i:(lng+i-1)] }
-        apply(m, MARGIN=1, FUN=sum)
+    # subset occ data for date i
+    sub_occ <- sp_occ %>% dplyr::filter(date == date_i)
+    
+    # get spatvect from data.frame
+    occ_vect <- vect(data.frame(sub_occ[,c("x","y")]),geom=c("x","y"))
+    
+    # get range of dates to get the bioclimatics
+    periods_i <- paste0("01_",date_i)
+    periods_i <- as.Date(periods_i,"%d_%m_%Y")
+    periods_i <- format(
+        seq.Date(from = periods_i-(365*n_yr_bioclimatic), 
+                 to = periods_i, 
+                 by = "month"), 
+        "%m_%Y")[1:12]
+    
+    
+    # subset env layers for this period
+    layers_i_pos <- unique(grep(paste(periods_i,collapse = "|"),all_layers))
+    layers_i <- all_layers[layers_i_pos]
+    layers_i <- rast(layers_i)
+    
+    # fix layers names
+    layers_i_names <- all_layers_names[layers_i_pos]
+    names(layers_i) <- layers_i_names
+    
+    terra::window(layers_i) <- terra::ext(terra::buffer(occ_vect,1))
+    
+    # extract data
+    if(is.null(n_cores)){
+        layers_i <- terra::extract(layers_i, occ_vect)
+    } else {
+        layers_i <- parallel::mclapply(1:length(occ_vect), 
+                                       function(x) { terra::extract(layers_i, occ_vect[x]) }, 
+                                       mc.cores = n_cores)
+        layers_i <- data.frame(data.table::rbindlist(layers_i))
     }
     
-    tmin <- env_data[,grep("tasmin",names(env_data))]
-    tmax <- env_data[,grep("tasmax",names(env_data))]
-    pr <- env_data[,grep("pr",names(env_data))]
-    tas <- (tmin + tmax) / 2
+    # calculate bioclimatics
+    if(realm == "Ter"){
+        bios_i <- bioclimatics_land_simple(layers_i)
+    }
+    if(realm == "Mar"){
+        bios_i <- bioclimatics_ocean_simple(layers_i)
+    }
     
-    tmp <- t(apply(tas, 1, window)) / 3
+    bios_i$ID <- paste(sub_occ$cell,sub_occ$date,sep = "_")
     
-    # mean annual temperature
-    amean <- apply(tas, 1, mean, na.rm = T) 
-    # temperature seasonality
-    asd <- apply(tas, 1, sd, na.rm = T) 
-    # Mean Temperature of Warmest Quarter 
-    amax <- apply(tmp, 1, max, na.rm = T)
-    # Mean Temperature of Coldest Quarter
-    amin <- apply(tmp, 1, min, na.rm = T)
-    
-    # precip by quarter (3 months)		
-    wet <- t(apply(pr, 1, window))
-    
-    # mean annual precipitation
-    pmean <- apply(pr, 1, mean, na.rm = T) 
-    # precipitation seasonality
-    psd <- apply(pr, 1, sd, na.rm = T) 
-    # Precipitation of Wettest Quarter 
-    pmin <- apply(wet, 1, max, na.rm = T)
-    # Precipitation of Driest Quarter 
-    pmax <- apply(wet, 1, min, na.rm = T)
-    
-    # return bioclimatics
-    return(data.frame(mat = amean, seat = asd, mint = amin, maxt = amax,
-                      map = pmean, seap = psd, minp = pmin, maxp = pmax))
+    return(bios_i)
 }
+
 
 ##################################
 # get data from each cells in time-series data
@@ -603,35 +726,60 @@ fix.spnames <- function(x){
 
 # delete duplicated SDM generated from biomod
 delete_duplicated_models <- function(realm,species){
-    # models
+    
+    models_folder <- here::here(sdm_dir(realm), species, gsub("_",".",species),"models")
+    
+    existing_models <- list.dirs(models_folder, full.names = TRUE, recursive = FALSE)
+    
+    if(length(existing_models)>0){
+        existing_models_ids <- strsplit(existing_models,"/")[[1]]
+        existing_models_ids <- existing_models_ids[length(existing_models_ids)]
+    }
+    
     files_sdms <- list.files(
-        here::here(sdm_dir(realm),species,gsub("_",".",species),"models"), 
-        full.names = TRUE)  
-    
-    if(length(files_sdms) > 1){ # if there are > 1 model, keep the most recent one
-        del <- order(file.info(files_sdms)$ctime,decreasing = TRUE)[-1]
-        
-        unlink(files_sdms[del],recursive = TRUE)
-    }
-    
-    # link to models
-    files_sdms_model <- list.files(
         here::here(sdm_dir(realm),species,gsub("_",".",species)), 
-        pattern = "models.out",
+        pattern = "ensemble.models.out",
         full.names = TRUE)  
     
-    if(length(files_sdms)==0){ # if there are mo models, delete all
-        unlink(files_sdms_model)
+    if(length(files_sdms)>0){
+        files_sdms_ids <- gsub(here::here(sdm_dir(realm),species,gsub("_",".",species)),"",files_sdms)
+        files_sdms_ids <- strsplit(files_sdms_ids,".",fixed = TRUE)[[1]][3]
     }
     
-    if(length(files_sdms_model) > 2){ # if there are > 2 (simple + ensemble)
+    
+    if(length(files_sdms)==0 | length(existing_models)==0){ # if there are mo models, delete everything
+        unlink(models_folder, recursive = TRUE)
+        unlink(list.files(
+            here::here(sdm_dir(realm),species,gsub("_",".",species)), 
+            pattern = "models.out",
+            full.names = TRUE) , recursive = TRUE)
+    } 
+    if(!any(files_sdms_ids %in% existing_models_ids)){ # if these are not the same models, delete everything
+        unlink(models_folder, recursive = TRUE)
+        unlink(list.files(
+            here::here(sdm_dir(realm),species,gsub("_",".",species)), 
+            pattern = "models.out",
+            full.names = TRUE))
+    }
+    if(length(files_sdms)>1 | length(existing_models_ids)>1){ # if there are >1 model, select the good one
         
-        which_sdm <- strsplit(files_sdms,split = "/")[[1]]
-        which_sdm <- which_sdm[length(which_sdm)]
+        files_sdms_to_del <- files_sdms[grep(existing_models_ids, files_sdms, invert = TRUE)]
+        if(length(files_sdms_to_del)>0){
+            unlink(files_sdms_to_del, recursive = TRUE)    
+        }
         
-        del <- files_sdms_model[!grepl(which_sdm, files_sdms_model)]
+        files_sdms <- list.files(
+            here::here(sdm_dir(realm),species,gsub("_",".",species)), 
+            pattern = "ensemble.models.out",
+            full.names = TRUE)  
         
-        unlink(del)
+        files_sdms_ids <- gsub(here::here(sdm_dir(realm),species,gsub("_",".",species)),"",files_sdms)
+        files_sdms_ids <- strsplit(files_sdms_ids,".",fixed = TRUE)[[1]][3]
         
+        existing_models_to_del <- existing_models[grep(files_sdms_ids, existing_models, invert = TRUE)]
+        if(length(existing_models_to_del)>0){
+            unlink(existing_models_to_del, recursive = TRUE)    
+        }
     }
 }
+

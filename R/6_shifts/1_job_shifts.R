@@ -7,6 +7,7 @@ gc()
 
 library(tictoc)
 library(here)
+library(dplyr)
 
 # set computer
 computer = "matrics"
@@ -89,6 +90,7 @@ for(j in 1:length(realms)){
         
         # get studies for species i
         shift_info <- read.csv(here::here(sdm_dir(realm),sp_i,paste(sp_i,"shift_info.csv")))
+        
         ID_i <- shift_info$ID
         # for each ID_i, look if has projections for all years
         tmp <- data.frame(sps=sp_i,
@@ -97,7 +99,7 @@ for(j in 1:length(realms)){
         
         tmp$I_have_sdms <- sapply(ID_i, function(x){
             shift_info_i <- shift_info[which(shift_info$ID==x),]
-            years_ID_i <- round(shift_info_i$START,0):round(shift_info_i$END,0)
+            years_ID_i <- round(shift_info_i$Start,0):round(shift_info_i$End,0)
             # check
             # Focus on SA for now
             sdms_sp_i <- list.files(paste(sdm_dir(sp_i_realm),sp_i,gsub("_",".",sp_i),sep = "/"),pattern = "SA")
@@ -130,87 +132,64 @@ for(j in 1:length(realms)){
     missing <- I_have_sdms[which(!paste(I_have_sdms$sps,I_have_sdms$ID) %in% paste(I_have_shift$sps,I_have_shift$ID)),]
     nrow(missing)
     
-    ########################
-    # submit jobs
+    missing <- missing %>% distinct(sps, ID, .keep_all = TRUE)
     
-    N_jobs_at_a_time = 20
-    
-    cat("Running for", nrow(missing), realm, "species\n")
-    
-    for(i in 1:nrow(missing)){ 
+    if(nrow(missing)>0){
+        ########################
+        # submit jobs
         
-        sptogo <- missing$sps[i]
-        realmtogo <- missing$realm[i]
-        IDtogo <- missing$ID[i]
+        N_jobs_at_a_time = 50
+        N_Nodes = 1
+        tasks_per_core = 1
         
-        args <- paste(sptogo,realmtogo,IDtogo)
+        cat("Running for", nrow(missing), realm, "species\n")
         
-        shifttogo = gsub(" ","_",args)
-        
-        # Start writing to this file
-        sh_file <- here::here(jobdir,paste0(shifttogo,'.sh'))
-        sink(sh_file)
-        
-        # the basic job submission script is a bash script
-        cat("#!/bin/bash\n")
-        
-        cat("#SBATCH -N 1\n")
-        cat("#SBATCH -n 1\n")
-        
-        if(realmtogo=="Ter"){
-            cat("#SBATCH --time=20:00:00\n")
-            cat("#SBATCH --partition=bigmem\n")
-            # for normal jobs 
-            cat("#SBATCH -c 5\n")
-            cat("#SBATCH --mem=100G\n")
-            # for big jobs that crash
-            cat("#SBATCH --mem=500G\n") 
-            cat("#SBATCH -c 5\n")
-        } else {
-            cat("#SBATCH --partition=normal\n")
-            cat("#SBATCH --mem=50G\n")
-            cat("#SBATCH --time=5:00:00\n")
-            cat("#SBATCH -c 1\n")
-        }
-        
-        cat("#SBATCH --job-name=",shifttogo,"\n", sep="")
-        cat("#SBATCH --output=",here::here(logdir,paste0(shifttogo,".out")),"\n", sep="")
-        cat("#SBATCH --error=",here::here(logdir,paste0(shifttogo,".err")),"\n", sep="")
-        
-        if(computer == "muse"){
-            cat("IMG_DIR='/storage/simple/projects/t_cesab/brunno'\n")
+        for(i in 1:nrow(missing)){ 
             
-            cat("module purge\n")
-            cat("module load singularity/3.5\n")
+            sptogo <- missing$sps[i]
+            realmtogo <- missing$realm[i]
+            IDtogo <- missing$ID[i]
             
-            cat("singularity exec --disable-cache $IMG_DIR/brunnospatial.sif Rscript",Rscript_file, args,"\n", sep=" ")
-        }
-        if(computer == "matrics"){
-            cat(paste0("IMG_DIR='",singularity_image,"'\n"))
+            args <- paste(sptogo,realmtogo,IDtogo)
             
-            cat("module purge\n")
-            cat("module load singularity\n")
+            shifttogo = gsub(" ","_",args)
             
-            cat("singularity exec --disable-cache $IMG_DIR Rscript",Rscript_file, args,"\n", sep=" ")
-        }
-        
-        # Close the sink!
-        sink()
-        
-        # Submit to run on cluster
-        system(paste("sbatch", sh_file))
-        
-        # check how many jobs in progress
-        tmp <- system("squeue -u $USER",intern = T)
-        
-        while(length(tmp)>N_jobs_at_a_time){
+            if(realm == "Mar"){ # for the Marine use this
+                cores = 20
+                time = "5:00:00"
+                memory = "16G"
+                partition = "normal"
+            }
+            if(realm == "Ter"){ # for the Terrestrial use this (bigger jobs) 
+                cores = 5 # reduce N cores because of out-of-memory issue
+                time = "20:00:00"
+                memory = "100G"
+                partition = "bigmem"
+            }
             
-            Sys.sleep(10)
+            slurm_job_singularity(jobdir = jobdir,
+                                  logdir = logdir, 
+                                  sptogo = shifttogo, 
+                                  args = args,
+                                  N_Nodes = N_Nodes, 
+                                  tasks_per_core = tasks_per_core, 
+                                  cores = cores, 
+                                  time = time, 
+                                  memory = memory, 
+                                  partition = partition, 
+                                  singularity_image = singularity_image, 
+                                  Rscript_file = Rscript_file)
+            
+            # check how many jobs in progress
             tmp <- system("squeue -u $USER",intern = T)
             
+            while(length(tmp)>N_jobs_at_a_time){
+                
+                Sys.sleep(10)
+                tmp <- system("squeue -u $USER",intern = T)
+                
+            }
         }
-        
     }
-    
 }
 

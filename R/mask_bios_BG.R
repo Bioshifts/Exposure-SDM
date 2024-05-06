@@ -1,4 +1,4 @@
-mask_bios_BG <- function(bioclimatics_BG, output_BG){
+mask_bios_BG <- function(bioclimatics_BG, output_BG, BG_shp){
     bioclimatics_BG <- lapply(bioclimatics_BG, function(x) {
         my_file <- strsplit(terra::sources(x),"/")[[1]]
         my_file <- here::here(output_BG,my_file[length(my_file)])
@@ -8,16 +8,16 @@ mask_bios_BG <- function(bioclimatics_BG, output_BG){
             test <- try(terra::rast(my_file), silent = TRUE)
             if(class(test) == "try-error"){
                 # if error then mask and save
-                terra::window(x) <- terra::ext(BA$shape_file)
-                terra::mask(x, BA$shape_file, filename = my_file, overwrite = TRUE)
+                terra::window(x) <- terra::ext(BG_shp)
+                terra::mask(x, BG_shp, filename = my_file, overwrite = TRUE)
             } else {
                 # if works, do nothing
                 return(test)
             }
         } else {
             # if file does not exists, then mask
-            terra::window(x) <- terra::ext(BA$shape_file)
-            terra::mask(x, BA$shape_file, filename = my_file)
+            terra::window(x) <- terra::ext(BG_shp)
+            terra::mask(x, BG_shp, filename = my_file)
         }
     })
     names_bioclimatics_BG <- sapply(bioclimatics_BG, function(x){

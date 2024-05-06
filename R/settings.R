@@ -18,7 +18,7 @@ mar_data <- "oras"
 # Bioshifts database
 Bioshifts_DB_v1 <- "biov1_fixednames.csv"
 Bioshifts_DB_v2 <- "biov2_fixednames.csv"
-Bioshifts_DB_v3 <- "bioshifts_v3_harmonized.csv"
+Bioshifts_DB_v3 <- "BIOSHIFTS_v3.csv"
 
 # basis of records for downloading GBIF data
 basisOfRecord = c("HUMAN_OBSERVATION", "OBSERVATION", "OCCURRENCE")
@@ -44,6 +44,10 @@ work_dir <- if(computer == "muse"){
     } else {
         if(computer=="personal"){
             here::here()
+        } else {
+            if(computer=="rossinante"){
+                "/home/boliveira/Exposure-SDM"
+            }
         }
     }
 }
@@ -57,6 +61,10 @@ scratch_dir <- if(computer == "muse"){
     } else {
         if(computer=="personal"){
             here::here()
+        } else {
+            if(computer=="rossinante"){
+                "/media/seagate/boliveira"
+            }
         }
     }
 }
@@ -68,7 +76,13 @@ tmp_dir <- here::here(scratch_dir,"tmp")
 Bioshifts_dir <- here::here(work_dir,"Data/Bioshifts")
 
 # Env data dir
-env_data_dir <- function(realm){here::here(work_dir,"Data/Env_data",realm)}
+env_data_dir <- function(realm){
+    if(computer=="rossinante"){
+        here::here(scratch_dir,"Data/Env_data",realm)
+    } else {
+        here::here(work_dir,"Data/Env_data",realm)
+    }
+}
 
 # Env variables dir
 vars_dir <- function(realm){
@@ -101,8 +115,11 @@ occ_dir <- here::here(work_dir,"Data/GBIF_data")
 # SA velocity dir
 velocity_SA_dir <- here::here(work_dir,"Data/Velocity_SA")
 
-# SA velocity script dir
-velocity_SA_scrit_dir <- here::here(work_dir,"R/7_velocity")
+# velocity edges dir
+velocity_edges_dir <- here::here(work_dir,"Data/Velocity_SA_edges")
+
+# velocity script dir
+velocity_script_dir <- here::here(work_dir,"R/7_velocity")
 
 # SA shapefiles dir
 SA_shps_dir <- here::here(Bioshifts_dir,"ShapefilesBioShiftsv3")
@@ -120,6 +137,9 @@ shift_script_dir <- here::here(work_dir,"R/6_shifts")
 sdm_dir <- function(realm){here::here(scratch_dir,"SDMs",realm)}
 
 # SDMs scripts dir
+sdm_script_dir <- here::here(work_dir,"R/5_sdms")
+
+# edge scripts dir
 sdm_script_dir <- here::here(work_dir,"R/5_sdms")
 
 # Singularity image

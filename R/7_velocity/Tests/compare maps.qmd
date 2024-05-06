@@ -21,13 +21,17 @@ library(ggplot2)
 library(tidyverse)
 library(terra)
 library(RColorBrewer)
+library(geostats)
 
 # source settings
 source(here::here("R/settings.R"))
+source(here::here("R/velocity_functions.R"))
 
 # Global continental lines
 globe_lines <- vect(rnaturalearth::ne_countries(scale = "small"))
 globe_lines <- terra::aggregate(globe_lines)
+
+
 ```
 
 
@@ -36,7 +40,7 @@ globe_lines <- terra::aggregate(globe_lines)
 ```{r}
 # Velocity
 
-gVel <- terra::rast(here::here("Data/Mar_mean_gVel_1979-2018.tif"))
+gVel <- terra::rast(here::here("Data/Velocity_global/Mar_mean_gVel_1979-2018.tif"))
 gVelrange <- range(gVel[],na.rm = TRUE)
 the_palette_fc <- leaflet::colorNumeric(
   palette = "RdBu", 
@@ -49,7 +53,7 @@ plot(gVel, col = the_colors, main = "Climate velocity")
 
 # Trend
 
-ttrend <- terra::rast(here::here("Data/Mar_mean_trend_1979-2018.tif"))
+ttrend <- terra::rast(here::here("Data/Velocity_global/Mar_mean_trend_1979-2018.tif"))
 ttrendrange <- range(ttrend[],na.rm = TRUE)
 
 the_palette_fc <- leaflet::colorNumeric(
@@ -71,7 +75,7 @@ The velocity and trend patterns identified here (using our function based on the
 ```{r}
 # Velocity
 
-gVel <- terra::rast(here::here("Data/Mar_mean_gVel_1960-2009.tif"))
+gVel <- terra::rast(here::here("Data/Velocity_global/Mar_mean_gVel_1960-2009.tif"))
 
 gVelrange <- range(gVel[],na.rm = TRUE)
 
@@ -96,7 +100,7 @@ In order to retrieve a climate velocity across the latitudinal gradient, we calc
 ```{r}
 # Latitude 
 
-gVelLat <- terra::rast(here::here("Data/Mar_mean_gVelLat_1979-2018.tif"))
+gVelLat <- terra::rast(here::here("Data/Velocity_global/Mar_mean_gVelLat_1979-2018.tif"))
 
 # velocity angles have opposite direction to the spatial climatic gradient if warming and same direction (cold to warm) if cooling
 
@@ -121,24 +125,16 @@ The difference is due to the direction (angle) of the gradient. Take a closer lo
 # Angle
 
 ```{r}
-SouthCells <- terra::as.data.frame(gVelLat, xy = TRUE, cell = TRUE)
-
-SouthCells <- SouthCells %>% filter(y<0)
-
-SouthCells <- SouthCells$cell
-
-gVelAngle <- terra::rast(here::here("Data/Mar_mean_gVelAngle_1960-2009.tif"))
-
-gVelAngle <- (gVelAngle + 180) %% 360
+gVelAngle <- terra::rast(here::here("Data/Velocity_global/Mar_mean_gVelAngle_1960-2009.tif"))
 
 myramp <- colorRampPalette(colors = c("red","green","blue","yellow","red"))(360)
 
 {
   layout(matrix(c(1,1,1,2), nrow = 1, ncol = 4, byrow=T))
-
+  
   plot(gVelAngle, 
        col = myramp)
-
+  
   plotrix::polar.plot(
     start = 90,
     lengths = c(rnorm(360,mean = 1, sd = 0.001)),
@@ -149,13 +145,18 @@ myramp <- colorRampPalette(colors = c("red","green","blue","yellow","red"))(360)
     line.col=myramp)
 }
 
-# zoom to australia
+hist(gVelAngle)
 
+```
+
+
+```{r}
+# zoom to australia
 {
   layout(matrix(c(1,1,1,2), nrow = 1, ncol = 4, byrow=T))
-
+  
   plot(crop(gVelAngle,c(90,180,-30,30)), col = myramp)
-
+  
   plotrix::polar.plot(
     start = 90,
     lengths = c(rnorm(360,mean = 1, sd = 0.001)),
@@ -168,3 +169,158 @@ myramp <- colorRampPalette(colors = c("red","green","blue","yellow","red"))(360)
 ```
 
 The angles are very similar to what has been presented in a previous study from [Garcia-Molinos et al. 2019 Meth Eco Evo](https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.13295) (see Fig3b).
+
+```{r}
+# zoom the Atlantic
+{
+  layout(matrix(c(1,1,1,2), nrow = 1, ncol = 4, byrow=T))
+  
+  plot(crop(gVelAngle,c(-90,50,-60,10)), col = myramp)
+  
+  plotrix::polar.plot(
+    start = 90,
+    lengths = c(rnorm(360,mean = 1, sd = 0.001)),
+    polar.pos = seq(0,360,by=1),
+    clockwise = TRUE,
+    cex=.01,
+    show.grid.labels=0,
+    line.col=myramp)
+}
+```
+
+The angles are very similar to what has been presented in a previous study from [Burrows et al 2014 Nature](https://www.nature.com/articles/nature12976) (see FigS5b).
+
+
+```{r}
+Ter_vel_angle_5km <- here::here("Data/Velocity_global/Ter_mat_gVelAngle_1960-2009_5km.tif")
+if(!file.exists(Ter_vel_angle_5km)){
+  Ter_vel_angle <- rast(here::here("Data/Velocity_global/Ter_mat_gVelAngle_1960-2009.tif"))
+  Ter_vel_angle <- terra::aggregate(Ter_vel_angle,
+                                    fun = circ_mean,
+                                    fact=5,
+                                    cores=10,
+                                    filename=Ter_vel_angle_5km,
+                                    overwrite=TRUE)
+} else {
+  Ter_vel_angle <- rast(Ter_vel_angle_5km)
+}
+
+myramp <- colorRampPalette(colors = c("red","green","blue","yellow","red"))(360)
+
+{
+  layout(matrix(c(1,1,1,2), nrow = 1, ncol = 4, byrow=T))
+  
+  plot(Ter_vel_angle, 
+       col = myramp)
+  
+  plotrix::polar.plot(
+    start = 90,
+    lengths = c(rnorm(360,mean = 1, sd = 0.001)),
+    polar.pos = seq(0,360,by=1),
+    clockwise = TRUE,
+    cex=.01,
+    show.grid.labels=0,
+    line.col=myramp)
+}
+
+hist(Ter_vel_angle)
+```
+
+Angles in land are much more variable.
+
+```{r}
+# zoom to australia
+{
+  layout(matrix(c(1,1,1,2), nrow = 1, ncol = 4, byrow=T))
+  
+  plot(terra::aggregate(crop(Ter_vel_angle,c(110,160,-45,-10)),
+                        fact=20,
+                        fun=circ_mean),
+  col = myramp)
+  # plot(crop(Ter_vel_angle,c(110,160,-45,-10)),
+  #      col = myramp)
+  
+  plotrix::polar.plot(
+    start = 90,
+    lengths = c(rnorm(360,mean = 1, sd = 0.001)),
+    polar.pos = seq(0,360,by=1),
+    clockwise = TRUE,
+    cex=.01,
+    show.grid.labels=0,
+    line.col=myramp)
+}
+
+```
+
+The angles in the terrestrial environment are very similar to what has been presented in a previous study from [Burrows et al 2014 Nature](https://www.nature.com/articles/nature12976) (see Fig1, Fig3, FigS9).
+
+```{r}
+# zoom to Europe
+{
+  layout(matrix(c(1,1,1,2), nrow = 1, ncol = 4, byrow=T))
+  
+  plot(terra::aggregate(crop(Ter_vel_angle,c(-10,40,30,70)),
+                         fact=20,
+                         fun=circ_mean), 
+       col = myramp)
+  
+  plotrix::polar.plot(
+    start = 90,
+    lengths = c(rnorm(360,mean = 1, sd = 0.001)),
+    polar.pos = seq(0,360,by=1),
+    clockwise = TRUE,
+    cex=.01,
+    show.grid.labels=0,
+    line.col=myramp)
+}
+```
+
+The angles in the terrestrial environment are very similar to what has been presented in a previous study from [Burrows et al 2014 Nature](https://www.nature.com/articles/nature12976) (FigS8).
+
+
+```{r}
+# zoom to Africa
+{
+  layout(matrix(c(1,1,1,2), nrow = 1, ncol = 4, byrow=T))
+  
+  plot(terra::aggregate(crop(Ter_vel_angle,c(-20,60,-32,38)),
+                        fact=10,
+                        fun=circ_mean), 
+       col = myramp)
+  
+  plotrix::polar.plot(
+    start = 90,
+    lengths = c(rnorm(360,mean = 1, sd = 0.001)),
+    polar.pos = seq(0,360,by=1),
+    clockwise = TRUE,
+    cex=.01,
+    show.grid.labels=0,
+    line.col=myramp)
+}
+```
+
+
+The angles in the terrestrial environment are very similar to what has been presented in a previous study from [Burrows et al 2014 Nature](https://www.nature.com/articles/nature12976) (FigS8).
+
+```{r}
+# zoom to South America
+{
+  layout(matrix(c(1,1,1,2), nrow = 1, ncol = 4, byrow=T))
+  
+  plot(terra::aggregate(crop(Ter_vel_angle,c(-90,-30,-60,15)),
+                        fact=10,
+                        fun=circ_mean), 
+       col = myramp)
+  
+  plotrix::polar.plot(
+    start = 90,
+    lengths = c(rnorm(360,mean = 1, sd = 0.001)),
+    polar.pos = seq(0,360,by=1),
+    clockwise = TRUE,
+    cex=.01,
+    show.grid.labels=0,
+    line.col=myramp)
+}
+```
+
+The angles in the terrestrial environment are very similar to what has been presented in a previous study from [Burrows et al 2014 Nature](https://www.nature.com/articles/nature12976) (FigS8).
