@@ -1,137 +1,175 @@
 
-range_shift <- function(sui_t1,
-                        sui_t2,
-                        var_get = "LAT", 
-                        info, 
-                        get_mean = FALSE,
-                        probs = c(0, 0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99, 1)){
+range_shift <- function(x,
+                        periods = NULL,
+                        SA = NULL,
+                        proj_equal = TRUE,
+                        probs = c(0.05, 0.25, 0.5, 0.75, 0.95),
+                        raster_size_tolerance=NULL){
     
-    if(terra::ncell(sui_t1) > 100000){
-        sui_t1 <- terra::spatSample(sui_t1, 100000, na.rm = TRUE, xy = TRUE)
-        sui_t2 <- terra::spatSample(sui_t2, 100000, na.rm = TRUE, xy = TRUE)
+    if(is.null(periods)){
+        stop("Periods associated with time series must be provided!")
+    }
+    
+    crs_x <- crs(x)
+    
+    if(!is.null(SA)){
+        random_points <- terra::spatSample(SA, raster_size_tolerance)
+    } 
+    
+    if(is.null(raster_size_tolerance)){
+        x <- terra::as.data.frame(x, na.rm = TRUE, xy = TRUE)
     } else {
-        sui_t1 <- terra::as.data.frame(sui_t1, na.rm = TRUE, xy = TRUE)
-        sui_t2 <- terra::as.data.frame(sui_t2, na.rm = TRUE, xy = TRUE)
+        if(terra::ncell(x) > raster_size_tolerance){
+            if(!is.null(SA)){
+                x <- terra::extract(x, random_points, xy = TRUE, ID = FALSE)
+            } else {
+                x <- terra::spatSample(x, raster_size_tolerance, xy = TRUE, na.rm = TRUE)
+            }
+        } else {
+            x <- terra::as.data.frame(x, na.rm = TRUE, xy = TRUE)
+        }
     }
+    x <- terra::vect(x, geom=c("x","y"), crs = crs_x)
     
-    # calc quantile weighted type for SA in t1
-    if(var_get=="LAT"){
-        var2go <- sui_t1$y
+    if(proj_equal){
+        ## Project to equal area for more accurate statistics
+        x <- terra::project(x, Eckt)
     }
-    wti1 <- wtd.quantile(var2go, sui_t1[,3], probs = probs) 
-    names(wti1) <- gsub(" ","",names(wti1))
-    wti1 <- as.data.frame(wti1)
-    wti1$quant <- rownames(wti1)
-    if(get_mean){
-        # calc mean type for t1
-        tmp <- data.frame(as.numeric(wtd.mean(var2go, sui_t1[,3])), "mean")
-        names(tmp) <- names(wti1)
-        wti1 <- rbind(wti1, tmp)
-    }
-    rownames(wti1) <- NULL
+    x <- terra::as.data.frame(x, geom = "XY")
     
-    # calc quantile weighted type for SA in t2
-    wti2 <- wtd.quantile(var2go, sui_t2[,3], probs = probs) 
-    names(wti2) <- gsub(" ","",names(wti2))
-    wti2 <- as.data.frame(wti2)
-    wti2$quant <- rownames(wti2)
-    if(get_mean){
-        # calc mean type for t2
-        tmp <- data.frame(as.numeric(wtd.mean(var2go, sui_t2[,3])), "mean")
-        names(tmp) <- names(wti2)
-        wti2 <- rbind(wti2, tmp)
-    }
-    rownames(wti2) <- NULL
+    duration <- as.numeric(periods)
+    duration <- max(duration) - min(duration)
+    ####################################
+    # calculate centroid shift
+    # get centroid coordinates for each year
+    centroids <- lapply(periods, function(i){
+        sui_xy <- na.omit(data.frame(x=x$x,y=x$y,z=x[,i]))
+        data.frame(year=i, 
+                   centroid_x = weighted.mean(sui_xy[,1],sui_xy[,3]), 
+                   centroid_y = weighted.mean(sui_xy[,2],sui_xy[,3]))
+    })
+    centroids <- do.call(rbind,centroids)
+    centroids$year = as.numeric(centroids$year)
+    centroids <- na.omit(centroids)
     
-    # calc shift t1 t2
-    shift_i <- data.frame(quant = wti1$quant, w_t1 = wti1$wti1, w_t2 = wti2$wti2)
-    # when shifts are in the south hemisphere, use absolute values...
-    south <- which(shift_i$w_t1 < 0 & shift_i$w_t2 < 0)
-    shift_i$shift[south] <- abs(shift_i$w_t2[south]) - abs(shift_i$w_t1[south])
-    # when shifts are in the north hemisphere, or cross hemispheres, use raw values...
-    north <- which(!shift_i$w_t1 < 0 & !shift_i$w_t2 < 0)
-    shift_i$shift[north] <- shift_i$w_t2[north] - shift_i$w_t1[north]
+    enmSdmX:::.euclid(c(centroids[1,2],centroids[1,3]),
+                      c(centroids[13,2],centroids[12,3])) / duration
     
-    # add info
-    shift_i$ID <- info$ID
-    shift_i$Type <- var_get
-    shift_i$START <- info$START
-    shift_i$END <- info$END
-    shift_i$Species <- info$Species
+    centroids_xy <- terra::vect(centroids, geom=c("centroid_x","centroid_y"), crs = crs_x)
+    # plot(x[[1]]);plot(centroids_xy,add=TRUE);dev.off()
     
-    return(shift_i)
+    # centroid shift - the magnitude of the resulting vector from lat long shifts
+    centroid_shift_lat_lm_m <- lm(centroid_y~as.numeric(year), centroids)
+    centroid_shift_lat_lm_m <- summary(centroid_shift_lat_lm_m)
+    centroid_shift_lat_lm <- centroid_shift_lat_lm_m$coef[2,1]
+    
+    centroid_shift_long_lm_m <- lm(centroid_x~as.numeric(year), centroids)
+    centroid_shift_long_lm_m <- summary(centroid_shift_long_lm_m)
+    centroid_shift_long_lm <- centroid_shift_long_lm_m$coef[2,1]
+    
+    centroid_shift_xy_lm <- sqrt(centroid_shift_lat_lm^2 + centroid_shift_long_lm^2)
+    centroid_shift_xy_angle <- .ang(centroid_shift_long_lm, centroid_shift_lat_lm)
+    
+    # centroid shift - The total geographical distance between centroids in t1 and tn (tn is the last year)
+    centroid_shift_xy_total <- as.numeric(terra::distance(centroids_xy[c(1,length(centroids_xy))])) / duration
+    # centroid latitudinal shift  - The total latitudinal distance between centroids in t1 and tn (tn is the last year)
+    centroid_shift_lat_total <- abs(centroids$y[nrow(centroids_xy)] - centroids$y[1]) / duration
+    
+    
+    # additional parameters of the centroid latitudinal shift
+    centroid_shift_lat_lm_error <- centroid_shift_lat_lm_m$coef[2,2]
+    centroid_shift_lat_lm_r2 <- centroid_shift_lat_lm_m$r.squared
+    centroid_shift_lat_lm_pvalue <- centroid_shift_lat_lm_m$coef[2,4]
+    
+    centroid_shift <- data.frame(centroid_shift_xy_lm,
+                                 centroid_shift_xy_angle,
+                                 centroid_shift_lat_lm,
+                                 centroid_shift_lat_lm_error,
+                                 centroid_shift_lat_lm_r2,
+                                 centroid_shift_lat_lm_pvalue,
+                                 centroid_shift_xy_total,
+                                 centroid_shift_lat_total)
+    
+    periods <- as.character(centroids$year)
+    ####################################
+    # calculate range edge shift
+    # get edge coordinates for each year
+    edges <- lapply(periods, function(i){
+        tmp_y <- wtd.quantile(x$y, x[,i], probs = probs, na.rm = TRUE) %>% t %>% data.frame()
+        tmp_x <- wtd.quantile(x$x, x[,i], probs = probs, na.rm = TRUE) %>% t %>% data.frame()
+        
+        names(tmp_x) <- paste0("x_",as.character(probs))
+        names(tmp_y) <- paste0("y_",as.character(probs))
+        
+        data.frame(tmp_x, tmp_y)
+        
+    })
+    edges <- do.call(rbind,edges)
+    
+    # divide edges by prob
+    edges <- lapply(probs, function(i){
+        tmp <- edges[,grep(i,names(edges))]
+        names(tmp) <- c("edge_x","edge_y")
+        data.frame(year = as.numeric(periods), tmp)
+    })
+    names(edges) <- as.character(probs)
+    
+    
+    # calculate range edge shift for each prob
+    edge_shift <- lapply(probs, function(i){
+        
+        i <- as.character(i)
+        edges_i <- edges[[i]]
+        edges_xy <- terra::vect(edges_i, geom=c("edge_x","edge_y"), crs = crs_x)
+        
+        # edge shift - the magnitude of the resulting vector from lat long shifts
+        edge_shift_lat_lm_m <- lm(edge_y~as.numeric(year), edges_i)
+        edge_shift_lat_lm_m <- summary(edge_shift_lat_lm_m)
+        edge_shift_lat_lm <- edge_shift_lat_lm_m$coef[2,1]
+        
+        edge_shift_long_lm_m <- lm(edge_x~as.numeric(year), edges_i)
+        edge_shift_long_lm_m <- summary(edge_shift_long_lm_m)
+        edge_shift_long_lm <- edge_shift_long_lm_m$coef[2,1]
+        
+        edge_shift_xy_lm <- sqrt(edge_shift_lat_lm^2 + edge_shift_long_lm^2)
+        edge_shift_xy_angle <- .ang(edge_shift_long_lm, edge_shift_lat_lm)
+        
+        # edge shift - The total geographical distance between edges in t1 and tn (tn is the last year)
+        edge_shift_xy_total <- as.numeric(terra::distance(edges_xy[c(1,length(edges_xy))])) / duration
+        # edge latitudinal shift  - The total latitudinal distance between edges in t1 and tn (tn is the last year)
+        edge_shift_lat_total <- abs(edges_i$y[nrow(edges_xy)] - edges_i$y[1]) / duration
+        
+        
+        # additional parameters of the edge latitudinal shift
+        edge_shift_lat_lm_error <- edge_shift_lat_lm_m$coef[2,2]
+        edge_shift_lat_lm_r2 <- edge_shift_lat_lm_m$r.squared
+        edge_shift_lat_lm_pvalue <- edge_shift_lat_lm_m$coef[2,4]
+        
+        tmp <- data.frame(edge_shift_xy_lm,
+                          edge_shift_xy_angle,
+                          edge_shift_lat_lm,
+                          edge_shift_lat_lm_error,
+                          edge_shift_lat_lm_r2,
+                          edge_shift_lat_lm_pvalue,
+                          edge_shift_xy_total,
+                          edge_shift_lat_total)
+        names(tmp) <- paste(names(tmp),i,sep = "_")
+        return(tmp)
+    })
+    
+    # merge all results
+    edge_shift <- do.call(cbind,edge_shift)
+    
+    all_shifts <- cbind(centroid_shift,edge_shift)
+    
+    all_edges <- lapply(1:length(edges), function(i){
+        tmp <- edges[[i]][,2:3]
+        names(tmp) <- paste(names(tmp),probs[i],sep = "_")
+        return(tmp)
+    })
+    all_edges <- do.call(cbind,all_edges)
+    all_edges <- data.frame(centroids,all_edges)
+    
+    return(list(all_shifts,
+                all_edges))
 }
-
-range01raster <- function(x){
-    mm <- terra::minmax(x)
-    tmp <- (x-mm[1])/(mm[2]-mm[1])
-    return(tmp)
-}
-
-exposure_shift <- function(back_t1, back_t2, sui_t1, sui_t2){
-    
-    # calc mean type for t1
-    mp <- data.frame(as.numeric(wtd.mean(var_t, sui_t1)), "mean")
-    names(tmp) <- names(wti1)
-    wti1 <- rbind(wti1, tmp)
-    rownames(wti1) <- NULL
-    
-    # calc mean type for t1
-    tmp <- data.frame(as.numeric(wtd.mean(var_t, sui_t2)), "mean")
-    names(tmp) <- names(wti2)
-    wti2 <- rbind(wti2, tmp)
-    rownames(wti2) <- NULL
-    
-    # calc shift t1 t2
-    shift_i <- data.frame(quant = wti1$quant, wti1 = wti1$wti1, wti2 = wti2$wti2)
-    shift_i$shift <- shift_i$wti2 - shift_i$wti1
-    
-    return(shift_i)
-}
-
-
-sens_shift <- function(SA, BG, type, probs = c(0, 0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99, 1),variable=NULL){
-    
-    # get type SA
-    tSA <- terra::as.data.frame(SA, xy = TRUE)
-    if(type[i] == "LAT"){ tSA <- tSA$y }
-    if(type[i] == "ELE"){ 
-        # crop to the SA 
-    }
-    # get type BG
-    tBG <- terra::as.data.frame(BG, xy = TRUE)
-    if(type[i] == "LAT"){ tBG <- tBG$y }
-    if(type[i] == "ELE"){ 
-        # crop to the BG 
-    }
-    
-    # difference in type
-    tSA <- quantile(tSA, probs)
-    tGB <- quantile(tBG, probs)
-    return(data.frame(SA = quantile(tSA, probs), BG = quantile(tBG, probs), Quantile = names(quantile(tBG, probs))))
-}
-
-
-range_pos <- function(SA,BG){
-    
-    MaxSAt1 = SA$wti1[which(SA$quant=="95%")]
-    MinSAt1 = SA$wti1[which(SA$quant=="5%")]
-    RangeSAt1 = MaxSAt1-MinSAt1
-    MaxBGt1 = BG$wti1[which(SA$quant=="95%")]
-    MinBGt1 = BG$wti1[which(SA$quant=="5%")]
-    RangeBGt1 = MaxBGt1-MinBGt1
-    Fillingt1 = RangeSAt1/RangeBGt1
-    
-    MaxSAt2 = SA$wti2[which(SA$quant=="95%")]
-    MinSAt2 = SA$wti2[which(SA$quant=="5%")]
-    RangeSAt2 = MaxSAt2-MinSAt2
-    MaxBGt2 = BG$wti2[which(SA$quant=="95%")]
-    MinBGt2 = BG$wti2[which(SA$quant=="5%")]
-    RangeBGt2 = MaxBGt2-MinBGt2
-    Fillingt2 = RangeSAt2/RangeBGt2
-    
-    return(data.frame(MaxSAt1, MinSAt1, RangeSAt1, MaxBGt1, MinBGt1, RangeBGt1, Fillingt1,
-                      MaxSAt2, MinSAt2, RangeSAt2, MaxBGt2, MinBGt2, RangeBGt2, Fillingt2))
-}
-
-

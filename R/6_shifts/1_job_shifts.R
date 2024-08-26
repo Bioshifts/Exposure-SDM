@@ -24,46 +24,48 @@ if(computer == "matrics"){
 # source settings
 source("R/settings.R")
 
+script.dir <- here::here(work_dir,"R/6_shifts")
+
+# create dir for log files
+logdir <- here::here(script.dir,"slurm-log")
+if(!dir.exists(logdir)){
+    dir.create(logdir,recursive = TRUE)
+}
+# create dir for job files
+jobdir <- here::here(script.dir,"job")
+if(!dir.exists(jobdir)){
+    dir.create(jobdir,recursive = TRUE)
+}
+
+Rscript_file = here::here(script.dir,"1_get_shifts_edge_method.R")
+
 ########################
-# set computer
-computer = "matrics"
+# load functions
+source("R/my_functions.R")
+source("R/range_shift_functions.R")
+# source settings
+source("R/settings.R")
+
+
+########################
+# job tunning
+N_jobs_at_a_time = 50
+
+cores = 1
+partition = "normal"
+time = "20:00:00"
+N_Nodes = 1
+tasks_per_core = 1
+
+
+########################
+# loop realms
 
 realms = c("Mar","Ter")
 
 for(j in 1:length(realms)){
     
     realm <- realms[j]
-    
-    if(computer == "muse"){
-        setwd("/storage/simple/projects/t_cesab/brunno/Exposure-SDM")
-    }
-    if(computer == "matrics"){
-        setwd("/users/boliveira/Exposure-SDM")
-    }
-    
-    work_dir <- getwd()
-    script.dir <- here::here(work_dir,"R/6_shifts")
-    
-    # create dir for log files
-    logdir <- here::here(script.dir,"slurm-log")
-    if(!dir.exists(logdir)){
-        dir.create(logdir,recursive = TRUE)
-    }
-    
-    # create dir for job files
-    jobdir <- here::here(script.dir,"job")
-    if(!dir.exists(jobdir)){
-        dir.create(jobdir,recursive = TRUE)
-    }
-    
-    Rscript_file = here::here(script.dir,"1_get_shifts.R")
-    
-    ########################
-    # load functions
-    source("R/my_functions.R")
-    source("R/range_shift_functions.R")
-    # source settings
-    source("R/settings.R")
     
     # create dirs
     if(!dir.exists(shift_dir(realm))){
@@ -128,7 +130,6 @@ for(j in 1:length(realms)){
     nrow(I_have_shift)
     
     # select from the list of species I have sdms the ones which we still did not have shift calculated
-    # missing
     missing <- I_have_sdms[which(!paste(I_have_sdms$sps,I_have_sdms$ID) %in% paste(I_have_shift$sps,I_have_shift$ID)),]
     nrow(missing)
     
@@ -137,10 +138,6 @@ for(j in 1:length(realms)){
     if(nrow(missing)>0){
         ########################
         # submit jobs
-        
-        N_jobs_at_a_time = 50
-        N_Nodes = 1
-        tasks_per_core = 1
         
         cat("Running for", nrow(missing), realm, "species\n")
         
@@ -154,31 +151,32 @@ for(j in 1:length(realms)){
             
             shifttogo = gsub(" ","_",args)
             
-            if(realm == "Mar"){ # for the Marine use this
-                cores = 20
-                time = "5:00:00"
-                memory = "16G"
-                partition = "normal"
-            }
-            if(realm == "Ter"){ # for the Terrestrial use this (bigger jobs) 
-                cores = 5 # reduce N cores because of out-of-memory issue
-                time = "20:00:00"
-                memory = "100G"
-                partition = "bigmem"
-            }
+            # check if job for this species is running
+            test <- system("squeue --format='%.50j' --me", intern = TRUE)
+            test <- gsub(" ","",test)
             
-            slurm_job_singularity(jobdir = jobdir,
-                                  logdir = logdir, 
-                                  sptogo = shifttogo, 
-                                  args = args,
-                                  N_Nodes = N_Nodes, 
-                                  tasks_per_core = tasks_per_core, 
-                                  cores = cores, 
-                                  time = time, 
-                                  memory = memory, 
-                                  partition = partition, 
-                                  singularity_image = singularity_image, 
-                                  Rscript_file = Rscript_file)
+            if(!shifttogo %in% test){
+                
+                if(realm == "Mar"){ # for the Marine use this
+                    memory = "16G"
+                }
+                if(realm == "Ter"){ # for the Terrestrial use this (bigger jobs) 
+                    memory = "100G"
+                }
+                
+                slurm_job_singularity(jobdir = jobdir,
+                                      logdir = logdir, 
+                                      sptogo = shifttogo, 
+                                      args = args,
+                                      N_Nodes = N_Nodes, 
+                                      tasks_per_core = tasks_per_core, 
+                                      cores = cores, 
+                                      time = time, 
+                                      memory = memory, 
+                                      partition = partition, 
+                                      singularity_image = singularity_image, 
+                                      Rscript_file = Rscript_file)
+            }
             
             # check how many jobs in progress
             tmp <- system("squeue -u $USER",intern = T)

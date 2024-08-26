@@ -4,11 +4,8 @@ gc()
 
 # devtools::install_github("sjevelazco/flexsdm@HEAD")
 # devtools::install_github("azizka/speciesgeocodeR")
-# devtools::install_github("rpatin/gbm")
-# devtools::install_github("mrmaxent/maxnet")
-# devtools::install_github("biomodhub/biomod2", dependencies = FALSE)
 
-list.of.packages <- c("terra","rnaturalearthdata","biomod2","gbm","maxnet",
+list.of.packages <- c("terra","rnaturalearthdata","biomod2",
                       "tidyverse","tictoc","tidyterra","ggplot2","data.table",
                       "parallelly","speciesgeocodeR")
 
@@ -27,10 +24,16 @@ realm <- as.character(paste(command_args[2], collapse = " "))
 print(sptogo)
 print(realm)
 
+# sptogo="Anguilla_anguilla"
+# realm <- "Mar"
 # sptogo="Centropristis_striata"
 # realm <- "Mar"
-
-# sptogo="Calystegia_soldanella"
+# 
+# sptogo="Abies_alba"
+# realm <- "Ter"
+# sptogo="Abies_concolor"
+# realm <- "Ter"
+# sptogo="Centropristis_striata"
 # realm <- "Ter"
 
 
@@ -45,9 +48,6 @@ if(computer == "matrics"){
     setwd("/users/boliveira/Exposure-SDM")
 }
 work_dir <- getwd()
-
-em.by = "all"
-
 
 ########################
 # source functions
@@ -168,7 +168,7 @@ plot_SA_location(sptogo,
 # select bioclimatics
 bioclimatics_BG <- list.files(bios_dir(realm))
 bioclimatics_BG_pos <- grepl(paste(S_time,collapse = "|"),bioclimatics_BG)
-bioclimatics_BG <- sort(bioclimatics_BG[bioclimatics_BG_pos])
+bioclimatics_BG <- bioclimatics_BG[bioclimatics_BG_pos]
 
 # load in bioclimatics
 bioclimatics_BG <- lapply(bioclimatics_BG, function(x) terra::rast(here::here(bios_dir(realm),x)))
@@ -219,8 +219,7 @@ new_data <- PCA_env(sptogo = sptogo,
                     output_dir = output_dir,
                     shift_info = shift_info,
                     PresAbs = PresAbs,
-                    check_if_PCA_model_exists = TRUE,
-                    N_cpus = N_cpus)
+                    check_if_PCA_model_exists = TRUE)
 names(new_data)
 
 # save PCA results
@@ -235,9 +234,8 @@ bioclimatics_BG <- new_data$bios_BG
 # SA
 bioclimatics_SA <- new_data$bios_SA
 
-
 # PresAbs
-PresAbsFull <- na.omit(new_data$bios_PresAbs)
+PresAbsFull <- new_data$bios_PresAbs
 
 rm(new_data)
 
@@ -262,17 +260,14 @@ data_sp <- BIOMOD_FormatingData(
     resp.var = resp, 
     expl.var = data.frame(PresAbsFull[,-1:-3]), 
     resp.xy = data.frame(PresAbsFull[,1:2]),
-    dir.name = output_dir,
-    na.rm = TRUE,
+    dir.name = here::here(output_dir),
     PA.strategy = "random",
     PA.nb.rep = 1,
     PA.nb.absences = length(which(is.na(resp))))
 
 
 # check if model exists
-try({
-    delete_duplicated_models(realm = realm, species = sptogo)
-    }, silent = TRUE)
+delete_duplicated_models(realm = realm, species = sptogo)
 
 models_sp <- list.files(here::here(output_dir, gsub("_",".",sptogo)),
                         pattern = "ensemble.models.out",full.names = TRUE)
@@ -291,18 +286,9 @@ if(length(models_sp)>0){
     files_sdms <- files_sdms[-pos]
     
     model_sp <- get(load(files_sdms))
+    
     ens_model_sp <- get(load(files_sdms_ensemble))
     
-    model_sp <- apply_gsub_to_s4(model_sp, pattern = "/lustre/oliveirab", replacement = "/scratch/boliveira")
-    ens_model_sp <- apply_gsub_to_s4(ens_model_sp, pattern = "/lustre/oliveirab", replacement = "/scratch/boliveira")
-    
-    if(!ens_model_sp@em.by == em.by){
-        ens_model_sp <- BIOMOD_EnsembleModeling(
-            model_sp, 
-            em.by = em.by,
-            metric.select = "TSS",
-            metric.eval = "TSS")
-    }
     
 } else {
     
@@ -321,7 +307,6 @@ if(length(models_sp)>0){
     
     ens_model_sp <- BIOMOD_EnsembleModeling(
         model_sp, 
-        em.by = em.by,
         metric.select = "TSS",
         metric.eval = "TSS")
     
@@ -330,8 +315,8 @@ if(length(models_sp)>0){
 
 ########################
 # Evaluate
-myevals = get_evaluations(model_sp, metric.eval = "TSS")
-myevals
+myevals = get_evaluations(model_sp)
+myevals[which(myevals$metric.eval=="TSS"),]
 
 write.csv(myevals, 
           here::here(output_dir,paste0(sptogo,"_CV.csv")),
@@ -346,20 +331,6 @@ p1 <- ggplot(myevals, aes(x=validation, y = algo, color = algo))+
     print(p1)
     dev.off()
     }
-
-myevals_ens = get_evaluations(ens_model_sp)
-myevals_ens
-
-if(em.by=="all"){
-    write.csv(myevals_ens, 
-          here::here(output_dir,paste0(sptogo,"_CV_ens_all.csv")),
-          row.names = FALSE)
-} else {
-    write.csv(myevals_ens, 
-              here::here(output_dir,paste0(sptogo,"_CV_ens_RUN.csv")),
-              row.names = FALSE)
-}
-
 
 ########################
 # save basic data
@@ -396,8 +367,6 @@ if(!file.exists(file_proj)){
         nb.cpu = N_cpus,
         build.clamping.mask = FALSE,
         keep.in.memory = FALSE)
-} else {
-    m <- get(load(file_proj))
 }
 
 if(!file.exists(file_ens)){
@@ -407,12 +376,59 @@ if(!file.exists(file_ens)){
         proj.name = projname_ens,
         nb.cpu = N_cpus,
         keep.in.memory = FALSE)
-} else {
-    ens_m <- get(load(file_ens))
 }
 
 gc()
 
+
+########################
+### Project to the BG at each time period
+
+# for(i in 1:length(bioclimatics_BG)){
+#     
+#     projname <- paste(sptogo, 
+#                       names(bioclimatics_BG)[[i]],
+#                       "BG")
+#     
+#     file_proj <- here::here(output_dir,gsub("_",".",sptogo),
+#                             paste0("proj_",projname),
+#                             paste0(gsub("_",".",sptogo),".",projname,".projection.out"))
+# 
+#     projname_ens <- paste(projname,"ens")
+#     
+#     file_ens <- gsub("BG","BG ens",file_proj)
+#     file_ens <- gsub(".projection.out",".ensemble.projection.out",file_ens)
+#     
+#     
+#     if(!file.exists(file_proj)){
+#         m <- BIOMOD_Projection(
+#             bm.mod = model_sp, 
+#             proj.name = projname, 
+#             new.env = bioclimatics_BG[[i]],
+#             nb.cpu = N_cpus,
+#             keep.in.memory = FALSE)
+#     }
+#     
+#     if(!file.exists(file_ens)){
+#         ens_m <- BIOMOD_EnsembleForecasting(
+#             bm.em = ens_model_sp, 
+#             bm.proj = m,
+#             proj.name = projname_ens,
+#             nb.cpu = N_cpus,
+#             keep.in.memory = FALSE)
+#     }
+#     
+#     gc()
+#     
+# }
+# 
+# delete temporary data
+# possible_sdms_BG <- here::here(output_dir,gsub("_",".",sptogo),paste(paste0("proj_",sptogo),S_time,"BG"))
+# 
+# if(all(dir.exists(possible_sdms_BG))){
+#     unlink(here::here(output_dir,"BG"), recursive = TRUE)
+#     unlink(here::here(output_dir,"BG_PC"), recursive = TRUE)
+# } 
 
 ### Project to each SA and each time period
 
@@ -456,8 +472,17 @@ for(j in 1:length(bioclimatics_SA)){
                     keep.in.memory = FALSE)
             }
             
+            gc()
         }
+        
+        
     }
+    
 }
 
-### END ###
+# delete temporary data
+possible_sdms_SA <- here::here(output_dir,gsub("_",".",sptogo),paste(paste0("proj_",sptogo),shift_info$ID,S_time,"SA"))
+
+if(all(dir.exists(possible_sdms_SA))){
+    unlink(here::here(output_dir,"SA_PC"), recursive = TRUE)
+} 

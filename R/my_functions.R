@@ -88,7 +88,7 @@ create_temporal_pseudo_absences <- function(BA, env_range, sp_occ){
 bioshifts_fix_columns <- function(bioshifts){
     require(dplyr)
     bioshifts %>%
-        dplyr::mutate(sp_name_std = sp_name_checked,
+        dplyr::mutate(sp_name_std = gsub(" ","_",sp_name_checked),
                       Start = MIDPOINT_firstperiod,
                       End = MIDPOINT_secondperiod,
                       ShiftRate = case_when(
@@ -131,10 +131,6 @@ bioshifts_sdms_selection <- function(x){
     
     x %>%
         bioshifts_fix_columns %>%
-        filter(!Eco=="Aqu") %>%
-        mutate(new_eco = ifelse(
-            Eco == "Mar", "Mar", ifelse(Eco != "Mar", "Ter", NA))) %>%
-        mutate(Eco = new_eco) %>%
         # filter latitude shifts
         filter(Type == "LAT") %>%
         # filter terrestrial or marine shifts
@@ -145,7 +141,9 @@ bioshifts_sdms_selection <- function(x){
         # Remove marine birds
         filter(!(Eco == "Mar" & class == "Aves")) %>%
         # Remove freshwater fish
-        filter(!(Eco == "Ter" & class == "Actinopterygii"))
+        filter(!(Eco == "Ter" & class == "Actinopterygi*")) %>%
+        # Remove fungi, bacteria and mosses
+        filter(!(kingdom == "Fungi" | kingdom == "Bacteria" | phylum == "Bryophyta"))
     
 }
 
@@ -361,17 +359,13 @@ bioclimatics_from_date <- function(all_layers,date_i,realm,sp_occ,n_yr_bioclimat
     layers_i <- all_layers[layers_i_pos]
     layers_i <- rast(layers_i)
     
-    # fix layers names
-    layers_i_names <- all_layers_names[layers_i_pos]
-    names(layers_i) <- layers_i_names
-    
+    # extract data
     terra::window(layers_i) <- terra::ext(terra::buffer(occ_vect,1))
     
-    # extract data
     if(is.null(n_cores)){
         layers_i <- terra::extract(layers_i, occ_vect)
     } else {
-        layers_i <- parallel::mclapply(1:length(occ_vect), 
+        layers_i <- parallel::mclapply(1:nrow(occ_vect), 
                                        function(x) { terra::extract(layers_i, occ_vect[x]) }, 
                                        mc.cores = n_cores)
         layers_i <- data.frame(data.table::rbindlist(layers_i))
@@ -731,55 +725,170 @@ delete_duplicated_models <- function(realm,species){
     
     existing_models <- list.dirs(models_folder, full.names = TRUE, recursive = FALSE)
     
-    if(length(existing_models)>0){
-        existing_models_ids <- strsplit(existing_models,"/")[[1]]
-        existing_models_ids <- existing_models_ids[length(existing_models_ids)]
-    }
-    
-    files_sdms <- list.files(
-        here::here(sdm_dir(realm),species,gsub("_",".",species)), 
-        pattern = "ensemble.models.out",
-        full.names = TRUE)  
-    
-    if(length(files_sdms)>0){
-        files_sdms_ids <- gsub(here::here(sdm_dir(realm),species,gsub("_",".",species)),"",files_sdms)
-        files_sdms_ids <- strsplit(files_sdms_ids,".",fixed = TRUE)[[1]][3]
-    }
-    
-    
-    if(length(files_sdms)==0 | length(existing_models)==0){ # if there are mo models, delete everything
+    if(length(existing_models)==0){ # if there are no models, delete everything
         unlink(models_folder, recursive = TRUE)
         unlink(list.files(
             here::here(sdm_dir(realm),species,gsub("_",".",species)), 
             pattern = "models.out",
             full.names = TRUE) , recursive = TRUE)
-    } 
-    if(!any(files_sdms_ids %in% existing_models_ids)){ # if these are not the same models, delete everything
-        unlink(models_folder, recursive = TRUE)
-        unlink(list.files(
+    } else {
+        existing_models_ids <- sapply(existing_models, function(x){
+            tmp <- strsplit(x,"/")[[1]]
+            tmp[length(tmp)]
+        })
+        goog_model_id <- sort(as.numeric(existing_models_ids), decreasing = TRUE)[1]
+        
+        models_folder_del <- existing_models[grep(goog_model_id,existing_models,invert = TRUE)]
+        unlink(models_folder_del, recursive = TRUE)
+        
+        models_del <- list.files(
             here::here(sdm_dir(realm),species,gsub("_",".",species)), 
             pattern = "models.out",
-            full.names = TRUE))
-    }
-    if(length(files_sdms)>1 | length(existing_models_ids)>1){ # if there are >1 model, select the good one
+            full.names = TRUE)
+        models_del <- models_del[grep(goog_model_id,models_del,invert = TRUE)]
+        unlink(models_del , recursive = TRUE)
         
-        files_sdms_to_del <- files_sdms[grep(existing_models_ids, files_sdms, invert = TRUE)]
-        if(length(files_sdms_to_del)>0){
-            unlink(files_sdms_to_del, recursive = TRUE)    
-        }
-        
-        files_sdms <- list.files(
-            here::here(sdm_dir(realm),species,gsub("_",".",species)), 
-            pattern = "ensemble.models.out",
-            full.names = TRUE)  
-        
-        files_sdms_ids <- gsub(here::here(sdm_dir(realm),species,gsub("_",".",species)),"",files_sdms)
-        files_sdms_ids <- strsplit(files_sdms_ids,".",fixed = TRUE)[[1]][3]
-        
-        existing_models_to_del <- existing_models[grep(files_sdms_ids, existing_models, invert = TRUE)]
-        if(length(existing_models_to_del)>0){
-            unlink(existing_models_to_del, recursive = TRUE)    
-        }
     }
 }
 
+# fix biomod directory
+apply_gsub_to_s4 <- function(obj, pattern, replacement) {
+    # Get the slot names of the S4 object
+    # obj = model_sp
+    slot_names <- slotNames(obj)
+    
+    # Loop through each slot and apply gsub if the slot contains character data
+    for (i in 1:length(slot_names)) {
+        slot_value <- slot(obj, slot_names[i])
+        if (is.character(slot_value)) {
+            slot(obj, slot_names[i]) <- gsub(pattern, replacement, slot_value)
+        } else {
+            slot_value <- slotNames(slot(obj, slot_names[i]))
+            if(length(slot_value)>1){
+                for (j in 1:length(slot_value)) {
+                    slot_value_j <- slot(slot(obj, slot_names[i]),slot_value[j])
+                    if (is.character(slot_value_j)) {
+                        slot(slot(obj, slot_names[i]),slot_value[j]) <- 
+                            gsub(pattern, replacement, slot(slot(obj, slot_names[i]),slot_value[j]))
+                    }
+                }  
+            }else{
+                slot_value <- slot(obj, slot_names[i])
+                if (is.character(slot_value)) {
+                    slot(obj, slot_names[i]) <- 
+                        gsub(pattern, replacement, slot(obj, slot_names[i]))
+                }
+            }
+        }
+    }
+    
+    return(obj)
+}
+
+get_CV_file <- function(realm,sptogo,type){
+    if(type=="all"){
+        CV_type <- "_CV_ens_all"
+    }
+    if(type=="RUN"){
+        CV_type <- "_CV_ens_RUN"
+    }
+    # CV file address
+    CV_file_add <- here::here(sdm_dir(realm),sptogo,paste0(sptogo,CV_type,".csv"))
+    
+    if(!file.exists(CV_file_add)){
+        
+        # Load full model
+        output_dir <- here::here(sdm_dir(realm), sptogo)
+        
+        files_sdms <- list.files(
+            here::here(output_dir,gsub("_",".",sptogo)), 
+            full.names = TRUE,
+            pattern = "models.out")  
+        
+        files_sdms <- files_sdms[-grep("ensemble",files_sdms)]
+        if(files_sdms > 1){
+            delete_duplicated_models(realm = realm, species = sptogo)
+            
+            files_sdms <- list.files(
+                here::here(output_dir,gsub("_",".",sptogo)), 
+                full.names = TRUE,
+                pattern = "models.out")  
+            files_sdms <- files_sdms[-grep("ensemble",files_sdms)]
+        }
+        model_sp <- get(load(files_sdms))
+        
+        model_sp <- apply_gsub_to_s4(model_sp, pattern = "/lustre/oliveirab", replacement = "/scratch/boliveira")
+        
+        models_folder <- here::here(sdm_dir(realm), sptogo, gsub("_",".",sptogo),"models")
+        existing_model <- list.dirs(models_folder, full.names = TRUE, recursive = FALSE)
+        existing_model <- strsplit(existing_model,"/")[[1]]
+        existing_model <- existing_model[length(existing_model)]
+        current_model <- model_sp@modeling.id
+        if(!current_model==existing_model){
+            model_sp <- apply_gsub_to_s4(model_sp, pattern = current_model, replacement = existing_model)
+        }
+        
+        if(type=="all"){
+            # calculate ensemble
+            ens_model_sp <- BIOMOD_EnsembleModeling(
+                model_sp, 
+                chosen.models = 'all',
+                em.by = 'all',
+                metric.select = "TSS",
+                metric.eval = "TSS")
+        }
+        if(type=="RUN"){
+            # calculate ensemble
+            ens_model_sp <- BIOMOD_EnsembleModeling(
+                model_sp, 
+                metric.select = "TSS",
+                metric.eval = "TSS")
+        }
+        
+        
+        # get evaluations from ensemble model
+        CV_file = get_evaluations(ens_model_sp)
+        
+        write.csv(CV_file, 
+                  CV_file_add,
+                  row.names = FALSE)
+        rm(ens_model_sp)
+    } else {
+        CV_file <- read.csv(CV_file_add)
+    }
+    
+}
+
+## Select the best partition for job submission
+ter_partitions <- c("normal-amd","normal","bigmem-amd","bigmem")
+limits <- data.frame(partition = ter_partitions,
+                     max_mem_node = c(250, 125, 1000, 500),
+                     max_mem_user = c(2000, 2000, 2000, 2000),
+                     max_cpu = c(512, 448, 128, 112))
+
+select_partition <- function(request_mem, request_cpu, limits){
+    test <- select_partition_inset(request_mem = request_mem, request_cpu = request_cpu, limits = limits)
+    cat("\rThere are no enough resources for running submitting job.\nWaiting for resources to become available...\n")
+    while(nrow(test)==0){
+        
+        Sys.sleep(10)
+        test <- select_partition_inset(request_mem, request_cpu, limits)
+        
+    } 
+    return(as.character(test$partition[1]))
+}
+select_partition_inset <- function(request_mem, request_cpu, limits){
+    limits <- limits %>% filter((max_mem_node > request_mem))
+    
+    test_partition <- system("squeue --format='%.50P' --me", intern = TRUE)[-1]
+    test_partition <- gsub(" ","",test_partition)
+    using <- data.frame(table(test_partition))
+    names(using)[1] <- "partition"
+    using <- merge(using, limits, all = TRUE)
+    using[is.na(using)] <- 0
+    using$using_mem <- request_mem * using$Freq
+    using$using_cpu <- request_cpu * using$Freq
+    
+    tmp <- using %>% filter((max_mem_user > using$using_mem) & (max_cpu > using$using_cpu))
+    return(tmp)
+}

@@ -110,7 +110,7 @@
 #' 
 #' @export
 
-bioshifts <- function(
+bioshifts_old_fun <- function(
         x,
         times = NULL,
         atTimes = NULL,

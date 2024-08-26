@@ -55,10 +55,10 @@ Bioshifts_DB <- Bioshifts_DB %>%
 
 ##############################
 # Rerun just for marines
-# Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$ECO=="M"),]
+# Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$Eco=="Mar"),]
 ##############################
 # Rerun just for terrestrials
-# Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$ECO=="T"),]
+Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$Eco=="Ter"),]
 ##############################
 
 any(!Bioshifts_DB$ID %in% v3_polygons)
@@ -70,7 +70,7 @@ v3_polygons <- v3_polygons[v3_polygons %in% Bioshifts_DB$ID]
 I_have <- sapply(Bioshifts_DB$ID, function(x){
     file.exists(here::here(velocity_SA_dir, paste0(x,".csv")))
 })
-   
+
 missing <- Bioshifts_DB[which(!I_have),]
 nrow(missing)
 
@@ -88,13 +88,19 @@ for(i in 1:nrow(Bioshifts_DB)){
     
     SAtogo <- Bioshifts_DB$ID[i]
     ECO <- Bioshifts_DB$Eco[i]
+    # res_raster <- "1km"
+    res_raster <- "25km"
     
-    args = SAtogo
+    args = c(SAtogo, ECO, res_raster)
     
     ########################
     # Check if file exists
     
-    file.test <- here::here(velocity_SA_dir, paste0(SAtogo,".csv"))
+    if(res_raster=="1km"){
+        file.test <- here::here(velocity_SA_dir, paste0(SAtogo,".csv"))
+    } else {
+        file.test <- here::here(velocity_SA_dir, paste0(paste(SAtogo,res_raster,sep = "_"),".csv"))
+    }
     
     if(check_if_file_exists){
         RUN <- !file.exists(file.test)

@@ -65,7 +65,6 @@ the_colors <- the_palette_fc(seq(min(ttrendrange), max(ttrendrange), length.out 
 
 plot(ttrend, col = the_colors, main = "Trend")
 
-
 ```
 
 The velocity and trend patterns identified here (using our function based on the VoCC package) are very similar to what has been presented in a previous study -- see Fig 2a and c from [Woolway & Maberly 2020 Nat Eco Evo](https://www.nature.com/articles/s41558-020-0889-7).
@@ -102,12 +101,6 @@ In order to retrieve a climate velocity across the latitudinal gradient, we calc
 
 gVelLat <- terra::rast(here::here("Data/Velocity_global/Mar_mean_gVelLat_1979-2018.tif"))
 
-# velocity angles have opposite direction to the spatial climatic gradient if warming and same direction (cold to warm) if cooling
-
-ind <- cells(gVel > 0)
-
-gVelLat[ind] <- gVelLat[ind]*-1
-
 gVelLatrange <- range(gVelLat[], na.rm = TRUE)
 
 the_palette_fc <- leaflet::colorNumeric(
@@ -118,6 +111,7 @@ the_palette_fc <- leaflet::colorNumeric(
 the_colors <- the_palette_fc(seq(min(gVelLatrange), max(gVelLatrange), length.out = 50))
 
 plot(gVelLat, col = the_colors)
+
 ```
 
 The difference is due to the direction (angle) of the gradient. Take a closer look to the direction of climate change.

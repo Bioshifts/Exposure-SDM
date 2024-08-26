@@ -18,8 +18,12 @@ sapply(list.of.packages, require, character.only = TRUE)
 # Args
 command_args <- commandArgs(trailingOnly = TRUE)
 print(command_args)
-polygontogo <- command_args
+polygontogo <- as.character(paste(command_args[1], collapse = " "))
+Eco <- as.character(paste(command_args[2], collapse = " "))
+res_raster <- as.character(paste(command_args[3], collapse = " "))
 
+# Eco <- "Ter"
+# res_raster <- "25km"
 # polygontogo <- "A112_P1" # Mar # South
 # polygontogo <- "A43_P1" # Mar # North
 # polygontogo <- "A1_P1" # Ter # North
@@ -50,6 +54,7 @@ source("R/settings.R")
 source("R/my_functions.R")
 source("R/velocity_functions.R")
 
+my_res <- res_raster
 # create dir to store results
 if(!dir.exists(velocity_SA_dir)){
     dir.create(velocity_SA_dir)
@@ -75,20 +80,14 @@ ncores <- parallelly::availableCores()
 SA_i <- terra::vect(here::here(SA_shps_dir,paste0(polygontogo,".shp")))
 # plot(SA_i);dev.off()
 
-# Is it Terrestrial or Marine?
-# Check then load temperature data
-my_test <- if(any(is.na(SA_i$EleExtentm))){ # it is terrestrial if it has elevation data 
-    Eco = "Mar"
-} else {
-    Eco = "Ter"
+if(Eco == "Ter"){
     # get elevation
     elevation <- terra::rast(here::here(work_dir,"Data/elevation_1km.tif"))
 }
 
-# get layers dor SA
+# get layers for SA
 climate_layers <- list.files(here(bios_SA_dir(Eco),polygontogo),full.names = TRUE)
 climate_layers <- terra::rast(climate_layers)
-
 # plot(climate_layers[[1]]);dev.off()
 
 ########################
@@ -98,13 +97,13 @@ cat(Eco,"\n")
 
 # If terrestrial
 # Calculate velocity for LAT and ELE and for each climatic variable
-if(Eco=="Ter"){
+if(Eco=="Ter" & my_res=="1km"){
     
     # Big area test
     area_i <- SA_i$Areakm2
     big <- area_i > 10^4
     
-    # # crop elevation to the study area
+    # crop elevation to the study area
     terra::window(elevation) <- ext(SA_i)
     elevation <- terra::mask(elevation, SA_i)
     
@@ -118,7 +117,6 @@ if(Eco=="Ter"){
         
         # select the climate variable
         climate_layers_i <- climate_layers[[which(names(climate_layers)==velocity_variable)]]
-        
         # force raster to pair
         elevation <- terra::project(elevation, climate_layers_i, threads=TRUE, use_gdal=TRUE, gdal=TRUE)
         
@@ -167,8 +165,8 @@ if(Eco=="Ter"){
                 
                 avg_climate_layers_tiles <- avg_climate_layers
                 # define tile resolution 
-                nrow(avg_climate_layers_tiles) <- round(nrow(avg_climate_layers)/100,0)
-                ncol(avg_climate_layers_tiles) <- round(ncol(avg_climate_layers)/100,0)
+                nrow(avg_climate_layers_tiles) <- round(nrow(avg_climate_layers)/1000,0)
+                ncol(avg_climate_layers_tiles) <- round(ncol(avg_climate_layers)/1000,0)
                 # avg_climate_layers_tiles[] <- 1:ncell(avg_climate_layers_tiles)
                 # plot(avg_climate_layers_tiles);dev.off()
                 avg_climate_layers_tiles <- terra::makeTiles(
@@ -325,21 +323,21 @@ if(Eco=="Ter"){
         gVelLat <- terra::project(gVelLat, gVel, threads=TRUE, use_gdal=TRUE, gdal=TRUE)
         gVelEle <- terra::project(gVelEle, gVel, threads=TRUE, use_gdal=TRUE, gdal=TRUE)
         
-        plot(gVelLat);dev.off()
+        # plot(gVelLat);dev.off()
         
         #######
         # summary velocity over study area
         
+        baseline <- as.numeric(mean(terra::global(avg_climate_layers,mean,na.rm = TRUE)[,1])) 
+        trend.mean <- as.numeric(terra::global(ttrend,mean,na.rm = TRUE)[,1])
+        trend.sd <- as.numeric(terra::global(ttrend,sd,na.rm = TRUE)[,1])
+        
         # in CHELSA, temperature is *10  
         if(velocity_variable == "mat"){
-            baseline <- as.numeric(mean(terra::global(avg_climate_layers,mean,na.rm = TRUE)[,1]))/10
-            trend.mean <- as.numeric(terra::global(ttrend,mean,na.rm = TRUE)[,1])/10
-            trend.sd <- as.numeric(terra::global(ttrend,sd,na.rm = TRUE)[,1])/10
-        } else {
-            baseline <- as.numeric(mean(terra::global(avg_climate_layers,mean,na.rm = TRUE)[,1])) 
-            trend.mean <- as.numeric(terra::global(ttrend,mean,na.rm = TRUE)[,1])
-            trend.sd <- as.numeric(terra::global(ttrend,sd,na.rm = TRUE)[,1])
-        }
+            baseline <- baseline/10
+            trend.mean <- trend.mean/10
+            trend.sd <- trend.sd/10
+        } 
         
         v.mean <- as.numeric(terra::global(gVel$Vel, mean, na.rm=TRUE)[,1])
         v.median <- as.numeric(terra::global(gVel$Vel, median, na.rm=TRUE)[,1])
@@ -390,11 +388,11 @@ if(Eco=="Ter"){
     unlink(list.files(tmp_dir,pattern = polygontogo,full.names = TRUE))
     
     
+} 
+if(Eco=="Mar"){
     
-} else {
     # If marine
     # Calculate only for SST
-    
     velocity_variable <- "sst"
     
     # select the climate variable
@@ -487,3 +485,116 @@ if(Eco=="Ter"){
 }
 
 
+if((Eco=="Ter" & !my_res=="1km")){
+    
+    gVelSA <- list()
+    
+    for(v in 1:length(velocity_variables)){ # for each climate variable
+        
+        velocity_variable <- velocity_variables[v]
+        
+        cat(velocity_variable,"\n")
+        
+        # select the climate variable
+        climate_layers_i <- climate_layers[[which(names(climate_layers)==velocity_variable)]]
+        
+        
+        #######
+        # calculate the trend (C/year)
+        cat("Trend\n")
+        ttrend = temp_grad(climate_layers_i,
+                           th = 0.25*nlyr(climate_layers_i) ## set minimum # obs. to 1/4 time series length
+        )
+        
+        #######
+        # calculate the spatial gradient (C/km)
+        cat("Spatial gradient\n")
+        
+        ## calculate averaged climate layers
+        avg_climate_layers <- terra::app(
+            climate_layers_i, 
+            fun = mean, na.rm = TRUE, 
+            overwrite=TRUE,
+            cores = ncores)
+        
+        gc()
+        
+        rm(climate_layers_i)
+        
+        spgrad = spatial_grad(avg_climate_layers)
+        
+        #######
+        ## calculate gradient-based climate velocity:
+        ## Unprojected
+        cat("Velocity Unprojected\n")
+        gVel <- gVelocity(grad = spgrad, slope = ttrend, truncate = TRUE)
+        
+        ## Across latitude
+        cat("Velocity across latitude\n")
+        gVelLat <- gVel$Vel * cos(deg_to_rad(gVel$Ang))
+        
+        #######
+        ## change sign of gVelLat if in the south hemisphere to reflect a velocity away of the tropics
+        SouthCells <- terra::as.data.frame(gVelLat$Vel, xy = TRUE, cell = TRUE) 
+        SouthCells <- SouthCells %>% filter(y<0)
+        SouthCells <- SouthCells$cell
+        if(length(SouthCells)>0){
+            gVelLat[SouthCells] <- gVelLat[SouthCells] * -1
+        }
+        
+        #######
+        ## Project to equal area for more accurate statistics
+        gVel <- terra::project(gVel, Eckt, threads=TRUE, use_gdal=TRUE, gdal=TRUE)
+        gVelLat <- terra::project(gVelLat, gVel, threads=TRUE, use_gdal=TRUE, gdal=TRUE)
+        
+        #######
+        # summary velocity over study area
+        
+        baseline <- as.numeric(mean(terra::global(avg_climate_layers,mean,na.rm = TRUE)[,1])) 
+        trend.mean <- as.numeric(terra::global(ttrend,mean,na.rm = TRUE)[,1])
+        trend.sd <- as.numeric(terra::global(ttrend,sd,na.rm = TRUE)[,1])
+        
+        # in CHELSA, temperature is *10  
+        if(velocity_variable == "mat"){
+            baseline <- baseline/10
+            trend.mean <- trend.mean/10
+            trend.sd <- trend.sd/10
+        } 
+        
+        v.mean <- as.numeric(terra::global(gVel$Vel, mean, na.rm=TRUE)[,1])
+        v.median <- as.numeric(terra::global(gVel$Vel, median, na.rm=TRUE)[,1])
+        v.sd <- as.numeric(terra::global(gVel$Vel, sd, na.rm=TRUE)[,1])
+        
+        v.lat.mean <- as.numeric(terra::global(gVelLat$Vel, mean, na.rm=TRUE)[,1])
+        v.lat.median <- as.numeric(terra::global(gVelLat$Vel, median, na.rm=TRUE)[,1])
+        v.lat.sd <- as.numeric(terra::global(gVelLat$Vel, sd, na.rm=TRUE)[,1])
+        
+        gVelSA_j <- data.frame(baseline, trend.mean, trend.sd, 
+                               v.mean, v.median, v.sd, 
+                               v.lat.mean, v.lat.median, v.lat.sd)
+        names(gVelSA_j) <- paste0(names(gVelSA_j),".",velocity_variable)
+        
+        gVelSA[[v]] <- gVelSA_j
+        
+        #######
+        cat("Save velocity maps\n")
+        # save velocity maps
+        terra::writeRaster(gVel$Vel, 
+                           here::here(velocity_SA_dir, 
+                                      paste(polygontogo,velocity_variable,my_res,"gVel.tif",sep="_")),
+                           overwrite=TRUE)
+        terra::writeRaster(gVelLat$Vel, 
+                           here::here(velocity_SA_dir, 
+                                      paste(polygontogo,velocity_variable,my_res,"gVelLat.tif",sep="_")),
+                           overwrite=TRUE)
+        
+    } 
+    
+    gVelSA <- do.call(cbind,gVelSA)
+    gVelSA$ID=polygontogo
+    
+    #######
+    # save velocity results
+    write.csv(gVelSA, here::here(velocity_SA_dir, paste0(paste(polygontogo,my_res,sep = "_"),".csv")), row.names = FALSE)
+    
+}

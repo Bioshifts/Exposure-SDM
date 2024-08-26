@@ -25,28 +25,37 @@ computer = "personal"
 source("R/settings.R")
 source("R/my_functions.R")
 
+# Load bioshifts v3
+bioshifts <- read.csv(here::here(Bioshifts_dir, Bioshifts_DB_v3), header = T)
+table(bioshifts$class)
+
+bioshifts <- bioshifts_sdms_selection(bioshifts)
+table(bioshifts$class)
+
+bioshifts$sp_name_std <- gsub("_"," ",bioshifts$sp_name_std)
+all_sps <- unique(bioshifts$sp_name_std)
+length(unique(all_sps)) # 4637
+
 # load sp list
 splist <- read.csv(here::here(Bioshifts_dir, "splist_v3.csv"))
+all(all_sps %in% splist$scientificName)
+
 splist <- splist %>% filter(db == "GBIF")
 length(unique(splist$scientificName)) # 12360
 
-# Load raw bioshifts
-# Load v3
-bioshifts <- read.csv(here::here(Bioshifts_dir, Bioshifts_DB_v3), header = T)
-bioshifts <- bioshifts_sdms_selection(bioshifts)
-length(unique(bioshifts$sp_name_std)) # 5495
-
-all_sps <- unique(bioshifts$sp_name_std)
-
+# Filter species in the GBIF database
 splist <- splist %>% filter(scientificName %in% all_sps)
+length(unique(splist$scientificName)) # 4613
 
 splist <- merge(splist, bioshifts[,c("sp_name_std","Eco")],
                 by.x = "scientificName",
-                by.y = "sp_name_std",
-                all.x = TRUE)
+                by.y = "sp_name_std")
 
 splist <- unique(splist)
-length(unique(splist$scientificName)) # 5471
+length(unique(splist$scientificName)) # 4613
+
+head(splist)
+table(splist$class)
 
 ######################
 # N occurrences GBIF
@@ -60,15 +69,13 @@ length(unique(splist$scientificName)) # 5471
 
 ncores = parallelly::availableCores()
 
-splist_GBIF <- splist %>% filter(db == "GBIF")
-
 cl <- makeCluster(ncores)
-clusterExport(cl, c("splist_GBIF","basisOfRecord","temporal_range_env_data"))
+clusterExport(cl, c("splist","basisOfRecord","temporal_range_env_data"))
 
-N_OCC <- pbsapply(1:nrow(splist_GBIF), function(i) {
+N_OCC <- pbsapply(1:nrow(splist), function(i) {
     
-    code_i <- gsub("GBIF:","",splist_GBIF$db_code[i])
-    tr_i <- temporal_range_env_data(splist_GBIF$Eco[i])
+    code_i <- gsub("GBIF:","",splist$db_code[i])
+    tr_i <- temporal_range_env_data(splist$Eco[i])
     tr_i <- paste(tr_i[1],tr_i[2],sep = ",")
     
     records <- sapply(basisOfRecord, function(b) {

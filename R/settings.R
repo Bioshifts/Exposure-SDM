@@ -27,7 +27,7 @@ basisOfRecord = c("HUMAN_OBSERVATION", "OBSERVATION", "OCCURRENCE")
 n_yr_bioclimatic <- 1
 
 # limit records for fitting SDMs
-limit_recs = 20000
+limit_recs = 50000
 
 # Eckert equal-area projection
 Eckt <- "+proj=eck4 +lon_0=0 +x_0=0 +y_0=0 +ellps=WGS84 +datum=WGS84 +units=m +no_defs" 
@@ -141,6 +141,11 @@ sdm_script_dir <- here::here(work_dir,"R/5_sdms")
 
 # edge scripts dir
 sdm_script_dir <- here::here(work_dir,"R/5_sdms")
+
+# Connectivity dir
+connectivity_data_dir <- function(realm){here::here(scratch_dir,"Data/Connectivity",realm)}
+connectivity_results_dir <- function(realm){here::here(work_dir,"Data/Connectivity",realm)}
+connectivity_script_dir <- here::here(work_dir,"R/9_connectivity")
 
 # Singularity image
 singularity_image <- if(computer == "muse"){

@@ -42,8 +42,10 @@ Rscript_file = here::here(velocity_script_dir,"2_get_velocity_global.R")
 
 
 # jobs dataframe
-jobs_data <- data.frame(ECO = c("Ter","Ter","Mar"),
-                        velocity_variables = c("mat","map","mean"))
+jobs_data <- data.frame(ECO = c("Ter","Ter","Ter","Ter","Mar"),
+                        rescale = c(NA,NA,"25km","25km",NA),
+                        velocity_variables = c("mat","map","mat","map","mean"))
+jobs_data
 
 ########################
 # submit jobs
@@ -58,8 +60,11 @@ for(i in 1:nrow(jobs_data)){
     # ECO
     ECO <- jobs_data$ECO[i]
     
+    # rescale
+    rescale <- jobs_data$rescale[i]
+    
     # args
-    args = c(ECO, velocity_variable)
+    args = c(ECO, velocity_variable, rescale)
     
     job_name <- paste("gVel",paste(args,collapse ="_"), sep = "_")
     
@@ -70,7 +75,7 @@ for(i in 1:nrow(jobs_data)){
         partition = "normal-amd"
     }
     if(ECO == "Ter"){ # for the Terrestrial use this (bigger jobs) 
-        cores = 5 # reduce N cores because of out-of-memory issue
+        cores = 10 # reduce N cores because of out-of-memory issue
         time = "1-24:00:00"
         memory = "500G"
         partition = "bigmem-amd"

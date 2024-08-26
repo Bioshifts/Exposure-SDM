@@ -70,7 +70,6 @@ if(!file.exists(here::here("Data/GMBA_Inventory_v2.0_standard.zip"))){
     unzip(here::here("Data/GMBA_Inventory_v2.0_standard.zip"),
           exdir = here::here("Data/GMBA_Inventory_v2.0_standard"))
     mtn <- vect(here::here("Data/GMBA_Inventory_v2.0_standard/GMBA_Inventory_v2.0_standard.shp"))
-    mtn <- terra::aggregate(mtn,by=)
 } else {
     mtn <- vect(here::here("Data/GMBA_Inventory_v2.0_standard/GMBA_Inventory_v2.0_standard.shp"))
 }
@@ -83,136 +82,53 @@ terrain_slope <- rast(here::here("Data/elevation_slp_1km.tif"))
 
 # Load velocity layers
 ```{r}
-
+##############################
 # Marine
 ## velocity
-mar_vel <- rast(here::here(work_dir,"Data/Mar_mean_gVel_1960-2009.tif"))
+mar_vel <- rast(here::here(work_dir,"Data/Velocity_global/Mar_mean_gVel_1960-2009.tif"))
 ## velocity latitude
-mar_vel_lat <- rast(here::here(work_dir,"Data/Mar_mean_gVelLat_1960-2009.tif"))
+mar_vel_lat <- rast(here::here(work_dir,"Data/Velocity_global/Mar_mean_gVelLat_1960-2009.tif"))
 ## velocity angle
-mar_vel_angle <- terra::rast(here::here("Data/Mar_mean_gVelAngle_1960-2009.tif"))
+mar_vel_angle <- terra::rast(here::here("Data/Velocity_global/Mar_mean_gVelAngle_1960-2009.tif"))
 # mar_vel_angle <- (mar_vel_angle + 180) %% 360
 
-# Terrestrial
-# convert to 5km to easier handling
+##############################
+# Terrestrial 25km
 ## velocity temperature
-ter_vel_mat_5km <- here::here(work_dir,"Data/Ter_mat_gVel_1960-2009_5km.tif")
-if(!file.exists(ter_vel_mat_5km)){
-    ter_vel_mat <- rast(here::here(work_dir,"Data/Ter_mat_gVel_1960-2009.tif"))
-    ter_vel_mat <- terra::aggregate(ter_vel_mat,fact=5,cores=10,filename=ter_vel_mat_5km,overwrite=TRUE)
-} else {
-    ter_vel_mat <- rast(ter_vel_mat_5km)
-}
-
+ter_vel_mat_25km <- rast(here::here(work_dir,"Data/Velocity_global/Ter_mat_gVel_25km_1960-2009.tif"))
 ## velocity temperature latitude
-ter_vel_mat_lat_5km <- here::here(work_dir,"Data/Ter_mat_gVelLat_1960-2009_5km.tif")
-if(!file.exists(ter_vel_mat_lat_5km)){
-    ter_vel_mat_lat <- rast(here::here(work_dir,"Data/Ter_mat_gVelLat_1960-2009.tif"))
-    ter_vel_mat_lat <- terra::aggregate(ter_vel_mat_lat,fact=5,cores=10,filename=ter_vel_mat_lat_5km,overwrite=TRUE)
-} else {
-    ter_vel_mat_lat <- rast(ter_vel_mat_lat_5km)
-}
-
+ter_vel_mat_lat_25km <- rast(here::here(work_dir,"Data/Velocity_global/Ter_mat_gVelLat_25km_1960-2009.tif"))
 ## velocity temperature angle
-ter_vel_mat_angle_5km <- here::here("Data/Ter_mat_gVelAngle_1960-2009_5km.tif")
-if(!file.exists(ter_vel_mat_angle_5km)){
-    ter_vel_mat_angle <- rast(here::here("Data/Ter_mat_gVelAngle_1960-2009.tif"))
-    ter_vel_mat_angle <- terra::aggregate(ter_vel_mat_angle,
-                                          fun = circ_mean,
-                                          fact=5,
-                                          cores=10,
-                                          filename=ter_vel_mat_angle_5km,
-                                          overwrite=TRUE)
-} else {
-    ter_vel_mat_angle <- rast(ter_vel_mat_angle_5km)
-}
-
-## velocity temperature elevation uphill
-ter_vel_mat_eleUp <- rast(here::here(work_dir,"Data/Ter_mat_gVelEleUp_1960-2009.tif"))
-ter_vel_mat_eleUp_crop_name <- here::here("Data/Ter_mat_gVelEleUpCrop_1960-2009.tif")
-if(!file.exists(ter_vel_mat_eleUp_crop_name)){
-    ter_vel_mat_eleUp_crop <- rast(here::here("Data/Ter_mat_gVelEleUp_1960-2009.tif"))
-    ter_vel_mat_eleUp_crop <- terra::mask(ter_vel_mat_eleUp_crop, mtn, 
-                                          filename = ter_vel_mat_eleUp_crop_name,
-                                          overwrite=TRUE)
-} else {
-    ter_vel_mat_eleUp_crop <- rast(ter_vel_mat_eleUp_crop_name)
-}
-## velocity temperature elevation dist
-ter_vel_mat_eleDist <- rast(here::here(work_dir,"Data/Ter_mat_gVelEleDist_1960-2009.tif"))
-ter_vel_mat_eleDist_crop_name <- here::here("Data/Ter_mat_gVelEleDistCrop_1960-2009.tif")
-if(!file.exists(ter_vel_mat_eleDist_crop_name)){
-    ter_vel_mat_eleDist_crop <- rast(here::here("Data/Ter_mat_gVelEleDist_1960-2009.tif"))
-    ter_vel_mat_eleDist_crop <- terra::mask(ter_vel_mat_eleDist_crop, mtn, 
-                                            filename = ter_vel_mat_eleDist_crop_name,
-                                            overwrite=TRUE)
-} else {
-    ter_vel_mat_eleDist_crop <- rast(ter_vel_mat_eleDist_crop_name)
-}
+ter_vel_mat_angle_25km <- rast(here::here("Data/Velocity_global/Ter_mat_gVelAngle_25km_1960-2009.tif"))
 
 ## velocity precipitation
-ter_vel_map_5km <- here::here(work_dir,"Data/Ter_map_gVel_1960-2009_5km.tif")
-if(!file.exists(ter_vel_map_5km)){
-    ter_vel_map <- rast(here::here(work_dir,"Data/Ter_map_gVel_1960-2009.tif"))
-    ter_vel_map <- terra::aggregate(ter_vel_map,
-                                    fact=5,
-                                    cores=10,
-                                    filename=ter_vel_map_5km,
-                                    overwrite=TRUE)
-} else {
-    ter_vel_map <- rast(ter_vel_map_5km)
-}
-
+ter_vel_map_25km <- rast(here::here(work_dir,"Data/Velocity_global/Ter_map_gVel_25km_1960-2009.tif"))
 ## velocity precipitation latitude
-ter_vel_map_lat_5km <- here::here(work_dir,"Data/Ter_map_gVelLat_1960-2009_5km.tif")
-if(!file.exists(ter_vel_map_lat_5km)){
-    ter_vel_map_lat <- rast(here::here(work_dir,"Data/Ter_map_gVelLat_1960-2009.tif"))
-    ter_vel_map_lat <- terra::aggregate(ter_vel_map_lat,
-                                        fact=5,
-                                        cores=10,
-                                        filename=ter_vel_map_lat_5km,
-                                        overwrite=TRUE)
-} else {
-    ter_vel_map_lat <- rast(ter_vel_map_lat_5km)
-}
-
+ter_vel_map_lat_25km <- rast(here::here(work_dir,"Data/Velocity_global/Ter_map_gVelLat_25km_1960-2009.tif"))
 ## velocity precipitation angle
-ter_vel_map_angle_5km <- here::here("Data/Ter_map_gVelAngle_1960-2009_5km.tif")
-if(!file.exists(ter_vel_map_angle_5km)){
-    ter_vel_map_angle <- rast(here::here("Data/Ter_map_gVelAngle_1960-2009.tif"))
-    ter_vel_map_angle <- terra::aggregate(ter_vel_map_angle,
-                                          fun = circ_mean,
-                                          fact=5,
-                                          cores=10,
-                                          filename=ter_vel_map_angle_5km,
-                                          overwrite=TRUE)
-} else {
-    ter_vel_map_angle <- rast(ter_vel_map_angle_5km)
-}
+ter_vel_map_angle_25km <- rast(here::here("Data/Velocity_global/Ter_map_gVelAngle_25km_1960-2009.tif"))
 
-## velocity temperature elevation uphill
-ter_vel_map_eleUp <- rast(here::here(work_dir,"Data/Ter_map_gVelEleUp_1960-2009.tif"))
-ter_vel_map_eleUp_crop_name <- here::here("Data/Ter_map_gVelEleUpCrop_1960-2009.tif")
-if(!file.exists(ter_vel_map_eleUp_crop_name)){
-    ter_vel_map_eleUp_crop <- rast(here::here("Data/Ter_map_gVelEleUp_1960-2009.tif"))
-    ter_vel_map_eleUp_crop <- terra::mask(ter_vel_map_eleUp_crop, mtn, 
-                                          filename = ter_vel_map_eleUp_crop_name,
-                                          overwrite=TRUE)
-} else {
-    ter_vel_map_eleUp_crop <- rast(ter_vel_map_eleUp_crop_name)
-}
-## velocity temperature elevation dist
-ter_vel_map_eleDist <- rast(here::here(work_dir,"Data/Ter_map_gVelEleDist_1960-2009.tif"))
-ter_vel_map_eleDist_crop_name <- here::here("Data/Ter_map_gVelEleDistCrop_1960-2009.tif")
-if(!file.exists(ter_vel_map_eleDist_crop_name)){
-    ter_vel_map_eleDist_crop <- rast(here::here("Data/Ter_map_gVelEleDist_1960-2009.tif"))
-    ter_vel_map_eleDist_crop <- terra::mask(ter_vel_map_eleDist_crop, mtn, 
-                                            filename = ter_vel_map_eleDist_crop_name,
-                                            overwrite=TRUE)
-} else {
-    ter_vel_map_eleDist_crop <- rast(ter_vel_map_eleDist_crop_name)
-}
+## velocity temperature elevation 
+ter_vel_mat_ele_1km <- rast(here::here(work_dir,"Data/Velocity_global/Ter_mat_gVelEle_1km_1960-2009.tif"))
 
+##############################
+# Terrestrial 1km
+## velocity temperature
+ter_vel_mat_1km <- rast(here::here(work_dir,"Data/Velocity_global/Ter_mat_gVel_1km_1960-2009.tif"))
+## velocity temperature latitude
+ter_vel_mat_lat_1km <- rast(here::here(work_dir,"Data/Velocity_global/Ter_mat_gVelLat_1km_1960-2009.tif"))
+## velocity temperature angle
+ter_vel_mat_angle_1km <- rast(here::here("Data/Velocity_global/Ter_mat_gVelAngle_1km_1960-2009.tif"))
+
+## velocity precipitation
+ter_vel_map_1km <- rast(here::here(work_dir,"Data/Velocity_global/Ter_map_gVel_1km_1960-2009.tif"))
+## velocity precipitation latitude
+ter_vel_map_lat_1km <- rast(here::here(work_dir,"Data/Velocity_global/Ter_map_gVelLat_1km_1960-2009.tif"))
+## velocity precipitation angle
+ter_vel_map_angle_1km <- rast(here::here("Data/Velocity_global/Ter_map_gVelAngle_1km_1960-2009.tif"))
+
+## velocity precipitation elevation 
+ter_vel_map_ele_1km <- rast(here::here(work_dir,"Data/Velocity_global/Ter_map_gVelEle_1km_1960-2009.tif"))
 
 ```
 
@@ -230,7 +146,7 @@ the_palette_fc <- leaflet::colorNumeric(
 
 the_colors <- the_palette_fc(seq(min(mar_velrange), max(mar_velrange), length.out = 15))
 
-plot(mar_vel, col = the_colors, main = "Climate velocity")
+plot(mar_vel, col = the_colors, main = "Temperature velocity")
 
 ```
 
@@ -246,7 +162,7 @@ the_palette_fc <- leaflet::colorNumeric(
 
 the_colors <- the_palette_fc(seq(min(mar_vel_latrange), max(mar_vel_latrange), length.out = 50))
 
-plot(mar_vel_lat, col = the_colors, main = "Climate velocity latitude")
+plot(mar_vel_lat, col = the_colors, main = "Temperature velocity latitude")
 
 ```
 
@@ -279,7 +195,7 @@ myramp <- colorRampPalette(colors = c("red","green","blue","yellow","red"))(360)
 ## Difference lat vs Unprojected
 ```{r fig.width=10}
 
-new_rast <- abs(mar_vel_lat) - abs(mar_vel)
+new_rast <- abs(mar_vel) - abs(mar_vel_lat) 
 
 new_rastrange <-  terra::minmax(new_rast)
 
@@ -290,16 +206,16 @@ the_palette_fc <- leaflet::colorNumeric(
 
 the_colors <- the_palette_fc(seq(min(new_rastrange), max(new_rastrange), length.out = 50))
 
-plot(new_rast, col = the_colors, main = "Difference velocities\nLatitude - Unprojected")
+plot(new_rast, col = the_colors, main = "Difference velocities\nUnprojected - Latitude")
 
 plot(abs(mar_vel_lat),
      abs(mar_vel),
-     xlab="Velocity latitude (absolut)",
-     ylab = "Velocity Unprojected")
+     xlab="Velocity Unprojected",
+     ylab = "Velocity latitude (absolut)")
 
 ```
 
-The difference between velocities latitude and unprojected is overall small, suggesting most of the climate velocity goes in the trajectory North. Areas highlighted in blue indicate faster velocities in directions away from the North angle (i.e., west or east).
+The difference between velocities latitude and unprojected is overall small, suggesting most of the Temperature velocity goes in the trajectory North. Areas highlighted in blue indicate faster velocities in directions away from the North angle (i.e., west or east).
 
 
 # Plot Terrestrial velocities
@@ -307,14 +223,22 @@ The difference between velocities latitude and unprojected is overall small, sug
 ### Unprojected
 ```{r}
 
-velocity_map(ter_vel_mat, main = "Climate velocity")
+velocity_map(ter_vel_mat_1km, main = "Temperature velocity (1km)")
+velocity_map(ter_vel_mat_25km, main = "Temperature velocity (25km)")
+
+hist(ter_vel_mat_1km, main = "Temperature velocity (1km)")
+hist(ter_vel_mat_25km, main = "Temperature velocity (25km)")
 
 ```
 
 ### Latitude
 ```{r}
 
-velocity_map(ter_vel_mat_lat, main = "Climate velocity latitude")
+velocity_map(ter_vel_mat_lat_1km, main = "Temperature velocity latitude (1km)")
+velocity_map(ter_vel_mat_lat_25km, main = "Temperature velocity latitude (25km)")
+
+hist(ter_vel_mat_lat_1km, main = "Temperature velocity (1km)")
+hist(ter_vel_mat_lat_25km, main = "Temperature velocity (25km)")
 
 ```
 
@@ -322,26 +246,36 @@ velocity_map(ter_vel_mat_lat, main = "Climate velocity latitude")
 
 ```{r}
 
-angle_map(ter_vel_mat_angle)
+angle_map(ter_vel_mat_angle_1km, main = "Temperature velocity angle (1km)")
+angle_map(ter_vel_mat_angle_25km, main = "Temperature velocity angle (25km)")
 
-angle_map(crop(ter_vel_mat_angle,c(-90,-60,-40,0)))
+angle_map(crop(ter_vel_mat_angle_1km,c(-90,-60,-40,0)), main = "Temperature velocity angle (1km)")
+angle_map(crop(ter_vel_mat_angle_25km,c(-90,-60,-40,0)), main = "Temperature velocity angle (25km)")
 
 ```
 
 ### Difference lat vs Unprojected
 ```{r fig.width=10}
 
-new_rast <- abs(ter_vel_mat_lat) - abs(ter_vel_mat)
+new_rast <- abs(ter_vel_mat_1km) - abs(ter_vel_mat_lat_1km) 
 
-velocity_map(new_rast, main = "Difference velocities\nLatitude - Unprojected")
+new_rastrange <-  terra::minmax(new_rast)
 
-{
-    plot(abs(ter_vel_mat_lat),
-         abs(ter_vel_mat),
-         xlab="Velocity latitude (absolute)",
-         ylab = "Velocity Unprojected")
-    abline(0,1)
-}
+the_palette_fc <- leaflet::colorNumeric(
+    palette = "RdBu", 
+    domain = c(-max(abs(new_rastrange)),max(abs(new_rastrange))),
+    reverse = TRUE)
+
+the_colors <- the_palette_fc(seq(min(new_rastrange), max(new_rastrange), length.out = 50))
+
+plot(new_rast, col = the_colors, main = "Difference velocities\nUnprojected - Latitude (1km)")
+
+plot(abs(ter_vel_mat_lat_1km),
+     abs(ter_vel_mat_1km),
+     main = "Difference velocities\nUnprojected - Latitude (1km)",
+     xlab="Velocity Unprojected",
+     ylab = "Velocity latitude (absolut)")
+
 ```
 
 
@@ -350,14 +284,16 @@ velocity_map(new_rast, main = "Difference velocities\nLatitude - Unprojected")
 ### Unprojected
 ```{r}
 
-velocity_map(ter_vel_map, main = "Precipitation velocity")
+velocity_map(ter_vel_map_1km, main = "Precipitation velocity (1km)")
+velocity_map(ter_vel_map_25km, main = "Precipitation velocity (25km)")
 
 ```
 
 ### Latitude
 ```{r}
 
-velocity_map(ter_vel_map_lat, main = "Climate velocity latitude")
+velocity_map(ter_vel_map_lat_1km, main = "Precipitation velocity latitude (1km)")
+velocity_map(ter_vel_map_lat_25km, main = "Precipitation velocity latitude (25km)")
 
 ```
 
@@ -365,31 +301,64 @@ velocity_map(ter_vel_map_lat, main = "Climate velocity latitude")
 
 ```{r}
 
-angle_map(ter_vel_map_angle)
+angle_map(ter_vel_map_angle_1km, main = "Precipitation velocity angle (1km)")
+angle_map(ter_vel_map_angle_25km, main = "Precipitation velocity angle (25km)")
+
+angle_map(crop(ter_vel_map_angle_1km,c(-90,-60,-40,0)), main = "Precipitation velocity angle (1km)")
+angle_map(crop(ter_vel_map_angle_25km,c(-90,-60,-40,0)), main = "Precipitation velocity angle (25km)")
 
 ```
 
 ### Difference lat vs Unprojected
 ```{r fig.width=10}
 
-new_rast <- abs(ter_vel_map_lat) - abs(ter_vel_map)
+new_rast <- abs(ter_vel_map_1km) - abs(ter_vel_map_lat_1km) 
 
-velocity_map(new_rast, main = "Difference between velocity in precipitation and Unprojected\nPrecipitation - Unprojected")
+new_rastrange <-  terra::minmax(new_rast)
+
+the_palette_fc <- leaflet::colorNumeric(
+    palette = "RdBu", 
+    domain = c(-max(abs(new_rastrange)),max(abs(new_rastrange))),
+    reverse = TRUE)
+
+the_colors <- the_palette_fc(seq(min(new_rastrange), max(new_rastrange), length.out = 50))
+
+plot(new_rast, col = the_colors, main = "Difference velocities\nUnprojected - Latitude (1km)")
+
+plot(abs(ter_vel_map_lat_1km),
+     abs(ter_vel_map_1km),
+     main = "Difference velocities\nUnprojected - Latitude (1km)",
+     xlab="Velocity Unprojected",
+     ylab = "Velocity latitude (absolut)")
 
 ```
+
+
+
 
 ## Difference precipitation vs temperature
 ```{r fig.width=10}
 
-plot(ter_vel_map,
-     ter_vel_mat,
+plot(ter_vel_map_lat_1km,
+     ter_vel_map_1km,
      xlab = "Precipitation velocity",
      ylab = "Temperature velocity", 
      cex = 1)
 
-new_rast <- ter_vel_map - ter_vel_mat
+new_rast <- ter_vel_map_1km - ter_vel_map_lat_1km
 
-velocity_map(new_rast, main = "Difference between velocity in temperature and precipitation\nTemperature - Precipitation")
+velocity_map(new_rast, main = "Difference between velocity in temperature and precipitation (1km)\nTemperature - Precipitation")
+
+plot(ter_vel_map_lat_25km,
+     ter_vel_map_25km,
+     xlab = "Precipitation velocity",
+     ylab = "Temperature velocity", 
+     cex = 1)
+
+new_rast <- ter_vel_map_25km - ter_vel_map_lat_25km
+
+velocity_map(new_rast, 
+             main = "Difference between velocity in temperature and precipitation (25km)\nTemperature - Precipitation")
 
 ```
 
@@ -399,26 +368,20 @@ Velocities in temperature and precipitation are highly decoupled.
 ## Elevation
 ### Temperature
 ```{r}
-velocity_map(ter_vel_mat_eleUp, main = "Climate velocity elevation (m/year)")
 
-```
-
-Focus on mountain ranges
-```{r}
-
-velocity_map(ter_vel_mat_eleUp_crop, main = "Climate velocity elevation (m/year)")
+velocity_map(ter_vel_mat_ele_1km, main = "Temperature velocity elevation (m/year)")
 
 ```
 
 
 ```{r fig.width=8}
-tmp_r <- terra::mask(terra::crop(ter_vel_mat_eleUp_crop,theandes),theandes)
+tmp_r <- terra::mask(terra::crop(ter_vel_mat_ele_1km,theandes),theandes)
 tmp_r2 <- terra::mask(terra::crop(terrain_slope,theandes),theandes)
 
 {
     par(mfrow=c(1,2))
     velocity_map(tmp_r, 
-                 main = "Climate velocity elevation (m/year)")
+                 main = "Temperature velocity elevation (m/year)")
     plot(tmp_r2,
          main = "Terrain slope",
          col = rev(terrain.colors(50)))
@@ -435,110 +398,54 @@ The maximum velocity in elevation is 1m/year.
 
 plot(tmp_r2, tmp_r,
      xlab="Terrain slope",
-     ylab="Climate velocity elevation (m/year)",
+     ylab="Temperature velocity elevation (m/year)",
      cex=1)
 
 # mapview::mapview(tmp_r)
 
 ```
 
-Velocity in elevation tend to be higher when the terrain is flat.
+Velocity in elevation tends to be higher when the terrain is flat.
 
 
-### Temperature velocity as distance uphill
-```{r }
-
-velocity_map(ter_vel_mat_eleDist_crop, main = "Climate velocity elevation (km/year)")
-
-# remove outliers for better visualization
-.o <- as.matrix(global(ter_vel_mat_eleDist_crop,fun=quantile,probs=c(0.05,0.95),na.rm=TRUE))[1,]
-ter_vel_mat_eleDist_crop[ter_vel_mat_eleDist_crop < .o[1]] <- .o[1]
-ter_vel_mat_eleDist_crop[ter_vel_mat_eleDist_crop > .o[2]] <- .o[2] 
-
-velocity_map(ter_vel_mat_eleDist_crop, main = "Climate velocity elevation (km/year)")
-
-```
-
-
-```{r fig.width=6,fig.height=6}
-tmp_r <- terra::mask(terra::crop(ter_vel_mat_eleDist_crop,theandes),theandes)
-tmp_r2 <- terra::mask(terra::crop(ter_vel_mat_eleUp_crop,theandes),theandes)
-
-{
-    par(mfrow=c(1,3))
-    velocity_map(tmp_r, 
-                 main = "Elevation distance\n(km/year)")
-    velocity_map(tmp_r2,
-                 main = "Elevation\n(m/year)")
-    velocity_map(tmp_r-tmp_r2, 
-                 main = "Difference between \nelevation velocities\nDistance - elevation")
-    par(mfrow=c(1,1))
-}
-```
-
-
-```{r fig.width=5, fig.height=5}
-{
-    plot(ter_vel_mat_eleDist_crop,
-         ter_vel_mat_eleUp_crop, 
-         xlab="Velocity elevation uphill (m/year)",
-         ylab= "Velocity elevation distance (km/year)",
-         cex=1)
-}
-
-```
-
-Metrics are correlated to some extent...
 
 ### Precipitation
 ```{r}
 
-velocity_map(ter_vel_map_eleUp, main = "Precipitation velocity in elevation")
-
-velocity_map(ter_vel_map_eleUp_crop, main = "Precipitation velocity in elevation")
-
-velocity_map(terra::mask(terra::crop(ter_vel_map_eleUp_crop,theandes),theandes), 
-             main = "The Andes\nPrecipitation velocity in elevation")
-
+velocity_map(ter_vel_map_ele_1km, main = "Precipitation velocity elevation (m/year)")
 
 ```
 
 Precipitation velocities are very high in mountains!
 
 
-### Precipitation velocity as distance uphill
+### Precipitation velocity 
 ```{r }
 
-velocity_map(ter_vel_map_eleDist_crop, main = "Precipitation velocity elevation (km/year)")
-
-```
-
-
-```{r fig.width=6,fig.height=6}
-tmp_r <- terra::mask(terra::crop(ter_vel_map_eleDist_crop,theandes),theandes)
-tmp_r2 <- terra::mask(terra::crop(ter_vel_map_eleUp_crop,theandes),theandes)
+tmp_r <- terra::mask(terra::crop(ter_vel_map_ele_1km,theandes),theandes)
+tmp_r2 <- terra::mask(terra::crop(terrain_slope,theandes),theandes)
 
 {
-    par(mfrow=c(1,3))
+    par(mfrow=c(1,2))
     velocity_map(tmp_r, 
-                 main = "Elevation distance\n(km/year)")
-    velocity_map(tmp_r2,
-                 main = "Elevation\n(m/year)")
-    velocity_map(tmp_r-tmp_r2, 
-                 main = "Difference between \nelevation velocities\nDistance - elevation")
+                 main = "Precipitation velocity elevation (m/year)")
+    plot(tmp_r2,
+         main = "Terrain slope",
+         col = rev(terrain.colors(50)))
     par(mfrow=c(1,1))
 }
+
 ```
 
 
-```{r fig.width=5, fig.height=5}
-{
-    plot(ter_vel_map_eleDist_crop,
-         ter_vel_map_eleUp_crop, 
-         xlab="Velocity elevation uphill (m/year)",
-         ylab= "Velocity elevation distance (km/year)",
-         cex=1)
-}
+```{r}
+
+plot(tmp_r2, tmp_r,
+     xlab="Terrain slope",
+     ylab="Precipitation velocity elevation (m/year)",
+     cex=1)
+
+# mapview::mapview(tmp_r)
 
 ```
 
@@ -547,37 +454,21 @@ tmp_r2 <- terra::mask(terra::crop(ter_vel_map_eleUp_crop,theandes),theandes)
 #### Elevation uphill
 ```{r fig.width=10}
 
-new_rast <- ter_vel_mat_eleUp_crop - ter_vel_map_eleUp_crop
+new_rast <- ter_vel_mat_ele_1km - ter_vel_map_ele_1km
 
 velocity_map(new_rast, main = "Difference between velocity in temperature and precipitation\nTemperature - Precipitation")
 
 velocity_map(terra::mask(terra::crop(new_rast,theandes),theandes), 
              main = "The Andes")
 
-
 ```
-
-
-#### Elevation distance
-```{r fig.width=10}
-
-new_rast <- ter_vel_mat_eleDist_crop - ter_vel_map_eleDist_crop
-
-velocity_map(new_rast, main = "Difference between velocity in temperature and precipitation\nTemperature - Precipitation")
-
-velocity_map(terra::mask(terra::crop(new_rast,theandes),theandes), 
-             main = "The Andes")
-
-
-```
-
 
 
 # Mountains
 Extract velocities in major mountain systems
-```{r}
+```{r eval=FALSE, include=FALSE}
 
-if(!file.exists(here::here("Data/vel_elev_mtn.csv"))){
+if(!file.exists(here::here("Data/Velocity_global/vel_elev_mtn.csv"))){
     mountains <- na.omit(unique(mtn$Level_02))
     
     # plot(mtn[mtn$Level_02 == mountains[1]])
@@ -641,17 +532,17 @@ if(!file.exists(here::here("Data/vel_elev_mtn.csv"))){
     cm <- unlist(cm)
     vel_elev_mtn$latitude <- cm
     
-    write.csv(vel_elev_mtn, here::here("Data/vel_elev_mtn.csv"),row.names = FALSE)
+    write.csv(vel_elev_mtn, here::here("Data/Velocity_global/vel_elev_mtn.csv"),row.names = FALSE)
     
 } else {
-    vel_elev_mtn <- read.csv(here::here("Data/vel_elev_mtn.csv"))
+    vel_elev_mtn <- read.csv(here::here("Data/Velocity_global/vel_elev_mtn.csv"))
 }
 
 
 ```
 
 
-```{r}
+```{r eval=FALSE, include=FALSE}
 
 data_global <- vel_elev_mtn[which(vel_elev_mtn$mtn=="Global"),]
 
@@ -690,7 +581,7 @@ vel_elev_mtn %>%
 ```
 
 
-```{r fig.width=15}
+```{r eval=FALSE, fig.width=15, include=FALSE}
 
 vel_elev_mtn %>%
     dplyr::mutate(mtn = fct_reorder(mtn, vel_mat),
