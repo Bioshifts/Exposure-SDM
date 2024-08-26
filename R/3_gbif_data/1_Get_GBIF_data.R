@@ -34,7 +34,6 @@ work_dir <- getwd()
 source("R/settings.R")
 source("R/decompress_file.R")
 
-decompress_file
 range_env_data <- range(c(temporal_range_env_data("Ter"),temporal_range_env_data("Mar")))
 
 # Get species list ----
