@@ -115,9 +115,12 @@ for(j in 1:length(realms)){
         })
         I_have_sdms <- rbind(I_have_sdms,tmp)
     }
-    nrow(I_have_sdms) # these are all possible sdms (species + ID)
+    # these are all possible sdms (species + ID)
+    nrow(I_have_sdms) 
+    
+    # these are the ones with projections for all years
     I_have_sdms <- I_have_sdms[which(I_have_sdms$I_have_sdms),]
-    nrow(I_have_sdms) # these are the ones with projections for all years
+    nrow(I_have_sdms) 
     
     # sps I have shifts calculated
     I_have_shift <- list.files(shift_dir(realm))

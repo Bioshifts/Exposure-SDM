@@ -59,12 +59,23 @@ create_temporal_pseudo_absences <- function(BA, env_range, sp_occ){
     random_dates <- sample(all_dates, size = nrow(sp_occ), replace = TRUE)
     PA_cell_dates <- paste(random_cells,random_dates)
     # 4) check for the existence of any combination of cell dates from PA in sp_occ
-    occ_cell_dates <- paste(sp_occ$cell, paste(sp_occ$month,sp_occ$year,sep="_"))
+    occ_cell_dates <- paste(sp_occ$cell, paste(sp_occ$month,sp_occ$year, sep="_"))
+    run = 0
     while(any(PA_cell_dates %in% occ_cell_dates)){
+        run <- run + 1
         # resample
         random_cells <- sample(cells_BA, size = nrow(sp_occ), replace = TRUE)
         random_dates <- sample(all_dates, size = nrow(sp_occ), replace = TRUE)
         PA_cell_dates <- paste(random_cells,random_dates)
+        if(run > 100){
+            all_possible_cells_dates <- expand.grid(cells_BA, all_dates)
+            all_possible_cells_dates <- paste(all_possible_cells_dates[,1],all_possible_cells_dates[,2])
+            all_possible_cells_dates <- all_possible_cells_dates[-which(all_possible_cells_dates %in% occ_cell_dates)]
+            PA_cell_dates <- sample(all_possible_cells_dates, size = nrow(sp_occ), replace = TRUE)
+            tmp <- strsplit(PA_cell_dates, " ")
+            random_cells <- as.numeric(sapply(tmp, function(x) x[1]))
+            random_dates <- sapply(tmp, function(x) x[2])
+        }
     }
     # Create a PA dataset
     tmp <- lapply(random_dates, function(x) strsplit(x, "_")[[1]])
@@ -76,7 +87,7 @@ create_temporal_pseudo_absences <- function(BA, env_range, sp_occ){
                          species = sp_occ$species[1],
                          cell = random_cells,
                          pa = 0)
-    PA_xy <- terra::xyFromCell(BA,random_cells)    
+    PA_xy <- terra::xyFromCell(BA, random_cells)    
     PA_occ <- cbind(PA_occ, PA_xy) 
     return(PA_occ)
 }
@@ -868,8 +879,11 @@ limits <- data.frame(partition = ter_partitions,
 
 select_partition <- function(request_mem, request_cpu, limits){
     test <- select_partition_inset(request_mem = request_mem, request_cpu = request_cpu, limits = limits)
-    cat("\rThere are no enough resources for running submitting job.\nWaiting for resources to become available...\n")
+    if(nrow(test)==0){
+        cat("\n\rThere are no enough resources for running submitting job.\nWaiting for resources to become available...\n")
+    }
     while(nrow(test)==0){
+        
         
         Sys.sleep(10)
         test <- select_partition_inset(request_mem, request_cpu, limits)
@@ -881,14 +895,75 @@ select_partition_inset <- function(request_mem, request_cpu, limits){
     limits <- limits %>% filter((max_mem_node > request_mem))
     
     test_partition <- system("squeue --format='%.50P' --me", intern = TRUE)[-1]
-    test_partition <- gsub(" ","",test_partition)
-    using <- data.frame(table(test_partition))
-    names(using)[1] <- "partition"
-    using <- merge(using, limits, all = TRUE)
-    using[is.na(using)] <- 0
-    using$using_mem <- request_mem * using$Freq
-    using$using_cpu <- request_cpu * using$Freq
+    if(length(test_partition)==0){
+        return(limits[1,])
+    }else{
+        test_partition <- gsub(" ","",test_partition)
+        using <- data.frame(table(test_partition))
+        names(using)[1] <- "partition"
+        using <- merge(using, limits, all = TRUE)
+        using[is.na(using)] <- 0
+        using$using_mem <- request_mem * using$Freq
+        using$using_cpu <- request_cpu * using$Freq
+        
+        tmp <- using %>% filter((max_mem_user > using$using_mem) & (max_cpu > using$using_cpu))
+        return(tmp)
+    }
+}
+
+# check if species has sdms for all possible years
+check_if_has_sdms_for_all_shifts <- function(all_sps,bioshifts){
     
-    tmp <- using %>% filter((max_mem_user > using$using_mem) & (max_cpu > using$using_cpu))
-    return(tmp)
+    require("pbapply")
+    
+    my_sdms <- pbapply::pblapply(1:nrow(all_sps), function(i){
+        
+        # sp_i <- "Centropristis_striata"
+        # sp_i_realm <- "Mar"
+        sp_i <- gsub(" ","_",all_sps$sps[i])
+        sp_i_realm <- all_sps$realm[i]
+        
+        # test if have sdm for sp_i
+        test <- list.files(
+            here::here(sdm_dir(sp_i_realm),sp_i,gsub("_",".",sp_i)), 
+            pattern = "ensemble.models.out")
+        
+        test <- length(test) > 0
+        
+        if(test){ # if yes, check if have projections for all possible shifts
+            
+            # all possible shifts for sp_i?
+            shift_info <- filter(bioshifts, sp_name_std == sp_i)
+            shift_info <- select(shift_info, c(ID, Start, End))
+            shift_info <- unique(shift_info)
+            
+            ID_i <- unique(shift_info$ID)
+            # for each ID_i, look if has projections for all years
+            tmp <- data.frame(sps=sp_i,
+                              realm=sp_i_realm,
+                              ID=ID_i)
+            
+            tmp$I_have_sdms <- sapply(ID_i, function(x){
+                shift_info_i <- shift_info[which(shift_info$ID==x),]
+                years_ID_i <- round(shift_info_i$Start,0):round(shift_info_i$End,0)
+                # check
+                # Focus on SA for now
+                sdms_sp_i <- list.files(here(sdm_dir(sp_i_realm),sp_i,gsub("_",".",sp_i)),pattern = "SA")
+                # get ensemble models
+                sdms_sp_i_ens <- sdms_sp_i[grep(" ens",sdms_sp_i)]
+                # get ID_i models
+                sdms_sp_i_ens <- sdms_sp_i_ens[grep(x,sdms_sp_i_ens)]
+                # check if all years exist
+                sdms_sp_i_ens <- all(sapply(years_ID_i, function(x){any(grepl(x,sdms_sp_i_ens))}))
+                sdms_sp_i_ens
+            })
+            
+            
+        } else {
+            tmp <- data.frame(sps = sp_i, realm = sp_i_realm, ID = NA, I_have_sdms = FALSE)
+        }
+        return(tmp)
+    })
+    my_sdms <- do.call(rbind, my_sdms)
+    return(my_sdms)
 }

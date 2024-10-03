@@ -56,7 +56,7 @@ bioshifts <- bioshifts_sdms_selection(bioshifts)
 # 
 # # Filter Polygons in Study areas v3
 bioshifts <- read.csv(here(Bioshifts_dir,Bioshifts_DB_v3), header = T)
-bioshifts <- bioshifts_sdms_selection(bioshifts)
+bioshifts <- bioshifts_fix_columns(bioshifts)
 bioshifts_IDs <- bioshifts %>%
     select(ID, Eco, Start, End) %>%
     unique %>%
@@ -92,11 +92,11 @@ for(i in 1:nrow(bioshifts_IDs)) { cat(i, "from", nrow(got),"\r")
     years_I_have <- sapply(years_from_poly_i, function(x){
         any(grepl(x,got_from_poly_i))
     })
-    I_have[i] <- all(years_I_have)
+    I_have[i] <- length(which(years_I_have)) == length(years_from_poly_i)
 }
 # I_have
 
-bioshifts_IDs_I_have <- bioshifts_IDs$ID[I_have]
+bioshifts_IDs_I_have <- bioshifts_IDs$ID[which(I_have)]
 
 # to go 
 v3_polygons <- bioshifts_IDs %>% filter(!ID %in% bioshifts_IDs_I_have)

@@ -28,9 +28,9 @@ sptogo <- as.character(paste(command_args[1], collapse = " "))
 realm <- as.character(paste(command_args[2], collapse = " "))
 IDtogo <- as.character(paste(command_args[3], collapse = " "))
 
-# sptogo="Pseudonepanthia_troughtoni"
+# sptogo="Sebastes_fasciatus"
 # realm <- "Mar"
-# IDtogo = "A112_P1"
+# IDtogo = "A53_P1"
 
 # sptogo="Veronica_montana"
 # realm <- "Ter"
@@ -145,16 +145,10 @@ for(i in 1:nrow(shift_info)){
     
     # calculate range shifts
     range_shifts <- range_shift(x = sdms_i_togo,
+                                SA = SA_i,
                                 periods = periods_i,
+                                raster_size_tolerance = 10^5,
                                 proj_equal = TRUE)
-    
-    range_shifts[[1]]
-    
-    range_shifts2 <- enmSdmX::bioticVelocity(x = sdms_i_togo,
-                                             times = as.numeric(names(sdms_i_togo)),
-                                             atTimes = c(1994,2006),
-                                             metrics = c("centroid","nsCentroid"))
-    mean(range_shifts2$centroidVelocity)
     
     ###
     # save results

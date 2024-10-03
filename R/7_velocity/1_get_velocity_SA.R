@@ -23,11 +23,11 @@ Eco <- as.character(paste(command_args[2], collapse = " "))
 res_raster <- as.character(paste(command_args[3], collapse = " "))
 
 # Eco <- "Ter"
-# res_raster <- "25km"
-# polygontogo <- "A112_P1" # Mar # South
+# res_raster <- "1km"
+# polygontogo <- "B564_P2" # Mar # South
 # polygontogo <- "A43_P1" # Mar # North
-# polygontogo <- "A1_P1" # Ter # North
-# polygontogo <- "A10_P1" # Ter # Big # North
+# polygontogo <- "A238_P1" # Ter # North
+# polygontogo <- "A136_P3" # Ter # Big # North
 # polygontogo <- "A31_P1" # Ter # North # Elevation
 # polygontogo <- "A67_P1" # Ter # North
 # polygontogo <- "A25_P1" # Ter # North # Not big
@@ -299,7 +299,6 @@ if(Eco=="Ter" & my_res=="1km"){
         ## Unprojected
         cat("Velocity Unprojected\n")
         gVel <- gVelocity(grad = spgrad, slope = ttrend, truncate = TRUE)
-        
         # ## Across elevation 
         # cat("Velocity across elevation \n")
         gVelEle <- gVelocity(grad = spgrad_ele, slope = ttrend,
@@ -347,9 +346,9 @@ if(Eco=="Ter" & my_res=="1km"){
         v.lat.median <- as.numeric(terra::global(gVelLat$Vel, median, na.rm=TRUE)[,1])
         v.lat.sd <- as.numeric(terra::global(gVelLat$Vel, sd, na.rm=TRUE)[,1])
         
-        v.ele.mean <- s.numeric(terra::global(gVelEle$Vel, mean, na.rm=TRUE)[,1])
-        v.ele.median <- s.numeric(terra::global(gVelEle$Vel, median, na.rm=TRUE)[,1])
-        v.ele.sd <- s.numeric(terra::global(gVelEle$Vel, sd, na.rm=TRUE)[,1])
+        v.ele.mean <- as.numeric(terra::global(gVelEle$Vel, mean, na.rm=TRUE)[,1])
+        v.ele.median <- as.numeric(terra::global(gVelEle$Vel, median, na.rm=TRUE)[,1])
+        v.ele.sd <- as.numeric(terra::global(gVelEle$Vel, sd, na.rm=TRUE)[,1])
         
         gVelSA_j <- data.frame(baseline, trend.mean, trend.sd, 
                                v.mean, v.median, v.sd, 
@@ -358,6 +357,9 @@ if(Eco=="Ter" & my_res=="1km"){
         names(gVelSA_j) <- paste0(names(gVelSA_j),".",velocity_variable)
         
         gVelSA[[v]] <- gVelSA_j
+        
+        plot(gVel$Vel,main="Velocity");dev.off()
+        
         
         #######
         cat("Save velocity maps\n")

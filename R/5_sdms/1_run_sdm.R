@@ -191,7 +191,6 @@ output_BG <- here::here(output_dir,"BG")
 if(!dir.exists(output_BG)){
     dir.create(output_BG)
 }
-
 bioclimatics_BG <- mask_bios_BG(bioclimatics_BG, output_BG, BA$shape_file)
 
 
@@ -216,6 +215,7 @@ cat("Treating collinearity\n")
 new_data <- PCA_env(sptogo = sptogo,
                     bioclimatics_BG = bioclimatics_BG,
                     bioclimatics_SA = bioclimatics_SA,
+                    which_bioclimatics_BG = 1,
                     output_dir = output_dir,
                     shift_info = shift_info,
                     PresAbs = PresAbs,
@@ -231,21 +231,19 @@ write.csv(new_data$cumulative_variance, here::here(output_dir,"PCA_cumulative_va
 # Update data
 # BG
 bioclimatics_BG <- new_data$bios_BG
-
 # SA
 bioclimatics_SA <- new_data$bios_SA
-
-
 # PresAbs
 PresAbsFull <- na.omit(new_data$bios_PresAbs)
 
+# clean
 rm(new_data)
 
 ########################
 cat("Fitting SDMs\n")
 # P.S.: The code bellow works using the version 4.2-3 of biomod2
 # installation :
-# devtools::install_github("biomodhub/biomod2", depEndencies = TRUE)
+# devtools::install_github("biomodhub/biomod2", dependencies = TRUE)
 
 # Documentation for functions can be found here: 
 # https://biomodhub.github.io/biomod2/index.html
@@ -371,49 +369,6 @@ write.csv(basicD,
           here::here(output_dir,paste0(sptogo,"_SDM_info.csv")),
           row.names = FALSE)
 
-########################
-### Project to the BG at t1
-
-projname <- paste(sptogo,
-                  names(bioclimatics_BG)[[1]],
-                  "BG")
-
-file_proj <- here::here(output_dir,gsub("_",".",sptogo),
-                        paste0("proj_",projname),
-                        paste0(gsub("_",".",sptogo),".",projname,".projection.out"))
-
-projname_ens <- paste(projname,"ens")
-
-file_ens <- gsub("BG","BG ens",file_proj)
-file_ens <- gsub(".projection.out",".ensemble.projection.out",file_ens)
-
-
-if(!file.exists(file_proj)){
-    m <- BIOMOD_Projection(
-        bm.mod = model_sp,
-        proj.name = projname,
-        new.env = bioclimatics_BG[[1]],
-        nb.cpu = N_cpus,
-        build.clamping.mask = FALSE,
-        keep.in.memory = FALSE)
-} else {
-    m <- get(load(file_proj))
-}
-
-if(!file.exists(file_ens)){
-    ens_m <- BIOMOD_EnsembleForecasting(
-        bm.em = ens_model_sp,
-        bm.proj = m,
-        proj.name = projname_ens,
-        nb.cpu = N_cpus,
-        keep.in.memory = FALSE)
-} else {
-    ens_m <- get(load(file_ens))
-}
-
-gc()
-
-
 ### Project to each SA and each time period
 
 for(j in 1:length(bioclimatics_SA)){
@@ -454,10 +409,88 @@ for(j in 1:length(bioclimatics_SA)){
                     proj.name = projname_ens,
                     nb.cpu = N_cpus,
                     keep.in.memory = FALSE)
+            } else{
+                test <- get(load(file_ens))
+                test <- test@models.projected == ens_model_sp@em.computed
+                
+                if(!test){
+                    ens_m <- BIOMOD_EnsembleForecasting(
+                        bm.em = ens_model_sp, 
+                        bm.proj = m,
+                        proj.name = projname_ens,
+                        nb.cpu = N_cpus,
+                        keep.in.memory = FALSE)
+                }
             }
-            
         }
     }
 }
+
+########################
+### Project to the BG at t1
+
+projname <- paste(sptogo,
+                  names(bioclimatics_BG)[[1]],
+                  "BG")
+
+file_proj <- here::here(output_dir,gsub("_",".",sptogo),
+                        paste0("proj_",projname),
+                        paste0(gsub("_",".",sptogo),".",projname,".projection.out"))
+
+projname_ens <- paste(projname,"ens")
+
+file_ens <- gsub("BG","BG ens",file_proj)
+file_ens <- gsub(".projection.out",".ensemble.projection.out",file_ens)
+
+
+if(!file.exists(file_proj)){
+    m <- BIOMOD_Projection(
+        bm.mod = model_sp,
+        proj.name = projname,
+        new.env = bioclimatics_BG[[1]],
+        nb.cpu = N_cpus,
+        build.clamping.mask = FALSE,
+        keep.in.memory = FALSE)
+} else {
+    m <- get(load(file_proj))
+}
+
+if(!file.exists(file_ens)){
+    ens_m <- BIOMOD_EnsembleForecasting(
+        bm.em = ens_model_sp,
+        bm.proj = m,
+        proj.name = projname_ens,
+        nb.cpu = N_cpus,
+        keep.in.memory = FALSE)
+} else{
+    test <- get(load(file_ens))
+    test <- test@models.projected == ens_model_sp@em.computed
+    
+    if(!test){
+        ens_m <- BIOMOD_EnsembleForecasting(
+            bm.em = ens_model_sp, 
+            bm.proj = m,
+            proj.name = projname_ens,
+            nb.cpu = N_cpus,
+            keep.in.memory = FALSE)
+    }
+}
+
+gc()
+
+### Clean files ###
+unlink(here::here(output_dir,"BG"), recursive = TRUE)
+unlink(here::here(output_dir,"BG_PC"), recursive = TRUE)
+unlink(here::here(output_dir,"SA_PC"), recursive = TRUE)
+
+to_del <- list.files(here(output_dir,gsub("_",".",sptogo)), full.names = TRUE)
+sel <- grep("models",to_del)
+to_del <- to_del[-sel]
+sel <- grep("SA ens",to_del)
+to_del <- to_del[-sel]
+sel <- grep("BG ens",to_del)
+to_del <- to_del[-sel]
+
+unlink(to_del, recursive = TRUE)
 
 ### END ###

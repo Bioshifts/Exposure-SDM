@@ -43,18 +43,20 @@ if(!dir.exists(jobdir)){
 Rscript_file = here::here(connectivity_script_dir,"2_get_connectivity_sps.R")
 
 # get all shifts
-shifts_ens_files <- list.files(shift_dir("Mar"), pattern = "_edges.csv", full.names = TRUE)
+shifts_ens_files <- list.files(shift_dir("Mar"), pattern = "_SA.csv")
 length(shifts_ens_files)
 
 shifts_ens <- lapply(shifts_ens_files, function(x) {
     info <- strsplit(x,"/")[[1]]
     info <- info[length(info)]
     info <- strsplit(info,"_")[[1]]
-    tmp <- data.frame(read.csv(x))[1,]
-    tmp$Species <- paste(info[1],info[2],sep = "_")
-    tmp$ID <- paste(info[3],info[4],sep = "_")
-    tmp$Start <- as.numeric(strsplit(info[5],"-")[[1]][1])
-    tmp$End <- as.numeric(strsplit(info[5],"-")[[1]][2])
+    Species <- paste(info[1],info[2],sep = "_")
+    ID <- paste(info[3],info[4],sep = "_")
+    Start <- as.numeric(strsplit(info[5],"-")[[1]][1])
+    End <- as.numeric(strsplit(info[5],"-")[[1]][2])
+    
+    tmp <- data.frame(Species = Species, ID = ID, Start = Start, End = End)
+    
     return(tmp)
 })
 
@@ -65,18 +67,20 @@ shifts_ens_mar$ECO = "Mar"
 length(unique(shifts_ens_mar$Species))
 nrow(shifts_ens_mar)
 
-shifts_ens_files <- list.files(shift_dir("Ter"), pattern = "_edges.csv", full.names = TRUE)
+shifts_ens_files <- list.files(shift_dir("Ter"), pattern = "_SA.csv")
 length(shifts_ens_files)
 
 shifts_ens <- lapply(shifts_ens_files, function(x){
     info <- strsplit(x,"/")[[1]]
     info <- info[length(info)]
     info <- strsplit(info,"_")[[1]]
-    tmp <- data.frame(read.csv(x))[1,]
-    tmp$Species <- paste(info[1],info[2],sep = "_")
-    tmp$ID <- paste(info[3],info[4],sep = "_")
-    tmp$Start <- as.numeric(strsplit(info[5],"-")[[1]][1])
-    tmp$End <- as.numeric(strsplit(info[5],"-")[[1]][2])
+    Species <- paste(info[1],info[2],sep = "_")
+    ID <- paste(info[3],info[4],sep = "_")
+    Start <- as.numeric(strsplit(info[5],"-")[[1]][1])
+    End <- as.numeric(strsplit(info[5],"-")[[1]][2])
+    
+    tmp <- data.frame(Species = Species, ID = ID, Start = Start, End = End)
+    
     return(tmp)
 })
 
@@ -95,11 +99,14 @@ length(unique(shifts_ens$Species[which(shifts_ens$ECO=="Mar")]))
 
 # head(shifts_ens)
 
+shifts_ens %>% filter(Species=="Neottia_nidus-avis")
+which(shifts_ens$Species=="Neottia_nidus-avis")
+
 # run only for terrestrials because we have no connectivity data for marine
 shifts_ens <- shifts_ens %>% filter(ECO=="Ter")
 nrow(shifts_ens)
 
-# select what is missing
+# get all possible
 all_possible <- sapply(1:nrow(shifts_ens), function(i){
     output_dir <- here(work_dir,paste0("Data/Connectivity_SA_edges/",shifts_ens$ECO[i]))
     time_period <- paste(shifts_ens$Start[i],shifts_ens$End[i],sep="-")
@@ -107,8 +114,9 @@ all_possible <- sapply(1:nrow(shifts_ens), function(i){
     filetosave <- here(output_dir, paste0(shift_ID,".csv"))
     return(filetosave)
 })
-I_have <- list.files(here(work_dir,paste0("Data/Connectivity_SA_edges")), full.names = TRUE, recursive = TRUE, pattern = ".csv")
+I_have <- list.files(here(work_dir,"Data/Connectivity_SA_edges"), full.names = TRUE, recursive = TRUE, pattern = ".csv")
 
+# get missing
 shifts_ens <- shifts_ens[which(!all_possible %in% I_have),]
 nrow(shifts_ens)
 

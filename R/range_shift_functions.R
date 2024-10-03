@@ -12,7 +12,7 @@ range_shift <- function(x,
     
     crs_x <- crs(x)
     
-    if(!is.null(SA)){
+    if(class(SA)=="SpatVector"){
         random_points <- terra::spatSample(SA, raster_size_tolerance)
     } 
     
@@ -20,7 +20,7 @@ range_shift <- function(x,
         x <- terra::as.data.frame(x, na.rm = TRUE, xy = TRUE)
     } else {
         if(terra::ncell(x) > raster_size_tolerance){
-            if(!is.null(SA)){
+            if(class(SA)=="SpatVector"){
                 x <- terra::extract(x, random_points, xy = TRUE, ID = FALSE)
             } else {
                 x <- terra::spatSample(x, raster_size_tolerance, xy = TRUE, na.rm = TRUE)
@@ -51,9 +51,6 @@ range_shift <- function(x,
     centroids <- do.call(rbind,centroids)
     centroids$year = as.numeric(centroids$year)
     centroids <- na.omit(centroids)
-    
-    enmSdmX:::.euclid(c(centroids[1,2],centroids[1,3]),
-                      c(centroids[13,2],centroids[12,3])) / duration
     
     centroids_xy <- terra::vect(centroids, geom=c("centroid_x","centroid_y"), crs = crs_x)
     # plot(x[[1]]);plot(centroids_xy,add=TRUE);dev.off()

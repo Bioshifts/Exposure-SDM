@@ -9,6 +9,7 @@ correct_colinvar_pca <- function(
         perc = 0.95, 
         env_cap = 10^4,
         output_dir = "",
+        which_bioclimatics_BG = "all",
         check_if_PCA_model_exists = TRUE,
         N_cpus = NULL){
     
@@ -79,6 +80,8 @@ correct_colinvar_pca <- function(
         if(!dir.exists(BG_PC_dir)){
             dir.create(BG_PC_dir)
         }
+        which_ones <- ifelse(which_bioclimatics_BG=="all",1:length(bios_BG),which_bioclimatics_BG)
+        bios_BG <- bios_BG[which_ones]
         tmp <- lapply(bios_BG, function(x){
             my_file <- strsplit(terra::sources(x),"/")[[1]]
             my_file <- my_file[length(my_file)]
@@ -151,6 +154,7 @@ PCA_env <- function(
         sptogo,
         bioclimatics_BG,
         bioclimatics_SA,
+        which_bioclimatics_BG = "all",
         env_cap = 10^4, # Maximum size of dataset used to calculate the PCA
         output_dir,
         shift_info,
@@ -234,6 +238,7 @@ PCA_env <- function(
             bios_SA = my_test_SA, 
             bios_PresAbs = my_test_PresAbs,
             env_cap = env_cap,
+            which_bioclimatics_BG = which_bioclimatics_BG,
             output_dir = output_dir,
             check_if_PCA_model_exists = check_if_PCA_model_exists)
         

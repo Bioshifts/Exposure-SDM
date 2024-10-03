@@ -27,15 +27,15 @@ sdms_mar <- list.dirs(sdm_dir("Mar"), recursive = FALSE, full.names = FALSE)
 
 ## 1.1) Load in validation datasets
 CV_mar <- pbapply::pblapply(sdms_mar, function(x){
-    file2go <- here::here(sdm_dir("Mar"),x,paste0(x,"_CV_ens_all.csv"))
-    if(file.exists(file2go)){
-        tmp <- read.csv(file2go)
-    } else{
-        file2go <- here::here(sdm_dir("Mar"),x,paste0(x,"_CV_ens_RUN.csv"))
+    # file2go <- here::here(sdm_dir("Mar"),x,paste0(x,"_CV_ens_all.csv"))
+    # if(file.exists(file2go)){
+    #     tmp <- read.csv(file2go)
+    # } else{
+        file2go <- here::here(sdm_dir("Mar"),x,paste0(x,"_CV.csv"))
         if(file.exists(file2go)){
             tmp <- read.csv(file2go)
-        } 
-    }
+        }
+    # }
 })
 rem <- sapply(CV_mar, class)
 rem <- which(rem=="try-error")
@@ -50,15 +50,15 @@ sdms_ter <- list.dirs(sdm_dir("Ter"), recursive = FALSE, full.names = FALSE)
 
 ## 1.1) Load in validation datasets
 CV_ter <- pbapply::pblapply(sdms_ter, function(x){
-    file2go <- here::here(sdm_dir("Ter"),x,paste0(x,"_CV_ens_all.csv"))
-    if(file.exists(file2go)){
-        tmp <- read.csv(file2go)
-    } else{
-        file2go <- here::here(sdm_dir("Ter"),x,paste0(x,"_CV_ens_RUN.csv"))
+    # file2go <- here::here(sdm_dir("Ter"),x,paste0(x,"_CV_ens_all.csv"))
+    # if(file.exists(file2go)){
+    #     tmp <- read.csv(file2go)
+    # } else{
+        file2go <- here::here(sdm_dir("Ter"),x,paste0(x,"_CV.csv"))
         if(file.exists(file2go)){
             tmp <- read.csv(file2go)
-        } 
-    }
+        }
+    # }
 })
 rem <- sapply(CV_ter, class)
 rem <- which(rem=="try-error")

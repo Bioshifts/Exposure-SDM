@@ -187,7 +187,7 @@ for(i in 1:nrow(all_sps)){
     
     ########################
     # Load occurrences for species i
-    cat("\nLoading occurrence records")
+    cat("\nLoading occurrence records\n")
     
     sp_occ <- qs::qread(here::here(occ_dir, paste0(sptogo, ".qs")))
     sp_occ$pa <- 1
@@ -210,9 +210,7 @@ for(i in 1:nrow(all_sps)){
         dir.create(output_dir,recursive = TRUE)
     }
     
-    cat("\nGetting ecoregions")
-    
-    BA_file <- here(output_dir,paste0(sptogo,".tif"))
+    cat("\nGetting ecoregions\n")
     
     BA <- get_ecoregions(realm = realm, 
                          sptogo = sptogo,
@@ -229,7 +227,7 @@ for(i in 1:nrow(all_sps)){
     
     ########################
     # Create random pseudo-absences
-    cat("\nCreating random pseudo-absences")
+    cat("\nCreating random pseudo-absences\n")
     
     env_range <- temporal_range_env_data(realm) 
     PA_occ <- create_temporal_pseudo_absences(BA, env_range, sp_occ)
