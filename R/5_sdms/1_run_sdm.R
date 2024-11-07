@@ -27,10 +27,10 @@ realm <- as.character(paste(command_args[2], collapse = " "))
 print(sptogo)
 print(realm)
 
-# sptogo="Centropristis_striata"
+# sptogo="Abra_alba"
 # realm <- "Mar"
 
-# sptogo="Calystegia_soldanella"
+# sptogo="Abies_alba"
 # realm <- "Ter"
 
 
@@ -223,6 +223,27 @@ new_data <- PCA_env(sptogo = sptogo,
                     N_cpus = N_cpus)
 names(new_data)
 
+pc_names_bg <- names(new_data$bios_BG[[1]])
+pc_names_sa <- names(new_data$bios_SA[[1]][[1]])
+pc_names_pa <- names(new_data$bios_PresAbs[,-1:-3])
+
+test1 <- identical(pc_names_bg,pc_names_sa)
+test2 <- identical(pc_names_sa,pc_names_pa)
+test3 <- identical(pc_names_bg,pc_names_pa)
+
+if(!all(test1, test2, test3)){
+    new_data <- PCA_env(sptogo = sptogo,
+                        bioclimatics_BG = bioclimatics_BG,
+                        bioclimatics_SA = bioclimatics_SA,
+                        which_bioclimatics_BG = 1,
+                        output_dir = output_dir,
+                        shift_info = shift_info,
+                        PresAbs = PresAbs,
+                        check_if_PCA_model_exists = FALSE,
+                        check_if_data_exists = FALSE,
+                        N_cpus = N_cpus)
+}
+
 # save PCA results
 saveRDS(new_data$PCA_model, here::here(output_dir,"PCA_model.RDS"))
 write.csv(new_data$coefficients, here::here(output_dir,"PCA_coefficients.csv"), row.names = FALSE)
@@ -236,6 +257,8 @@ bioclimatics_SA <- new_data$bios_SA
 # PresAbs
 PresAbsFull <- na.omit(new_data$bios_PresAbs)
 
+dim(new_data$bios_PresAbs)
+dim(PresAbs)
 # clean
 rm(new_data)
 
@@ -270,7 +293,7 @@ data_sp <- BIOMOD_FormatingData(
 # check if model exists
 try({
     delete_duplicated_models(realm = realm, species = sptogo)
-    }, silent = TRUE)
+}, silent = TRUE)
 
 models_sp <- list.files(here::here(output_dir, gsub("_",".",sptogo)),
                         pattern = "ensemble.models.out",full.names = TRUE)
@@ -350,8 +373,8 @@ myevals_ens
 
 if(em.by=="all"){
     write.csv(myevals_ens, 
-          here::here(output_dir,paste0(sptogo,"_CV_ens_all.csv")),
-          row.names = FALSE)
+              here::here(output_dir,paste0(sptogo,"_CV_ens_all.csv")),
+              row.names = FALSE)
 } else {
     write.csv(myevals_ens, 
               here::here(output_dir,paste0(sptogo,"_CV_ens_RUN.csv")),
@@ -410,6 +433,7 @@ for(j in 1:length(bioclimatics_SA)){
                     nb.cpu = N_cpus,
                     keep.in.memory = FALSE)
             } else{
+                
                 test <- get(load(file_ens))
                 test <- test@models.projected == ens_model_sp@em.computed
                 

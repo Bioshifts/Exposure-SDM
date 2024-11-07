@@ -10,6 +10,7 @@ res_raster <- "25km"
 
 library(tictoc)
 library(here)
+library(dplyr)
 
 ########################
 # set computer

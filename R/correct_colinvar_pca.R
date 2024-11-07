@@ -18,14 +18,16 @@ correct_colinvar_pca <- function(
         p <- try(readRDS(here::here(output_dir,"PCA_model.RDS")), silent = TRUE)
         coefficients <- try(read.csv(here::here(output_dir,"PCA_coefficients.csv")), silent = TRUE)
         cumulative_variance <- try(read.csv(here::here(output_dir,"PCA_cumulative_variance.csv")), silent = TRUE)
+        
+        error_test <- any(c(class(p)=="try-error",
+                            class(coefficients)=="try-error",
+                            class(cumulative_variance)=="try-error")) |
+            any(c(is.null(p),
+                  is.null(coefficients),
+                  is.null(cumulative_variance)))
+    } else {
+        error_test = FALSE
     }
-    
-    error_test <- any(c(class(p)=="try-error",
-                        class(coefficients)=="try-error",
-                        class(cumulative_variance)=="try-error")) |
-        any(c(is.null(p),
-              is.null(coefficients),
-              is.null(cumulative_variance)))
     
     if(error_test | !check_if_PCA_model_exists){
         
@@ -160,76 +162,91 @@ PCA_env <- function(
         shift_info,
         PresAbs,
         check_if_PCA_model_exists = TRUE,
+        check_if_data_exists = TRUE,
         N_cpus = NULL
 ){
     
-    #########################
-    # 1st check if has data
-    ## PCA model
-    if(file.exists(here::here(output_dir,"PCA_model.RDS"))){
-        my_test_PCAmodel <- NULL
-        cat("PCA model exists\n")
-    } else{
-        cat("Calculating PCA model\n")
+    if(check_if_data_exists){
+        
+        # 1st check if has data
+        ## PCA model
+        if(file.exists(here::here(output_dir,"PCA_model.RDS"))){
+            my_test_PCAmodel <- NULL
+            cat("PCA model exists\n")
+        } else{
+            cat("Calculating PCA model\n")
+            my_test_PCAmodel <- NA
+        }
+        ## all bios BG
+        all_bios_BG <- list.files(here::here(output_dir,"BG"))
+        ## all bios BG PC
+        all_bios_BG_PC <- list.files(here::here(output_dir,"BG_PC"))
+        ## test if all bios BG PC open
+        all_bios_BG_PC_work <- sapply(list.files(here::here(output_dir,"BG_PC"), full.names = TRUE),
+                                      function(x){
+                                          test <- try(terra::rast(x))
+                                          !class(test)=="try-error"
+                                      })
+        
+        ## all bios SA
+        all_bios_SA <- sapply(1:nrow(shift_info), function(i) {
+            paste0(shift_info$ID[i], " bios ", round(shift_info$Start[i],0):round(shift_info$End[i],0), ".tif")
+        })
+        all_bios_SA <- as.vector(unlist(all_bios_SA))
+        ## all bios SA PC 
+        all_bios_SA_PC <- list.files(here::here(output_dir,"SA_PC"))
+        ## test if all bios SA PC open
+        all_bios_SA_PC_work <- sapply(list.files(here::here(output_dir,"SA_PC"), full.names = TRUE),
+                                      function(x){
+                                          test <- try(terra::rast(x))
+                                          !class(test)=="try-error"
+                                      })
+        
+        ### My test
+        # PresAbs
+        if(file.exists(here::here(output_dir,paste0(sptogo,"_PresAbs_PC.qs")))){
+            my_test_PresAbs <- NULL
+            cat("PCs exist for PresAbs\n")
+        } else{
+            my_test_PresAbs <- PresAbs
+            cat("Calculating PCs for PresAbs\n")
+        }
+        
+        # BG
+        if(all(all_bios_BG %in% all_bios_BG_PC) & all(all_bios_BG_PC_work)){
+            my_test_BG <- NULL
+            cat("PCs exist for BG\n")
+        } else {
+            my_test_BG <- bioclimatics_BG
+            cat("Calculating PCs for BG\n")
+        }
+        
+        # SA
+        if(all(all_bios_SA %in% all_bios_SA_PC) & all(all_bios_SA_PC_work)){
+            my_test_SA <- NULL
+            cat("PCs exist for SA\n")
+        } else {
+            my_test_SA <- bioclimatics_SA
+            cat("Calculating PCs for SA\n")
+        }
+        
+        
+        test <- any(!c(is.null(my_test_PCAmodel),is.null(my_test_BG),is.null(my_test_SA),is.null(my_test_PresAbs)))
+        
+    } else {
+        
         my_test_PCAmodel <- NA
-    }
-    ## all bios BG
-    all_bios_BG <- list.files(here::here(output_dir,"BG"))
-    ## all bios BG PC
-    all_bios_BG_PC <- list.files(here::here(output_dir,"BG_PC"))
-    ## test if all bios BG PC open
-    all_bios_BG_PC_work <- sapply(list.files(here::here(output_dir,"BG_PC"), full.names = TRUE),
-                                  function(x){
-                                      test <- try(terra::rast(x))
-                                      !class(test)=="try-error"
-                                  })
-    
-    ## all bios SA
-    all_bios_SA <- sapply(1:nrow(shift_info), function(i) {
-        paste0(shift_info$ID[i], " bios ", round(shift_info$Start[i],0):round(shift_info$End[i],0), ".tif")
-    })
-    all_bios_SA <- as.vector(unlist(all_bios_SA))
-    ## all bios SA PC 
-    all_bios_SA_PC <- list.files(here::here(output_dir,"SA_PC"))
-    ## test if all bios SA PC open
-    all_bios_SA_PC_work <- sapply(list.files(here::here(output_dir,"SA_PC"), full.names = TRUE),
-                                  function(x){
-                                      test <- try(terra::rast(x))
-                                      !class(test)=="try-error"
-                                  })
-    
-    ### My test
-    # PresAbs
-    if(file.exists(here::here(output_dir,paste0(sptogo,"_PresAbs_PC.qs")))){
-        my_test_PresAbs <- NULL
-        cat("PCs exist for PresAbs\n")
-    } else{
-        my_test_PresAbs <- PresAbs
-        cat("Calculating PCs for PresAbs\n")
-    }
-    
-    # BG
-    if(all(all_bios_BG %in% all_bios_BG_PC) & all(all_bios_BG_PC_work)){
-        my_test_BG <- NULL
-        cat("PCs exist for BG\n")
-    } else {
         my_test_BG <- bioclimatics_BG
-        cat("Calculating PCs for BG\n")
-    }
-    
-    # SA
-    if(all(all_bios_SA %in% all_bios_SA_PC) & all(all_bios_SA_PC_work)){
-        my_test_SA <- NULL
-        cat("PCs exist for SA\n")
-    } else {
         my_test_SA <- bioclimatics_SA
-        cat("Calculating PCs for SA\n")
+        my_test_PresAbs <- PresAbs
+        
+        test <- any(!c(is.null(my_test_PCAmodel),is.null(my_test_BG),is.null(my_test_SA),is.null(my_test_PresAbs))) 
+        
     }
     
     #########################
     # Get PCs
-    
-    if(any(!c(is.null(my_test_PCAmodel),is.null(my_test_BG),is.null(my_test_SA),is.null(my_test_PresAbs)))){
+    if(test){
         
         cat("Calculating PCs\n")
         new_data <- correct_colinvar_pca(
