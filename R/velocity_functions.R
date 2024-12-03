@@ -145,6 +145,7 @@ spatial_grad_big <- function(rx,
                              n_tiles_nrow = round(nrow(rx)/100,0),
                              tmp_dir = here::here(),
                              filename_tiles = "tile_.tif",
+                             filename_final = here::here("big_spatialgrad.tif"),
                              ncores = ncores) {
   
   rx_tiles <- rx
@@ -183,10 +184,10 @@ spatial_grad_big <- function(rx,
                        overwrite = TRUE)
   
   terra::writeRaster(spgrad,
-                     spgrad_file, 
+                     filename_final, 
                      overwrite = TRUE)
   
-  spgrad <- terra::rast(spgrad_file)
+  spgrad <- terra::rast(filename_final)
   
   # delete temporary files
   unlink(rx_tiles)
