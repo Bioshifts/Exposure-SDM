@@ -22,11 +22,11 @@ polygontogo <- as.character(paste(command_args[1], collapse = " "))
 Eco <- as.character(paste(command_args[2], collapse = " "))
 res_raster <- as.character(paste(command_args[3], collapse = " "))
 
-# Eco <- "Ter"
-# res_raster <- "1km"
+# Eco <- "Mar"
+# res_raster <- "25km"
 # polygontogo <- "B564_P2" # Mar # South
-# polygontogo <- "A43_P1" # Mar # North
-# polygontogo <- "A238_P1" # Ter # North
+# polygontogo <- "A146_P1" 
+# polygontogo <- "A138_P1" # Ter # North
 # polygontogo <- "A136_P3" # Ter # Big # North
 # polygontogo <- "A31_P1" # Ter # North # Elevation
 # polygontogo <- "A67_P1" # Ter # North
@@ -89,6 +89,8 @@ if(Eco == "Ter"){
 climate_layers <- list.files(here(bios_SA_dir(Eco),polygontogo),full.names = TRUE)
 climate_layers <- terra::rast(climate_layers)
 # plot(climate_layers[[1]]);dev.off()
+
+sources(climate_layers)
 
 ########################
 ## Calculate velocity at the SA
@@ -600,3 +602,8 @@ if((Eco=="Ter" & !my_res=="1km")){
     write.csv(gVelSA, here::here(velocity_SA_dir, paste0(paste(polygontogo,my_res,sep = "_"),".csv")), row.names = FALSE)
     
 }
+
+
+# test <- rast(here::here(velocity_SA_dir,"A138_P1_map_gVelEle.tif"))
+# 
+# plot(test);dev.off()

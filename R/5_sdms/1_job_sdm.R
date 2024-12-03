@@ -68,9 +68,6 @@ bioshifts <- filter(bioshifts, gsub("_"," ",sp_name_std) %in% all_sps)
 terrestrials <- bioshifts$sp_name_std[which(bioshifts$Eco == "Ter")]
 marines <- bioshifts$sp_name_std[which(bioshifts$Eco == "Mar")]
 
-bioshifts_ter <- bioshifts[bioshifts$sp_name_std %in% terrestrials,]
-bioshifts_mar <- bioshifts[bioshifts$sp_name_std %in% marines,]
-
 ter_sps <- all_sps[which(all_sps %in% gsub("_"," ",terrestrials))]
 ter_sps <- data.frame(sps = ter_sps, realm = "Ter")
 nrow(ter_sps) 
@@ -127,6 +124,7 @@ nrow(my_sdms)
 # 9627 (10/31/24)
 # 9639 (11/04/24)
 # 9641 (11/06/24)
+# 9641 (11/11/24)
 
 # these are the ones with projections for all years
 I_have_sdms <- my_sdms[which(my_sdms$I_have_sdms),]
@@ -150,6 +148,7 @@ nrow(I_have_sdms)
 # 9430 (11/03/24)
 # 9438 (11/04/24)
 # 9445 (11/06/24)
+# 9446 (11/11/24)
 
 # N species I have sdms with projections for all years
 length(unique(I_have_sdms$sps)) 
@@ -172,6 +171,7 @@ length(unique(I_have_sdms$sps))
 # 3930 (11/03/24)
 # 3930 (11/04/24)
 # 3934 (11/06/24)
+# 3934 (11/11/24)
 
 
 # # Reruning to make sure:
@@ -201,6 +201,7 @@ length(unique(all_sps$sps))
 # 81 (11/03/24)
 # 80 (11/04/24)
 # 77 (11/04/24)
+# 76 (11/11/24)
 
 all_sps <- unique(all_sps[,1:2])
 
@@ -275,7 +276,7 @@ for(i in 1:nrow(all_sps)){
             # cores = 10 
             # reduce N cores due and increase memory to avoid out-of-memory issue
             cores = 5 
-            memory = "200G"
+            memory = "500G"
             time = "1-24:00:00"
             partition = select_partition(request_mem = as.numeric(gsub("[^0-9.-]", "", memory)), 
                                          request_cpu = cores, 

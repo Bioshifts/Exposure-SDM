@@ -67,7 +67,6 @@ v3_polygons <- unique(bioshifts_IDs$ID)
 
 ########################
 # Check what is missing
-my_res = "1km"
 
 # did we get data for all polygons?
 got_mar <- list.files(bios_SA_dir("Mar"))
@@ -112,10 +111,15 @@ time = "20:00:00"
 memory = "32G"
 partition = "bigmem"
 
+my_res = "1km"
+
 for(i in 1:nrow(v3_polygons)){
     
     SAtogo <- v3_polygons$ID[i]
     Eco <- v3_polygons$Eco[i]
+    
+    # SAtogo <- "A108_P1"
+    # Eco <- "Ter"
     
     args = c(SAtogo, Eco, my_res)
     

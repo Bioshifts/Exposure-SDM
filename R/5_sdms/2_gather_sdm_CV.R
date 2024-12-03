@@ -204,8 +204,6 @@ nrow(Boyce_ter)
 nrow(na.omit(Boyce_ter))
 length(sdms_ter)
 
-
-
 ## 2) group all
 sdms_Boyce <- rbind(Boyce_mar, Boyce_ter)
 

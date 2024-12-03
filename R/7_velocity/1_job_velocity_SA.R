@@ -5,9 +5,6 @@
 rm(list=ls())
 gc()
 
-# res_raster <- "1km"
-res_raster <- "25km"
-
 library(tictoc)
 library(here)
 library(dplyr)
@@ -123,6 +120,9 @@ N_jobs_at_a_time = 50
 N_Nodes = 1
 tasks_per_core = 1
 
+res_raster <- "1km"
+# res_raster <- "25km"
+
 # Check if file exists
 check_if_file_exists <- FALSE
 
@@ -163,7 +163,7 @@ for(i in 1:nrow(Bioshifts_DB)){
             }
             if(ECO == "Ter"){ # for the Terrestrial use this (bigger jobs) 
                 cores = 5 
-                memory = "500G"
+                memory = "100G"
                 time = "1-24:00:00"
                 partition = select_partition(request_mem = as.numeric(gsub("[^0-9.-]", "", memory)), 
                                              request_cpu = cores, 
@@ -200,6 +200,7 @@ for(i in 1:nrow(Bioshifts_DB)){
 }
 
 
+#################################
 # check if I got velocities for all SA
 # list of SA we got data
 SA_got <- list.files(velocity_SA_dir,pattern = "csv")
@@ -222,3 +223,14 @@ error_f[1]
 
 # A100_P1, A171_P1, A191_P1 = too small area to calculate velocities (not enough grid-cells)
 # A220_P1 = period outside the range of the environmental data
+
+#################################
+# check of velocity lat is greater than undirectional velocity
+
+# run file 1_1_check_for_errors_velocity_SA.R
+missing_SA <- read.csv("errors_SAs.csv")
+
+v3_polygons <- missing_SA$SA
+Bioshifts_DB <- Bioshifts_DB[Bioshifts_DB$ID %in% v3_polygons,]
+
+head(Bioshifts_DB)

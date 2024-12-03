@@ -59,138 +59,150 @@ tasks_per_core = 1
 
 
 ########################
-# loop realms
+# sp list I have sdms
+all_sps_ter <- list.dirs(here::here(sdm_dir("Ter")), recursive = FALSE, full.names = FALSE)
+length(all_sps_ter)
 
-realms = c("Mar","Ter")
+test <- sapply(all_sps_ter, function(x){
+    file.exists(here::here(sdm_dir("Ter"),x,paste(x,"shift_info.csv")))
+})
+all_sps_ter <- all_sps_ter[test]
 
-for(j in 1:length(realms)){
+all_sps_mar <- list.dirs(here::here(sdm_dir("Mar")), recursive = FALSE, full.names = FALSE)
+length(all_sps_mar)
+
+test <- sapply(all_sps_mar, function(x){
+    file.exists(here::here(sdm_dir("Mar"),x,paste(x,"shift_info.csv")))
+})
+all_sps_mar <- all_sps_mar[test]
+
+all_sps <- c(all_sps_mar,all_sps_ter)
+
+#####################
+# Separate terrestrials from marines
+bioshifts <- read.csv(here(Bioshifts_dir,Bioshifts_DB_v3), header = T)
+bioshifts <- bioshifts_sdms_selection(bioshifts)
+bioshifts <- filter(bioshifts, sp_name_std %in% all_sps)
+# head(bioshifts)
+
+terrestrials <- bioshifts$sp_name_std[which(bioshifts$Eco == "Ter")]
+marines <- bioshifts$sp_name_std[which(bioshifts$Eco == "Mar")]
+
+ter_sps <- all_sps[which(all_sps %in% terrestrials)]
+ter_sps <- data.frame(sps = ter_sps, realm = "Ter")
+nrow(ter_sps) 
+
+mar_sps <- all_sps[which(all_sps %in% marines)]
+mar_sps <- data.frame(sps = mar_sps, realm = "Mar")
+nrow(mar_sps) 
+
+# pipe line of species: first marines (because they run faster due to coarser resolution data)
+all_sps <- rbind(mar_sps, ter_sps)
+nrow(all_sps) 
+
+# 1nd) get missing species
+# Species with sdms projections for all possible shifts
+my_sdms <- check_if_has_sdms_for_all_shifts(all_sps,bioshifts)
+# head(my_sdms)
+
+# these are all possible sdms (species + ID)
+nrow(my_sdms)
+
+# these are the ones with projections for all years
+I_have_sdms <- my_sdms[which(my_sdms$I_have_sdms),]
+nrow(I_have_sdms)  
+
+head(I_have_sdms)  
+
+########################
+# sp list I have shift estimated
+I_have_shift_ter <- list.files(shift_dir("Ter"), pattern = "SA_edges.csv")
+I_have_shift_ter <- lapply(I_have_shift_ter, function(x){
+    tmp <- strsplit(x,"_")[[1]]
+    data.frame(sps=paste(tmp[1],tmp[2],sep="_"),realm=tmp[6],ID=paste(tmp[3],tmp[4],sep="_"))
+})
+I_have_shift_ter <- do.call(rbind,I_have_shift_ter)
+I_have_shift_ter <- unique(I_have_shift_ter)
+
+I_have_shift_mar <- list.files(shift_dir("Mar"), pattern = "SA_edges.csv")
+I_have_shift_mar <- lapply(I_have_shift_mar, function(x){
+    tmp <- strsplit(x,"_")[[1]]
+    data.frame(sps=paste(tmp[1],tmp[2],sep="_"),realm=tmp[6],ID=paste(tmp[3],tmp[4],sep="_"))
+})
+I_have_shift_mar <- do.call(rbind,I_have_shift_mar)
+I_have_shift_mar <- unique(I_have_shift_mar)
+
+I_have_shift <- rbind(I_have_shift_mar,I_have_shift_ter)
+
+########################
+# missing species
+# select from the list of species I have sdms the ones which we still did not have shift calculated
+missing <- I_have_sdms[which(!paste(I_have_sdms$sps,I_have_sdms$ID) %in% paste(I_have_shift$sps,I_have_shift$ID)),]
+nrow(missing)
+# 11/21/24 - 1413
+
+missing <- missing %>% distinct(sps, ID, .keep_all = TRUE)
+
+head(missing)
+
+########################
+# submit jobs
+
+if(nrow(missing)>0){
     
-    realm <- realms[j]
-    
-    # create dirs
-    if(!dir.exists(shift_dir(realm))){
-        dir.create(shift_dir(realm),recursive = TRUE)
-    }
-    
-    ########################
-    # sp list I have sdms
-    all_sps <- list.dirs(here::here(sdm_dir(realm)), recursive = FALSE, full.names = FALSE)
-    length(all_sps)
-    
-    test <- sapply(all_sps, function(x){
-        file.exists(here::here(sdm_dir(realm),x,paste(x,"shift_info.csv")))
-    })
-    all_sps <- all_sps[test]
-    length(all_sps)
-    
-    # Species with sdms projections for all years
-    I_have_sdms <- data.frame()
-    for(i in 1:length(all_sps)) { cat(i, "from", length(all_sps),"\r")
+    for(i in 1:nrow(missing)){ 
         
-        sp_i <- all_sps[i]
-        sp_i_realm <- realm
+        sptogo <- missing$sps[i]
+        realmtogo <- missing$realm[i]
+        IDtogo <- missing$ID[i]
         
-        # get studies for species i
-        shift_info <- read.csv(here::here(sdm_dir(realm),sp_i,paste(sp_i,"shift_info.csv")))
+        cat("Running", i, "from", nrow(missing), "species\n")
         
-        ID_i <- shift_info$ID
-        # for each ID_i, look if has projections for all years
-        tmp <- data.frame(sps=sp_i,
-                          realm=sp_i_realm,
-                          ID=ID_i)
+        args <- paste(sptogo,realmtogo,IDtogo)
         
-        tmp$I_have_sdms <- sapply(ID_i, function(x){
-            shift_info_i <- shift_info[which(shift_info$ID==x),]
-            years_ID_i <- round(shift_info_i$Start,0):round(shift_info_i$End,0)
-            # check
-            # Focus on SA for now
-            sdms_sp_i <- list.files(paste(sdm_dir(sp_i_realm),sp_i,gsub("_",".",sp_i),sep = "/"),pattern = "SA")
-            # get ensemble models
-            sdms_sp_i_ens <- sdms_sp_i[grep(" ens",sdms_sp_i)]
-            # get ID_i models
-            sdms_sp_i_ens <- sdms_sp_i_ens[grep(x,sdms_sp_i_ens)]
-            # check if all years exist
-            sdms_sp_i_ens <- all(sapply(years_ID_i, function(x){any(grepl(x,sdms_sp_i_ens))}))
-            sdms_sp_i_ens
-        })
-        I_have_sdms <- rbind(I_have_sdms,tmp)
-    }
-    # these are all possible sdms (species + ID)
-    nrow(I_have_sdms) 
-    
-    # these are the ones with projections for all years
-    I_have_sdms <- I_have_sdms[which(I_have_sdms$I_have_sdms),]
-    nrow(I_have_sdms) 
-    
-    # sps I have shifts calculated
-    I_have_shift <- list.files(shift_dir(realm))
-    I_have_shift <- lapply(I_have_shift, function(x){
-        tmp <- strsplit(x,"_")[[1]]
-        data.frame(sps=paste(tmp[1],tmp[2],sep="_"),realm=tmp[7],ID=paste(tmp[3],tmp[4],sep="_"))
-    })
-    I_have_shift <- do.call(rbind,I_have_shift)
-    
-    nrow(I_have_shift)
-    
-    # select from the list of species I have sdms the ones which we still did not have shift calculated
-    missing <- I_have_sdms[which(!paste(I_have_sdms$sps,I_have_sdms$ID) %in% paste(I_have_shift$sps,I_have_shift$ID)),]
-    nrow(missing)
-    
-    missing <- missing %>% distinct(sps, ID, .keep_all = TRUE)
-    
-    if(nrow(missing)>0){
-        ########################
-        # submit jobs
+        shifttogo = gsub(" ","_",args)
         
-        cat("Running for", nrow(missing), realm, "species\n")
+        # check if job for this species is running
+        test <- system("squeue --format='%.50j' --me", intern = TRUE)
+        test <- gsub(" ","",test)
         
-        for(i in 1:nrow(missing)){ 
+        if(!shifttogo %in% test){
             
-            sptogo <- missing$sps[i]
-            realmtogo <- missing$realm[i]
-            IDtogo <- missing$ID[i]
-            
-            args <- paste(sptogo,realmtogo,IDtogo)
-            
-            shifttogo = gsub(" ","_",args)
-            
-            # check if job for this species is running
-            test <- system("squeue --format='%.50j' --me", intern = TRUE)
-            test <- gsub(" ","",test)
-            
-            if(!shifttogo %in% test){
-                
-                if(realm == "Mar"){ # for the Marine use this
-                    memory = "16G"
-                }
-                if(realm == "Ter"){ # for the Terrestrial use this (bigger jobs) 
-                    memory = "100G"
-                }
-                
-                slurm_job_singularity(jobdir = jobdir,
-                                      logdir = logdir, 
-                                      sptogo = shifttogo, 
-                                      args = args,
-                                      N_Nodes = N_Nodes, 
-                                      tasks_per_core = tasks_per_core, 
-                                      cores = cores, 
-                                      time = time, 
-                                      memory = memory, 
-                                      partition = partition, 
-                                      singularity_image = singularity_image, 
-                                      Rscript_file = Rscript_file)
+            if(realmtogo == "Mar"){ # for the Marine use this
+                memory = "16G"
+                partition = "normal"
+            }
+            if(realmtogo == "Ter"){ # for the Terrestrial use this (bigger jobs) 
+                memory = "500G"
+                partition = select_partition(request_mem = as.numeric(gsub("[^0-9.-]", "", memory)), 
+                                             request_cpu = cores, 
+                                             limits=limits)
             }
             
-            # check how many jobs in progress
+            slurm_job_singularity(jobdir = jobdir,
+                                  logdir = logdir, 
+                                  sptogo = shifttogo, 
+                                  args = args,
+                                  N_Nodes = N_Nodes, 
+                                  tasks_per_core = tasks_per_core, 
+                                  cores = cores, 
+                                  time = time, 
+                                  memory = memory, 
+                                  partition = partition, 
+                                  singularity_image = singularity_image, 
+                                  Rscript_file = Rscript_file)
+        }
+        
+        # check how many jobs in progress
+        tmp <- system("squeue -u $USER",intern = T)
+        
+        while(length(tmp)>N_jobs_at_a_time){
+            
+            Sys.sleep(10)
             tmp <- system("squeue -u $USER",intern = T)
             
-            while(length(tmp)>N_jobs_at_a_time){
-                
-                Sys.sleep(10)
-                tmp <- system("squeue -u $USER",intern = T)
-                
-            }
         }
     }
 }
+
 
