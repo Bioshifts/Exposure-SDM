@@ -35,6 +35,7 @@ res_raster <- as.character(paste(command_args[3], collapse = " "))
 # polygontogo <- "A25_P1" # Ter # Asturias region, Cantabrian Range
 # polygontogo <-"A116_P1" # Ter # Worldwide, Morth hemisphere
 # polygontogo <- "A79_P1" # Ter # Rhone-Saone Valley; Southeastern France
+# polygontogo <- "A1_P2"
 
 cat("\rrunning polygon", polygontogo)
 
@@ -56,7 +57,13 @@ source("R/settings.R")
 source("R/my_functions.R")
 source("R/velocity_functions.R")
 
-my_res = res_raster
+if(Eco == "Ter"){
+    my_res = res_raster
+} else {
+    my_res = "25km"
+}
+
+
 # create dir to store results
 if(!dir.exists(velocity_SA_dir)){
     dir.create(velocity_SA_dir)
@@ -127,7 +134,7 @@ if(Eco == "Ter"){
     terra::window(elevation) <- ext(SA_i)
     elevation <- terra::mask(elevation, SA_i)
     # force raster to pair
-    elevation <- terra::project(elevation, climate_layers_i, threads=TRUE, use_gdal=TRUE, gdal=TRUE)
+    elevation <- terra::project(elevation, climate_layers, threads=TRUE, use_gdal=TRUE, gdal=TRUE)
 }
 
 ########################
@@ -279,7 +286,8 @@ for(v in 1:length(velocity_variables)){ # for each climate variable
     v.lat.sd <- as.numeric(terra::global(gVelLat$Vel, sd, na.rm=TRUE)[,1])
     
     gVelSA_j <- data.frame(baseline, trend.mean, trend.sd, 
-                           v.mean, v.median, v.sd)
+                           v.mean, v.median, v.sd,
+                           v.lat.mean, v.lat.median, v.lat.sd)
     names(gVelSA_j) <- paste0(names(gVelSA_j),".",velocity_variable)
     
     gVelSA[[v]] <- gVelSA_j

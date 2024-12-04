@@ -26,6 +26,9 @@ if(computer == "matrics"){
 source("R/settings.R")
 source("R/my_functions.R")
 
+# res_raster <- "1km"
+res_raster <- "25km"
+
 # create dir for log files
 logdir <- here::here(velocity_script_dir,"slurm-log")
 if(!dir.exists(logdir)){
@@ -59,72 +62,71 @@ nrow(Bioshifts_DB)
 
 all(Bioshifts_DB$ID %in% v3_polygons)
 
-##############################
-# Rerun just for marines
-# Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$Eco=="Mar"),]
-##############################
-# Rerun just for terrestrials
-# Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$Eco=="Ter"),]
-##############################
 
 any(!Bioshifts_DB$ID %in% v3_polygons)
 
 # Filter Polygons in Study areas v3
 v3_polygons <- v3_polygons[v3_polygons %in% Bioshifts_DB$ID]
 
-I_have <- sapply(1:nrow(Bioshifts_DB), function(x){
-    ID <- Bioshifts_DB$ID[x]
-    if(res_raster=="25km"){
-        ID <- paste(ID,res_raster,sep="_")
-    }
-    test1 <- file.exists(here::here(velocity_SA_dir, paste0(ID,".csv")))
-    if(test1){
-        Eco <- Bioshifts_DB$Eco[x]
-        if(Eco=="Ter"){
-            test2 <- list.files(here::here(velocity_SA_dir),pattern = ID)
-            var <- "mat"
-            if(res_raster=="25km"){
-                var <- paste(var,res_raster,sep="_")
-            }
-            test2 <- any(grepl(var,test2))
-            test3 <- any(grepl("sst",list.files(here::here(velocity_SA_dir),pattern = ID)))
-            if(test3){
-                tmp <- list.files(here::here(velocity_SA_dir),pattern = ID, full.names = TRUE)
-                unlink(tmp)
-            }
-        } else {
-            test2 <- list.files(here::here(velocity_SA_dir),pattern = ID)
-            test2 <- any(grepl("sst",test2))
-            test3 <- any(grepl("mat",list.files(here::here(velocity_SA_dir),pattern = ID)))
-            if(test3){
-                tmp <- list.files(here::here(velocity_SA_dir),pattern = ID, full.names = TRUE)
-                unlink(tmp)
-            }
-        }
-    } else {
-        test2 <- FALSE
-    }
-    length(which(c(test1,test2)))==2
-})
-length(which(I_have))
-
-# missing 
-missing <- Bioshifts_DB[which(!I_have),]
-nrow(missing)
-head(missing)
+# # Check what I have
+# I_have <- sapply(1:nrow(Bioshifts_DB), function(x){
+#     ID <- Bioshifts_DB$ID[x]
+#     if(res_raster=="25km"){
+#         ID <- paste(ID,res_raster,sep="_")
+#     }
+#     test1 <- file.exists(here::here(velocity_SA_dir, paste0(ID,".csv")))
+#     if(test1){
+#         Eco <- Bioshifts_DB$Eco[x]
+#         if(Eco=="Ter"){
+#             test2 <- list.files(here::here(velocity_SA_dir),pattern = ID)
+#             var <- "mat"
+#             if(res_raster=="25km"){
+#                 var <- paste(var,res_raster,sep="_")
+#             }
+#             test2 <- any(grepl(var,test2))
+#             test3 <- any(grepl("sst",list.files(here::here(velocity_SA_dir),pattern = ID)))
+#             if(test3){
+#                 tmp <- list.files(here::here(velocity_SA_dir),pattern = ID, full.names = TRUE)
+#                 unlink(tmp)
+#             }
+#         } else {
+#             test2 <- list.files(here::here(velocity_SA_dir),pattern = ID)
+#             test2 <- any(grepl("sst",test2))
+#             test3 <- any(grepl("mat",list.files(here::here(velocity_SA_dir),pattern = ID)))
+#             if(test3){
+#                 tmp <- list.files(here::here(velocity_SA_dir),pattern = ID, full.names = TRUE)
+#                 unlink(tmp)
+#             }
+#         }
+#     } else {
+#         test2 <- FALSE
+#     }
+#     length(which(c(test1,test2)))==2
+# })
+# length(which(I_have))
+# 
+# # missing 
+# missing <- Bioshifts_DB[which(!I_have),]
+# nrow(missing)
+# head(missing)
 
 ########################
 # submit jobs
+
+##############################
+# Rerun just for marines
+# Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$Eco=="Mar"),]
+##############################
+# Rerun just for terrestrials
+Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$Eco=="Ter"),]
+##############################
 
 N_jobs_at_a_time = 50
 N_Nodes = 1
 tasks_per_core = 1
 
-res_raster <- "1km"
-# res_raster <- "25km"
-
 # Check if file exists
-check_if_file_exists <- FALSE
+check_if_file_exists <- TRUE
 
 for(i in 1:nrow(Bioshifts_DB)){
     
@@ -137,9 +139,9 @@ for(i in 1:nrow(Bioshifts_DB)){
     # Check if file exists
     
     if(res_raster=="1km"){
-        file.test <- here::here(velocity_SA_dir, paste0(SAtogo,".csv"))
+        file.test <- here::here(velocity_SA_dir, paste0(SAtogo,"_1km",".csv"))
     } else {
-        file.test <- here::here(velocity_SA_dir, paste0(paste(SAtogo,res_raster,sep = "_"),".csv"))
+        file.test <- here::here(velocity_SA_dir, paste0(paste(SAtogo,"_25km",sep = "_"),".csv"))
     }
     
     if(check_if_file_exists){
