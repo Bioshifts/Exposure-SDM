@@ -43,8 +43,8 @@ Rscript_file = here::here(velocity_script_dir,"2_get_velocity_global.R")
 
 # jobs dataframe
 jobs_data <- data.frame(ECO = c("Ter","Ter","Ter","Ter","Mar"),
-                        rescale = c(NA,NA,"25km","25km",NA),
-                        velocity_variables = c("mat","map","mat","map","mean"))
+                        rescale = c("1km","1km","25km","25km","25km"),
+                        velocity_variables = c("mat","map","mat","map","sst"))
 jobs_data
 
 ########################
@@ -60,11 +60,11 @@ for(i in 1:nrow(jobs_data)){
     # ECO
     ECO <- jobs_data$ECO[i]
     
-    # rescale
-    rescale <- jobs_data$rescale[i]
+    # resolution
+    resolution <- jobs_data$rescale[i]
     
     # args
-    args = c(ECO, velocity_variable, rescale)
+    args = c(ECO, velocity_variable, resolution)
     
     job_name <- paste("gVel",paste(args,collapse ="_"), sep = "_")
     

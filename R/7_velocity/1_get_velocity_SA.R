@@ -35,7 +35,8 @@ res_raster <- as.character(paste(command_args[3], collapse = " "))
 # polygontogo <- "A25_P1" # Ter # Asturias region, Cantabrian Range
 # polygontogo <-"A116_P1" # Ter # Worldwide, Morth hemisphere
 # polygontogo <- "A79_P1" # Ter # Rhone-Saone Valley; Southeastern France
-# polygontogo <- "A1_P2"
+# polygontogo <- "A134_P1" # Ter # United Kingdom
+# polygontogo <- "A1_P1" # Ter # French Alps (giffre Valley)
 
 cat("\rrunning polygon", polygontogo)
 
@@ -147,6 +148,8 @@ if(Eco=="Ter" & my_res=="1km"){
     big_raster <- FALSE
 }
 
+# writeRaster(climate_layers, "A138_P1_climate.tif")
+# writeRaster(elevation, "A138_P1_elevation.tif")
 
 ########################
 ## Calculate velocity at the SA
@@ -298,7 +301,7 @@ for(v in 1:length(velocity_variables)){ # for each climate variable
     
     # velocity
     varname <- paste(polygontogo,velocity_variable,"gVel",my_res,sep="_")
-    terra::writeRaster(gVel$Vel, 
+    terra::writeRaster(gVel, 
                        here::here(velocity_SA_dir, paste0(varname,".tif")),
                        overwrite=TRUE)
     
@@ -349,12 +352,12 @@ if(Eco == "Ter" & res_raster == "1km"){
             
             spgrad_ele = spatial_grad_big(rx = elevation,
                                           tmp_dir = here::here(tmp_dir),
-                                          filename_tiles = paste(Eco,velocity_variable,polygontogo,"tile_.tif",sep="_"),
+                                          filename_tiles = paste(Eco,velocity_variable,polygontogo,"ele_tile_.tif",sep="_"),
                                           filename_final = spgrad_ele_file,
                                           ncores = ncores)
             
         } else {
-            spgrad_ele = spatial_grad(avg_climate_layers)
+            spgrad_ele = spatial_grad(elevation)
             
             terra::writeRaster(spgrad_ele, spgrad_ele_file, overwrite = TRUE)
             
@@ -404,7 +407,7 @@ if(Eco == "Ter" & res_raster == "1km"){
         
         # velocity elevation
         varname <- paste(polygontogo,velocity_variable,"gVelEle",my_res,sep="_")
-        terra::writeRaster(gVelEle$Vel,
+        terra::writeRaster(gVelEle,
                            here::here(velocity_SA_dir, paste0(varname,".tif")),
                            overwrite=TRUE)
         

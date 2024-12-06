@@ -26,8 +26,8 @@ if(computer == "matrics"){
 source("R/settings.R")
 source("R/my_functions.R")
 
-# res_raster <- "1km"
-res_raster <- "25km"
+res_raster <- "1km"
+# res_raster <- "25km"
 
 # create dir for log files
 logdir <- here::here(velocity_script_dir,"slurm-log")
@@ -68,58 +68,17 @@ any(!Bioshifts_DB$ID %in% v3_polygons)
 # Filter Polygons in Study areas v3
 v3_polygons <- v3_polygons[v3_polygons %in% Bioshifts_DB$ID]
 
-# # Check what I have
-# I_have <- sapply(1:nrow(Bioshifts_DB), function(x){
-#     ID <- Bioshifts_DB$ID[x]
-#     if(res_raster=="25km"){
-#         ID <- paste(ID,res_raster,sep="_")
-#     }
-#     test1 <- file.exists(here::here(velocity_SA_dir, paste0(ID,".csv")))
-#     if(test1){
-#         Eco <- Bioshifts_DB$Eco[x]
-#         if(Eco=="Ter"){
-#             test2 <- list.files(here::here(velocity_SA_dir),pattern = ID)
-#             var <- "mat"
-#             if(res_raster=="25km"){
-#                 var <- paste(var,res_raster,sep="_")
-#             }
-#             test2 <- any(grepl(var,test2))
-#             test3 <- any(grepl("sst",list.files(here::here(velocity_SA_dir),pattern = ID)))
-#             if(test3){
-#                 tmp <- list.files(here::here(velocity_SA_dir),pattern = ID, full.names = TRUE)
-#                 unlink(tmp)
-#             }
-#         } else {
-#             test2 <- list.files(here::here(velocity_SA_dir),pattern = ID)
-#             test2 <- any(grepl("sst",test2))
-#             test3 <- any(grepl("mat",list.files(here::here(velocity_SA_dir),pattern = ID)))
-#             if(test3){
-#                 tmp <- list.files(here::here(velocity_SA_dir),pattern = ID, full.names = TRUE)
-#                 unlink(tmp)
-#             }
-#         }
-#     } else {
-#         test2 <- FALSE
-#     }
-#     length(which(c(test1,test2)))==2
-# })
-# length(which(I_have))
-# 
-# # missing 
-# missing <- Bioshifts_DB[which(!I_have),]
-# nrow(missing)
-# head(missing)
-
-########################
-# submit jobs
 
 ##############################
-# Rerun just for marines
+# Run just for marines
 # Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$Eco=="Mar"),]
 ##############################
 # Rerun just for terrestrials
 Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$Eco=="Ter"),]
 ##############################
+
+########################
+# submit jobs
 
 N_jobs_at_a_time = 50
 N_Nodes = 1
@@ -134,6 +93,7 @@ for(i in 1:nrow(Bioshifts_DB)){
     ECO <- Bioshifts_DB$Eco[i]
     
     args = c(SAtogo, ECO, res_raster)
+    job_name <- paste(args,collapse = "_")
     
     ########################
     # Check if file exists
@@ -165,7 +125,7 @@ for(i in 1:nrow(Bioshifts_DB)){
             }
             if(ECO == "Ter"){ # for the Terrestrial use this (bigger jobs) 
                 cores = 5 
-                memory = "100G"
+                memory = "200G"
                 time = "1-24:00:00"
                 partition = select_partition(request_mem = as.numeric(gsub("[^0-9.-]", "", memory)), 
                                              request_cpu = cores, 
@@ -174,7 +134,7 @@ for(i in 1:nrow(Bioshifts_DB)){
             
             slurm_job_singularity(jobdir = jobdir,
                                   logdir = logdir, 
-                                  sptogo = SAtogo, 
+                                  sptogo = job_name, 
                                   args = args,
                                   N_Nodes = N_Nodes, 
                                   tasks_per_core = tasks_per_core, 
@@ -236,3 +196,28 @@ v3_polygons <- missing_SA$SA
 Bioshifts_DB <- Bioshifts_DB[Bioshifts_DB$ID %in% v3_polygons,]
 
 head(Bioshifts_DB)
+
+#################################
+# check N cols
+all_SA <- list.files(velocity_SA_dir, pattern = '.csv')
+
+# Ncols
+# x = all_SA[459]
+
+ncols_files <- lapply(all_SA, function(x){
+    SA_data <- read.csv(here(velocity_SA_dir,x))
+    
+    SA_i_res <- strsplit(x,"_")[[1]][3]
+    SA_i_res <- strsplit(SA_i_res,"[.]")[[1]][1]
+    
+    # ter or mar?
+    if(any(grepl("mat",names(SA_data)))){
+        Eco <- "Ter"
+    } else {
+        Eco <- "Mar"
+    }
+    data.frame(Eco = Eco, res = SA_i_res, ncol = ncol(SA_data))
+})
+ncols_files <- do.call(rbind,ncols_files)
+
+ncols_files %>% group_by(Eco,res,ncol) %>% tally
