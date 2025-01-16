@@ -52,7 +52,7 @@ jobs_data
 N_Nodes = 1
 tasks_per_core = 1
 
-for(i in 1:nrow(jobs_data)){
+for(i in 1:2){
     
     # velocity variables
     velocity_variable <- jobs_data$velocity_variables[i]
