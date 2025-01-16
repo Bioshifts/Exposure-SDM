@@ -1,3 +1,86 @@
+# get coeffs from variables
+get_glmmTMB_coeffs_from_variables <- function(model = mm_ter, 
+                                              continuous_variables = cont_vars, 
+                                              categorical_variables = cat_vars){
+    
+    all_model_vars <- names(model$frame)
+    
+    # get results from continuous variables
+    cont_vars_res <- summary(model)
+    cont_vars_res <- data.frame(cont_vars_res$coefficients$cond)
+    confint_model <- confint(model)[,1:2]
+    confint_model <- confint_model[rownames(cont_vars_res),]
+    cont_vars_res <- cbind(cont_vars_res, confint_model)
+    
+    cont_vars_res$var <- rownames(cont_vars_res)
+    rownames(cont_vars_res) <- NULL
+    cont_vars_res <- cont_vars_res %>% filter(var %in% c("Int",continuous_variables))
+    names(cont_vars_res) <- c("Estimate","Std.Error","z.value","P-value","Lower.CI","Upper.CI","var")
+    
+    # get emmeans for categorical variables
+    cat_cont_names <- gsub("_"," ",categorical_variables)
+    
+    model_emm <- lapply(categorical_variables, function(x){
+        if(any(grepl(x,all_model_vars))){
+            emmeans(object = model, 
+                    specs = x,
+                    type = "response")
+        }
+    })
+    names(model_emm) <- cat_cont_names
+    
+    test <- sapply(model_emm,is.null)
+    if(any(test)){
+        model_emm <- model_emm[-which(test)]
+    }
+    model_emm
+    
+    # get results from categorical variables
+    # contrasts
+    mm_cont <- lapply(model_emm, 
+                      contrast, 
+                      method = "eff",
+                      type = "response")
+    names(mm_cont) <- names(mm_cont)
+    
+    cat_vars_cont_res <- lapply(1:length(mm_cont), function(x){
+        data.frame(confint(mm_cont[[x]]),var=names(mm_cont)[x])
+    })
+    rem <- which(sapply(cat_vars_cont_res,is.null))
+    cat_vars_cont_res <- rbindlist(cat_vars_cont_res)
+    
+    cat_vars_cont_res$level <- cat_vars_cont_res$contrast
+    cat_vars_cont_res$level <- gsub(" effect","",cat_vars_cont_res$level)
+    cat_vars_cont_res <- cat_vars_cont_res[,-1]
+    names(cat_vars_cont_res) <- c("Estimate","SE","df","Lower.CI","Upper.CI","var","level")
+    
+    
+    # pairwise contrasts
+    cat_vars_cont_pairs_res <- lapply(1:length(mm_cont_pairs), function(x){
+        data.frame(mm_cont_pairs[[x]],var=names(mm_cont_pairs)[x])
+    })
+    rem <- which(sapply(cat_vars_cont_pairs_res,is.null))
+    cat_vars_cont_pairs_res <- rbindlist(cat_vars_cont_pairs_res)
+    
+    cat_vars_cont_pairs_res$level <- cat_vars_cont_pairs_res$contrast
+    cat_vars_cont_pairs_res$level <- gsub(" effect","",cat_vars_cont_pairs_res$level)
+    cat_vars_cont_pairs_res <- cat_vars_cont_pairs_res[,-1]
+    names(cat_vars_cont_pairs_res) <- c("Estimate","SE","df","null","z-ratio","P-value","var","level")
+    
+    
+    # emmeans
+    cat_emm_vars_res <- lapply(1:length(mm_emm), function(x){
+        data.frame(confint(mm_emm[[x]]),var=names(mm_emm)[x])
+    })
+    cat_emm_vars_res <- rbindlist(cat_emm_vars_res)
+    
+    cat_emm_vars_res$level <- cat_emm_vars_res[,1]
+    cat_emm_vars_res <- cat_emm_vars_res[,-1]
+    cat_emm_vars_res$level <- gsub(" effect","",cat_emm_vars_res$level)
+    names(cat_emm_vars_res) <- c("Estimate","SE","df","Lower.CI","Upper.CI","var","level")
+    
+}
+
 
 ###############################################
 slurm_job_singularity <- function(jobdir, logdir, sptogo, args,
@@ -441,94 +524,6 @@ env_time_cell <- function(dates, env_data, temporalrange, mc = 10){
 }
 
 ##################################
-# calculates bioclimatic variables from raw climate data
-# allows specifying time period for calculate of bioclimatic variables
-# temporal range in years. Represents the period from which raw variables will be averaged for the calculus of bioclimatics
-# occ is a data.frame object with at least the colnames: cell, year, month
-# myvars is the list of raw variables that will be used for calculating bioclimatics
-# varsdir is the directory when variables are stored
-# environment should be "T" (terrestrial), "M" (marine), "A" (aquatic). The way bioclimatic variables are calculated depend on the environment
-
-# occ = spoccur[1:5,]
-# myvars = c("tasmax", "tasmin", "tas", "pr")
-# varsdir = "/media/seagate/boliveira/Land"
-# temporalrange = 2
-# env_type = "T"
-
-# occ = spoccur[1:5,]
-# myvars = c("ph", "o2", "SST")
-# varsdir = "/media/seagate/boliveira/Marine"
-# temporalrange = 2
-# env_type = "M"
-
-minorThreat <- function(occ, myvars, varsdir, crs = "+proj=longlat +datum=WGS84 +no_defs", temporalrange = 2, env_type = NULL, limit = NULL){
-    if(is.null(env_type)){
-        stop("env_type type should be specified.
-             The way bioclimatic variables are calculated depends on the environment type.")
-    }
-    if(!env_type %in% c("T", "M", "A")){
-        stop("env_type should be either: 'T' (terrestrial), 'M' (marine) or 'A' (aquatic).
-             The way bioclimatic variables are calculated depends on the environment type.")
-    }
-    # load climate variables
-    files <- list.files(here::here(varsdir), full.names = T, recursive = T, pattern = "tif$")
-    files <- files[-grep("raw|model",files)]
-    # Select layers within the time-frame of interest
-    timeframe <- paste(c((min(occ$year)-2): max(occ$year)),collapse = "|")
-    pos <- grep(timeframe, files)
-    files <- files[pos]
-    # get data for each env variable
-    cellstogo <- occ$cell
-    coords <- st_as_sf(SpatialPoints(occ[,c("decimalLongitude", "decimalLatitude")]))
-    poly <- st_buffer(coords, dist = 1)
-    st_crs(poly) <- crs
-    env_cells <- list()
-    for(i in 1:length(myvars)){
-        files.tmp <- files[grep(myvars[i],files)]
-        layers.tmp <- read_stars(files.tmp, proxy = TRUE, crs = crs)
-        names(layers.tmp) <- cleanNames(layers.tmp)
-        # crop star object for faster extraction
-        layers.tmp <- layers.tmp[poly]
-        # get env data from each cell
-        env_cells.tmp <- st_extract(layers.tmp, st_coordinates(coords))
-        env_cells.tmp$cell <- cellstogo
-        env_cells[[i]] <- env_cells.tmp
-    }
-    names(env_cells) <- myvars
-    # get env data from cells at dates
-    dates = occ[,c("year","month")]
-    envtimecells <- lapply(1:length(env_cells), function(i) {
-        env_time_cell(dates = dates,
-                      env_cells = env_cells[[i]],
-                      temporalrange = temporalrange)
-    })
-    names(envtimecells) <- myvars
-    # calc bioclimatics for each cell
-    if(env_type == "M"){
-        bios <- lapply(envtimecells, function(x) {
-            tmp <- lapply(x, function(i){
-                bioclimatics(i)
-            })
-            return(do.call(rbind,tmp))
-        })
-        # fix bioclimatic names
-        for(i in 1:length(bios)) { names(bios[[i]]) <- paste(myvars[i],names(bios[[i]]),sep = "_")}
-        names(bios) <- NULL
-        bios <- do.call(cbind,bios)
-    } else {
-        bios <- bioclimatics_land(envtimecells)
-    }
-    bios <- cbind(cell=cellstogo,bios)
-    if(is.null(limit)){
-        return(bios)
-    } else {
-        if(nrow(bios) >= limit){
-            bios <- bios[sample(1:nrow(bios),limit),]
-        }
-        return(bios)
-    }
-}
-
 # Clean coordinates
 drugfree <- function(x, inverse = FALSE, my.mask){
     original_cols <- names(x)
@@ -561,132 +556,6 @@ drugfree <- function(x, inverse = FALSE, my.mask){
     return(x)
 }
 
-
-
-##################################
-# Get Copernicus Global ocean biogeochemistry hindcast
-GetCopernicusCMEMS <- function(user, password, variables, nc_path, years, months, depths = 1, keep.original = FALSE, over.write = TRUE){
-    
-    if(.Platform$OS.type == "windows"){
-        stop("This function only works on Unix system")
-    }
-    
-    new.dir <- here::here(nc_path)
-    if(!dir.exists(new.dir)){
-        dir.create(new.dir,recursive = T)
-    }
-    
-    for(y in 1:length(years)){
-        for(m in 1:length(months)){
-            
-            filename <- paste0("mercatorfreebiorys2v4_global_mean_",years[y],months[m],".nc")
-            path.file <- file.path(nc_path, filename)
-            if(!over.write){
-                over.write <- !file.exists(path.file)
-            }
-            if(over.write){
-                system(paste0("wget -q --user=", user, " --password=", password,
-                              " -O ", path.file,
-                              " ftp://my.cmems-du.eu/Core/GLOBAL_MULTIYEAR_BGC_001_029/cmems_mod_glo_bgc_my_0.25_P1M-m/",
-                              years[y], "/", filename))
-                
-                for(v in 1:length(variables)){
-                    for(d in 1:length(depths)){
-                        myfile.tmp <- brick(path.file, varname=variables[v])[[depths[d]]]
-                        writeRaster(myfile.tmp, 
-                                    file.path(nc_path, paste0(paste(variables[v],years[y],months[m],depths[d],sep = "_"), ".tif")),
-                                    format="GTiff",
-                                    overwrite=TRUE)
-                    }
-                }
-                
-                if(!keep.original){
-                    unlink(path.file)
-                }
-            }
-        }
-    }
-}
-
-##################################
-# Get Copernicus Global SST
-GetCopernicusSST <- function(user, password, nc_path, years, months, model.raster = NULL){
-    
-    if(.Platform$OS.type == "windows"){
-        stop("This function only works on Unix system")
-    }
-    
-    new.dir <- here::here(nc_path)
-    if(!dir.exists(new.dir)){
-        dir.create(new.dir,recursive = T)
-    }
-    
-    tmp.dir <- here::here(new.dir,"tmp")
-    if(!dir.exists(tmp.dir)){
-        dir.create(tmp.dir,recursive = T)
-    }
-    
-    for(y in 1:length(years)){
-        for(m in 10:length(months)){
-            # list files
-            files <- system(paste0("wget --user=", user, " --password=", password,
-                                   " --no-remove-listing --spider",
-                                   " ftp://my.cmems-du.eu/Core/SST_GLO_SST_L4_REP_OBSERVATIONS_010_011/METOFFICE-GLO-SST-L4-REP-OBS-SST/",
-                                   years[y], "/", months[m], "/"))
-            files <- read.table(".listing")
-            files <- files$V9[-1:-2]
-            
-            path.files <- sapply(files, function(x) here::here(tmp.dir, x))
-            
-            unlink(".listing")
-            
-            for(f in 1:length(files)){
-                
-                cat("\r Downloading year", years[y], "month", months[m], "day", f)
-                
-                system(paste0("wget -q --user=", user, " --password=", password,
-                              " -O ", path.files[f],
-                              " ftp://my.cmems-du.eu/Core/SST_GLO_SST_L4_REP_OBSERVATIONS_010_011/METOFFICE-GLO-SST-L4-REP-OBS-SST/",
-                              years[y], "/", months[m], "/", files[f]))
-                
-            }
-            
-            cat("\nResampling\n")
-            
-            cl <- makeCluster(detectCores()-10)
-            clusterExport(cl, c("path.files", "model.raster"))
-            
-            pbsapply(path.files, FUN = function(x){
-                myfile.tmp <- raster::raster(x)
-                myfile.tmp <- raster::resample(myfile.tmp, model.raster)
-                
-                raster::writeRaster(myfile.tmp, 
-                                    paste0(x, ".tif"),
-                                    format="GTiff",
-                                    overwrite=TRUE)
-                
-                unlink(x)
-            },
-            cl = cl)
-            
-            stopCluster(cl)
-            
-            cat("\nStacking and saving")
-            
-            myraster.files <- list.files(tmp.dir, full.names = TRUE)
-            mystack <- stack(myraster.files)
-            myraster <- raster::calc(mystack, mean)
-            
-            writeRaster(myraster, 
-                        paste0(here::here(new.dir, paste0(paste("SST",years[y],months[m],sep="_"),".tif"))),
-                        format="GTiff",
-                        overwrite=TRUE)
-            
-            unlink(myraster.files)
-        }
-    }
-    unlink(tmp.dir, recursive = T)
-}
 
 ##################################
 # First letter upper case

@@ -99,13 +99,6 @@ length(unique(shifts_ens$Species[which(shifts_ens$ECO=="Mar")]))
 
 # head(shifts_ens)
 
-shifts_ens %>% filter(Species=="Neottia_nidus-avis")
-which(shifts_ens$Species=="Neottia_nidus-avis")
-
-# run only for terrestrials because we have no connectivity data for marine
-shifts_ens <- shifts_ens %>% filter(ECO=="Ter")
-nrow(shifts_ens)
-
 # get all possible
 all_possible <- sapply(1:nrow(shifts_ens), function(i){
     output_dir <- here(work_dir,paste0("Data/Connectivity_SA_edges/",shifts_ens$ECO[i]))
@@ -163,12 +156,20 @@ for(i in 1:nrow(shifts_ens)){
         
         if(!jobname %in% test){
             
-            cores = 5 # reduce N cores because of out-of-memory issue
-            time = "1-24:00:00"
-            memory = "125G"
-            partition = select_partition(request_mem = as.numeric(gsub("[^0-9.-]", "", memory)), 
-                                         request_cpu = cores, 
-                                         limits=limits)
+            if(ECO == "Mar"){ # for the Marine use this
+                cores = 1
+                time = "24:00:00"
+                memory = "8G"
+                partition = "normal"
+            }
+            if(ECO == "Ter"){ # for the Terrestrial use this (bigger jobs) 
+                cores = 5 # reduce N cores because of out-of-memory issue
+                time = "1-24:00:00"
+                memory = "64G"
+                partition = select_partition(request_mem = as.numeric(gsub("[^0-9.-]", "", memory)), 
+                                             request_cpu = cores, 
+                                             limits=limits)
+            }
             
             slurm_job_singularity(jobdir = jobdir,
                                   logdir = logdir, 

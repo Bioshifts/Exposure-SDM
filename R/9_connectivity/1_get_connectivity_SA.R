@@ -9,7 +9,7 @@
 rm(list=ls())
 gc()
 
-list.of.packages <- c("terra","raster","sf","rgdal","Hmisc","dplyr", "data.table")
+list.of.packages <- c("terra","raster","sf","rgdal","Hmisc","dplyr", "data.table", "readxl")
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
 if(length(new.packages)) install.packages(new.packages)
 sapply(list.of.packages, require, character.only = TRUE)
@@ -20,7 +20,7 @@ command_args <- commandArgs(trailingOnly = TRUE)
 print(command_args)
 polygontogo <- as.character(paste(command_args[1], collapse = " "))
 Eco <- as.character(paste(command_args[2], collapse = " "))
-# Eco <- "Ter"
+# Eco <- "Mar"
 
 # polygontogo <- "A112_P1" # Mar # South
 # polygontogo <- "A43_P1" # Mar # North
@@ -56,6 +56,9 @@ source("R/velocity_functions.R")
 if(!dir.exists(connectivity_results_dir(Eco))){
     dir.create(connectivity_results_dir(Eco), recursive = TRUE)
 }
+if(!dir.exists(connectivity_data_dir(Eco))){
+    dir.create(connectivity_data_dir(Eco), recursive = TRUE)
+}
 # create dir to store connectivities SA
 conn_SA_dir <- here(scratch_dir,"Data/Connectivity/Connectivity_SA")
 if(!dir.exists(conn_SA_dir)){
@@ -70,15 +73,15 @@ ncores <- parallelly::availableCores()
 
 cat(Eco,"\n")
 
+# load SA polygon
+SA_i <- terra::vect(here::here(SA_shps_dir,paste0(polygontogo,".shp")))
+
 # If terrestrial
 if(Eco=="Ter"){
     
     # connectivity variables
     norm_curr <- terra::rast(here(connectivity_data_dir(Eco),"norm_curr.tif"))
     norm_curr_rc <- terra::rast(here(connectivity_data_dir(Eco),"norm_curr_rc.tif"))
-    
-    # load SA polygon
-    SA_i <- terra::vect(here::here(SA_shps_dir,paste0(polygontogo,".shp")))
     
     # Get connectivity at the study area
     norm_curr_file <- here(conn_SA_dir,paste0(polygontogo,"_norm_curr.tif"))
@@ -143,6 +146,54 @@ if(Eco=="Ter"){
                          diffuse_prop,
                          intensified_prop,
                          channelized_prop)
+    
+    #######
+    # save connectivity results
+    write.csv(conn_j, here::here(connectivity_results_dir(Eco), paste0(polygontogo,".csv")), row.names = FALSE)
+    
+}
+
+if(Eco=="Mar"){
+    
+    # connectivity variables
+    # make raster
+    if(!file.exists(here(connectivity_data_dir(Eco),"marine_connectivity.tif"))){
+        norm_curr <- read_excel(here(work_dir,"Data","connectivity_marine.xlsx"))
+        norm_curr <- rast(
+            data.frame(x = marine_connectivity$x,
+                       y = marine_connectivity$y,
+                       z = marine_connectivity$current_flow),
+            type="xyz")
+        writeRaster(norm_curr, here(connectivity_data_dir(Eco),"marine_connectivity.tif"))
+    } else {
+        
+        norm_curr <- rast(here(connectivity_data_dir(Eco),"marine_connectivity.tif"))
+        
+    }
+    
+    # Get connectivity at the study area
+    norm_curr_file <- here(conn_SA_dir,paste0(polygontogo,"_norm_curr.tif"))
+    if(!file.exists(norm_curr_file)){
+        terra::window(norm_curr) <- ext(SA_i)
+        norm_curr <- terra::mask(norm_curr, SA_i, filename = norm_curr_file)
+    } else {
+        norm_curr <- terra::rast(norm_curr_file)
+    }
+    
+    #######
+    ## Project to equal area for more accurate statistics
+    norm_curr <- terra::project(norm_curr, Eckt)
+    
+    #######
+    # summary connectivity over study area
+    conn.mean <- as.numeric(terra::global(norm_curr, mean, na.rm=TRUE)[,1])
+    conn.median <- as.numeric(terra::global(norm_curr, median, na.rm=TRUE)[,1])
+    conn.sd <- as.numeric(terra::global(norm_curr, sd, na.rm=TRUE)[,1])
+    
+    conn_j <- data.frame(SA = polygontogo,
+                         conn.mean,
+                         conn.median,
+                         conn.sd)
     
     #######
     # save connectivity results

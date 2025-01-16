@@ -28,9 +28,9 @@ sptogo <- as.character(paste(command_args[1], collapse = " "))
 realm <- as.character(paste(command_args[2], collapse = " "))
 IDtogo <- as.character(paste(command_args[3], collapse = " "))
 
-# sptogo="Sebastes_fasciatus"
+# sptogo="Acanthaluteres_spilomelanurus"
 # realm <- "Mar"
-# IDtogo = "A53_P1"
+# IDtogo = "A112_P1"
 
 # sptogo="Veronica_montana"
 # realm <- "Ter"

@@ -24,7 +24,7 @@ res_raster <- as.character(paste(command_args[3], collapse = " "))
 # Eco="Ter"
 # velocity_variable="mat"
 # velocity_variable="map"
-# res_raster <- "25km"
+# res_raster <- "1km"
 
 # Eco="Mar"
 # velocity_variable="sst"
@@ -94,9 +94,6 @@ if(Eco == "Ter"){
 if(Eco == "Ter"){
     # get elevation
     elevation <- terra::rast(here::here(work_dir,"Data/elevation_1km.tif"))
-    # crop elevation to the study area
-    terra::window(elevation) <- ext(SA_i)
-    elevation <- terra::mask(elevation, SA_i)
     # force raster to pair
     elevation <- terra::project(elevation, climate_layers, threads=TRUE, use_gdal=TRUE, gdal=TRUE)
 }
@@ -105,7 +102,9 @@ if(Eco == "Ter"){
 #######
 # Calculate velocity
 
-cat("Calculating for", Eco, velocity_variable, res_raster, "\n")
+cat("Calculating for", Eco, velocity_variable, my_res, "\n")
+
+variable_name <- paste(Eco,velocity_variable,my_res,period_name,"global",sep = "_")
 
 # If terrestrial
 # Calculate velocity for LAT and ELE and for each climatic variable
@@ -117,7 +116,7 @@ climate_layers <- climate_layers[velocity_variable]
 # calculate the trend (C/year)
 cat("Trend\n")
 
-ttrend_file_name <- paste(Eco,velocity_variable,"trend",paste0(period_name,".tif"), sep = "_")
+ttrend_file_name <- paste(variable_name, "trend.tif",sep = "_")
 
 ttrend_file <- here::here(tmp_dir,ttrend_file_name)
 
@@ -134,7 +133,7 @@ if(class(ttrend)=="try-error"){
 
 #######
 # Get averaged climate layers
-avg_climate_layers_file_name <- paste(Eco,velocity_variable,"avg_climate_layers",paste0(period_name,".tif"), sep = "_")
+avg_climate_layers_file_name <- paste(variable_name, "avg_climate_layers.tif",sep = "_")
 
 avg_climate_layers_file <- here::here(tmp_dir, avg_climate_layers_file_name)
 
@@ -155,7 +154,7 @@ rm(climate_layers);gc()
 # Get the spatial gradient (C/km)
 cat("Spatial gradient\n")
 
-spgrad_file_name <- paste(Eco,velocity_variable,"spgrad",paste0(period_name,".tif"), sep = "_")
+spgrad_file_name <- paste(variable_name, "spgrad.tif",sep = "_")
 
 spgrad_file <- here::here(tmp_dir,spgrad_file_name)
 
@@ -165,12 +164,14 @@ if(any(class(spgrad)=="try-error")){
     
     spgrad = spatial_grad_big(rx = avg_climate_layers,
                               tmp_dir = here::here(tmp_dir),
-                              filename_tiles = paste(Eco,velocity_variable,period_name,"tile_.tif",sep="_"),
+                              filename_tiles = paste(variable_name, "spgrad_tile.tif",sep = "_"),
                               filename_final = spgrad_file,
                               ncores = ncores)
     
 }
 
+# force raster to pair
+ttrend <- terra::project(ttrend, spgrad, threads=TRUE, use_gdal=TRUE, gdal=TRUE)
 
 #######
 ## calculate gradient-based climate velocity:
@@ -199,27 +200,23 @@ cat("Save velocity maps\n")
 # save velocity maps
 
 # velocity
-varname <- paste(Eco,velocity_variable,"gVel",my_res,period_name,sep="_")
 terra::writeRaster(gVel, 
-                   here::here(vel_dir, paste0(varname,".tif")),
+                   here::here(vel_dir,paste(variable_name, "gVel.tif",sep = "_")),
                    overwrite=TRUE)
 
 # velocity latitude
-varname <- paste(Eco,velocity_variable,"gVelLat",my_res,period_name,sep="_")
 terra::writeRaster(gVelLat$Vel, 
-                   here::here(vel_dir, paste0(varname,".tif")),
+                   here::here(vel_dir,paste(variable_name, "gVelLat.tif",sep = "_")),
                    overwrite=TRUE)
 
 # trend
-varname <- paste(Eco,velocity_variable,"trend",my_res,period_name,sep="_")
 terra::writeRaster(ttrend, 
-                   here::here(vel_dir, paste0(varname,".tif")),
+                   here::here(vel_dir,paste(variable_name, "trend.tif",sep = "_")),
                    overwrite=TRUE)
 
 # spatial gradient
-varname <- paste(Eco,velocity_variable,"spatgrad",my_res,period_name,sep="_")
 terra::writeRaster(spgrad, 
-                   here::here(vel_dir, paste0(varname,".tif")),
+                   here::here(vel_dir,paste(variable_name, "spatgrad.tif",sep = "_")),
                    overwrite=TRUE)
 
 
@@ -232,7 +229,7 @@ if(Eco == "Ter" & res_raster == "1km"){
     # Get the spatial gradient up slope (elevation/km)
     cat("Spatial gradient up slope\n")
     
-    spgrad_ele_file_name <- paste(Eco,velocity_variable,"spgrad_ele",paste0(period_name,".tif"), sep = "_")
+    spgrad_ele_file_name <- paste(variable_name, "spgrad_ele.tif",sep = "_")
     
     spgrad_ele_file <- here::here(tmp_dir,spgrad_ele_file_name)
     
@@ -240,7 +237,7 @@ if(Eco == "Ter" & res_raster == "1km"){
     
     spgrad_ele = spatial_grad_big(rx = elevation,
                                   tmp_dir = here::here(tmp_dir),
-                                  filename_tiles = paste(Eco,velocity_variable,period_name,"tile_.tif",sep="_"),
+                                  filename_tiles = paste(variable_name, "spgradEle_tile.tif",sep = "_"),
                                   filename_final = spgrad_ele_file,
                                   ncores = ncores)
     
@@ -274,16 +271,17 @@ if(Eco == "Ter" & res_raster == "1km"){
     # save velocity maps
     
     # velocity elevation
-    varname <- paste(period_name,velocity_variable,"gVelEle",my_res,sep="_")
-    terra::writeRaster(gVelEle,
-                       here::here(vel_dir, paste0(varname,".tif")),
+    terra::writeRaster(spgrad, 
+                       here::here(vel_dir,paste(variable_name, "gVelEle.tif",sep = "_")),
                        overwrite=TRUE)
     
     # spatial gradient elevation
-    varname <- paste(period_name,velocity_variable,"spatgradEle",my_res,sep="_")
     terra::writeRaster(spgrad_ele, 
-                       here::here(vel_dir, paste0(varname,".tif")),
+                       here::here(vel_dir,paste(variable_name, "spatgradEle.tif",sep = "_")),
                        overwrite=TRUE)
     
 } 
 
+
+# delete temporary files
+unlink(list.files(tmp_dir,pattern = "global",full.names = TRUE))

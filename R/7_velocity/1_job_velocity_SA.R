@@ -69,12 +69,29 @@ any(!Bioshifts_DB$ID %in% v3_polygons)
 v3_polygons <- v3_polygons[v3_polygons %in% Bioshifts_DB$ID]
 
 
+Bioshifts_DB_mar <- Bioshifts_DB[which(Bioshifts_DB$Eco=="Mar"),]
+Bioshifts_DB_ter <- Bioshifts_DB[which(Bioshifts_DB$Eco=="Ter"),]
+
+##############################
+# make a SA x Eco x resolution files
+Bioshifts_DB_mar <- expand.grid(ID = Bioshifts_DB_mar$ID,
+                                resolution = c("25km","50km","110km"))
+Bioshifts_DB_mar$Eco <- "Mar"
+
+Bioshifts_DB_ter <- expand.grid(ID = Bioshifts_DB_ter$ID,
+                                resolution = c("1km","25km","50km","110km"))
+Bioshifts_DB_ter$Eco <- "Ter"
+
+# combine marine and terrestrial
+Bioshifts_DB <- rbind(Bioshifts_DB_mar,
+                      Bioshifts_DB_ter)
+
 ##############################
 # Run just for marines
-# Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$Eco=="Mar"),]
+# Bioshifts_DB <- Bioshifts_DB_mar
 ##############################
 # Rerun just for terrestrials
-Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$Eco=="Ter"),]
+# Bioshifts_DB <- Bioshifts_DB_ter
 ##############################
 
 ########################
@@ -89,22 +106,22 @@ check_if_file_exists <- TRUE
 
 for(i in 1:nrow(Bioshifts_DB)){
     
-    SAtogo <- Bioshifts_DB$ID[i]
-    ECO <- Bioshifts_DB$Eco[i]
+    SAtogo <- as.character(Bioshifts_DB$ID[i])
+    ECO <- as.character(Bioshifts_DB$Eco[i])
+    resolution <- as.character(Bioshifts_DB$resolution[i])
     
-    args = c(SAtogo, ECO, res_raster)
+    # SAtogo <- "A1_P1"
+    # ECO <- "Ter"
+    # resolution <- "1km"
+    
+    args = c(SAtogo, ECO, resolution)
     job_name <- paste(args,collapse = "_")
     
     ########################
     # Check if file exists
     
-    if(res_raster=="1km"){
-        file.test <- here::here(velocity_SA_dir, paste0(SAtogo,"_1km",".csv"))
-    } else {
-        file.test <- here::here(velocity_SA_dir, paste0(paste(SAtogo,"_25km",sep = "_"),".csv"))
-    }
-    
     if(check_if_file_exists){
+        file.test <- here::here(velocity_SA_dir, paste0(SAtogo,"_",resolution,".csv"))
         RUN <- !file.exists(file.test)
     } else {
         RUN <- TRUE

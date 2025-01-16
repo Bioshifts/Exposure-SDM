@@ -58,7 +58,7 @@ Bioshifts_DB <- Bioshifts_DB %>%
 # Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$Eco=="Mar"),]
 ##############################
 # Run just for terrestrials
-Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$Eco=="Ter"),]
+# Bioshifts_DB <- Bioshifts_DB[which(Bioshifts_DB$Eco=="Ter"),]
 ##############################
 
 ########################
@@ -69,7 +69,7 @@ N_Nodes = 1
 tasks_per_core = 1
 
 # Check if file exists
-check_if_file_exists <- TRUE
+check_if_file_exists <- FALSE
 
 for(i in 1:nrow(Bioshifts_DB)){
     
@@ -100,6 +100,7 @@ for(i in 1:nrow(Bioshifts_DB)){
                 cores = 1
                 time = "24:00:00"
                 memory = "8G"
+                partition = "normal"
             }
             if(ECO == "Ter"){ # for the Terrestrial use this (bigger jobs) 
                 cores = 5 # reduce N cores because of out-of-memory issue

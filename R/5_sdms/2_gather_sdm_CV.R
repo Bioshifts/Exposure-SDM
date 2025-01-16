@@ -109,10 +109,8 @@ Boyce_mar <- pbapply::pblapply(sdms_mar, function(x){
         files_sdms_ensemble <- files_sdms[pos]
         files_sdms <- files_sdms[-pos]
         
-        model_sp <- get(load(files_sdms))
         ens_model_sp <- get(load(files_sdms_ensemble))
         
-        model_sp <- apply_gsub_to_s4(model_sp, pattern = "/lustre/oliveirab", replacement = "/scratch/boliveira")
         ens_model_sp <- apply_gsub_to_s4(ens_model_sp, pattern = "/lustre/oliveirab", replacement = "/scratch/boliveira")
         
         ens_pred <- ens_model_sp@models.prediction@val
@@ -167,10 +165,8 @@ Boyce_ter <- pbapply::pblapply(sdms_ter, function(x){
         files_sdms_ensemble <- files_sdms[pos]
         files_sdms <- files_sdms[-pos]
         
-        model_sp <- get(load(files_sdms))
         ens_model_sp <- get(load(files_sdms_ensemble))
         
-        model_sp <- apply_gsub_to_s4(model_sp, pattern = "/lustre/oliveirab", replacement = "/scratch/boliveira")
         ens_model_sp <- apply_gsub_to_s4(ens_model_sp, pattern = "/lustre/oliveirab", replacement = "/scratch/boliveira")
         
         ens_pred <- ens_model_sp@models.prediction@val

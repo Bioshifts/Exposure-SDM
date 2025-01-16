@@ -37,10 +37,13 @@ res_raster <- as.character(paste(command_args[3], collapse = " "))
 # polygontogo <- "A79_P1" # Ter # Rhone-Saone Valley; Southeastern France
 # polygontogo <- "A134_P1" # Ter # United Kingdom
 # polygontogo <- "A1_P1" # Ter # French Alps (giffre Valley)
+# polygontogo <- "A121_P1" # Ter # 
 
 cat("\rrunning polygon", polygontogo)
 
 ########################
+# Setup
+
 # set computer
 computer = "matrics"
 
@@ -53,17 +56,13 @@ if(computer == "matrics"){
     work_dir <- getwd()
 }
 
-# source settings
+# N cores
+ncores <- parallelly::availableCores()
+
+# source settings and functions
 source("R/settings.R")
 source("R/my_functions.R")
 source("R/velocity_functions.R")
-
-if(Eco == "Ter"){
-    my_res = res_raster
-} else {
-    my_res = "25km"
-}
-
 
 # create dir to store results
 if(!dir.exists(velocity_SA_dir)){
@@ -83,8 +82,16 @@ if(Eco == "Ter"){
     velocity_variables <- c("sst")
 }
 
-# N cores
-ncores <- parallelly::availableCores()
+# need to downscale?
+downscale <- ifelse((Eco == "Ter" & (res_raster == "1km" | res_raster == "25km")) | (Eco == "Mar" & res_raster == "25km)"),
+                    FALSE,
+                    TRUE)
+
+if(!downscale){
+    my_res <- res_raster
+} else {
+    my_res <- "25km"
+}
 
 ########################
 # get period of interest
@@ -99,18 +106,18 @@ period <- bioshifts %>%
 period = min(period$Start):max(period$End)
 
 ########################
-# select environmental variable for period
+# select environmental variable for period of interest
 climate_layers <- list.files(bios_dir(Eco), full.names = TRUE)
 climate_layers <- climate_layers[grep(paste0(period,collapse = "|"),climate_layers)]
 climate_layers <- rast(climate_layers)
 
-# select the environmental variable of interest
 if(Eco == "Ter"){
     climate_layers <- climate_layers[[which(names(climate_layers) %in% velocity_variables)]]
 } else {
     climate_layers <- climate_layers["mean"]
     names(climate_layers) <- rep(velocity_variables, nlyr(climate_layers))
 }
+
 
 ########################
 # load SA polygon
@@ -126,6 +133,22 @@ climate_layers <- terra::mask(climate_layers, mask = SA_i)
 terra::window(climate_layers) <- NULL
 # plot(climate_layers[[1]]);dev.off()
 
+
+
+########################
+# Downscale?
+if(downscale){
+    
+    resol <- as.numeric(gsub("km","",res_raster))
+    # make empty raster
+    empty_raster <- climate_layers[[1]]
+    res(empty_raster) <- resol/100
+    
+    climate_layers <- terra::project(climate_layers, 
+                                     empty_raster, 
+                                     threads=TRUE, use_gdal=TRUE, gdal=TRUE)
+}
+
 ########################
 # Get elevation data if running for terrestrial environment
 if(Eco == "Ter"){
@@ -140,7 +163,7 @@ if(Eco == "Ter"){
 
 ########################
 # Big area test - Code will run in parallel for big areas
-if(Eco=="Ter" & my_res=="1km"){
+if(Eco=="Ter" & res_raster=="1km"){
     # Big area test
     area_i <- SA_i$Areakm2
     big_raster <- area_i > 10^4
@@ -169,13 +192,15 @@ for(v in 1:length(velocity_variables)){ # for each climate variable
     # select the climate variable
     climate_layers_i <- climate_layers[velocity_variable]
     
+    variable_name <- paste(polygontogo,velocity_variable,res_raster,sep = "_")
+    
     #######
     # calculate the trend (C/year)
     cat("Trend\n")
     
-    ttrend_file_name <- paste(Eco,velocity_variable,"trend",paste0(polygontogo,".tif"), sep = "_")
+    ttrend_file_name <- paste(variable_name,"trend.tif",sep="_")
     
-    ttrend_file <- here::here(tmp_dir,ttrend_file_name)
+    ttrend_file <- here::here(velocity_SA_dir, ttrend_file_name)
     
     ttrend <- try(terra::rast(ttrend_file),silent = TRUE)
     
@@ -190,9 +215,9 @@ for(v in 1:length(velocity_variables)){ # for each climate variable
     
     #######
     # Get averaged climate layers
-    avg_climate_layers_file_name <- paste(Eco,velocity_variable,"avg_climate_layers",paste0(polygontogo,".tif"), sep = "_")
+    avg_climate_layers_file_name <- paste(variable_name, "avg_climate_layers.tif",sep = "_")
     
-    avg_climate_layers_file <- here::here(tmp_dir, avg_climate_layers_file_name)
+    avg_climate_layers_file <- here::here(velocity_SA_dir, avg_climate_layers_file_name)
     
     avg_climate_layers <- try(terra::rast(avg_climate_layers_file),silent = TRUE)
     
@@ -211,9 +236,9 @@ for(v in 1:length(velocity_variables)){ # for each climate variable
     # Get the spatial gradient (C/km)
     cat("Spatial gradient\n")
     
-    spgrad_file_name <- paste(Eco,velocity_variable,"spgrad",paste0(polygontogo,".tif"), sep = "_")
+    spgrad_file_name <- paste(variable_name,"spatgrad",sep="_")
     
-    spgrad_file <- here::here(tmp_dir,spgrad_file_name)
+    spgrad_file <- here::here(velocity_SA_dir, paste0(spgrad_file_name,".tif"))
     
     spgrad <- try(terra::rast(spgrad_file),silent = TRUE)
     
@@ -223,7 +248,7 @@ for(v in 1:length(velocity_variables)){ # for each climate variable
             
             spgrad = spatial_grad_big(rx = avg_climate_layers,
                                       tmp_dir = here::here(tmp_dir),
-                                      filename_tiles = paste(Eco,velocity_variable,polygontogo,"tile_.tif",sep="_"),
+                                      filename_tiles = paste(variable_name,"tile_.tif",sep="_"),
                                       filename_final = spgrad_file,
                                       ncores = ncores)
             
@@ -300,28 +325,25 @@ for(v in 1:length(velocity_variables)){ # for each climate variable
     # save velocity maps
     
     # velocity
-    varname <- paste(polygontogo,velocity_variable,"gVel",my_res,sep="_")
+    varname <- paste(variable_name,"gVel",sep="_")
     terra::writeRaster(gVel, 
                        here::here(velocity_SA_dir, paste0(varname,".tif")),
                        overwrite=TRUE)
     
     # velocity latitude
-    varname <- paste(polygontogo,velocity_variable,"gVelLat",my_res,sep="_")
+    varname <- paste(variable_name,"gVelLat",sep="_")
     terra::writeRaster(gVelLat$Vel, 
                        here::here(velocity_SA_dir, paste0(varname,".tif")),
                        overwrite=TRUE)
     
-    # trend
-    varname <- paste(polygontogo,velocity_variable,"trend",my_res,sep="_")
-    terra::writeRaster(ttrend, 
-                       here::here(velocity_SA_dir, paste0(varname,".tif")),
-                       overwrite=TRUE)
-    
     # spatial gradient
-    varname <- paste(polygontogo,velocity_variable,"spatgrad",my_res,sep="_")
-    terra::writeRaster(spgrad, 
-                       here::here(velocity_SA_dir, paste0(varname,".tif")),
-                       overwrite=TRUE)
+    varname <- paste(variable_name,"spatgrad",sep="_")
+    file2save <- here::here(velocity_SA_dir, paste0(varname,".tif"))
+    if(!file.exists(file2save)){
+        terra::writeRaster(spgrad, 
+                           file2save,
+                           overwrite=TRUE)
+    }
 } 
 
 gVelSA <- do.call(cbind,gVelSA)
@@ -342,9 +364,9 @@ if(Eco == "Ter" & res_raster == "1km"){
         # Get the spatial gradient up slope (elevation/km)
         cat("Spatial gradient up slope\n")
         
-        spgrad_ele_file_name <- paste(Eco,velocity_variable,"spgrad_ele",paste0(polygontogo,".tif"), sep = "_")
+        spgrad_ele_file_name <- paste(polygontogo,velocity_variable,"gVelEle",res_raster,sep="_")
         
-        spgrad_ele_file <- here::here(tmp_dir,spgrad_ele_file_name)
+        spgrad_ele_file <- here::here(velocity_SA_dir, paste0(spgrad_ele_file_name,".tif"))
         
         spgrad_ele <- try(terra::rast(spgrad_ele_file), silent = TRUE)
         
@@ -406,16 +428,19 @@ if(Eco == "Ter" & res_raster == "1km"){
         # save velocity maps
         
         # velocity elevation
-        varname <- paste(polygontogo,velocity_variable,"gVelEle",my_res,sep="_")
+        varname <- paste(polygontogo,velocity_variable,"gVelEle",res_raster,sep="_")
         terra::writeRaster(gVelEle,
                            here::here(velocity_SA_dir, paste0(varname,".tif")),
                            overwrite=TRUE)
         
         # spatial gradient elevation
-        varname <- paste(polygontogo,velocity_variable,"spatgradEle",my_res,sep="_")
-        terra::writeRaster(spgrad_ele, 
-                           here::here(velocity_SA_dir, paste0(varname,".tif")),
-                           overwrite=TRUE)
+        varname <- paste(polygontogo,velocity_variable,"spatgradEle",res_raster,sep="_")
+        file2save <- here::here(velocity_SA_dir, paste0(varname,".tif"))
+        if(!file.exists(file2save)){
+            terra::writeRaster(spgrad_ele, 
+                               file2save,
+                               overwrite=TRUE)
+        }
         
     } 
     
@@ -427,7 +452,8 @@ if(Eco == "Ter" & res_raster == "1km"){
 
 #######
 # save velocity results
-write.csv(gVelSA, here::here(velocity_SA_dir, paste0(polygontogo,"_",my_res,".csv")), row.names = FALSE)
+write.csv(gVelSA, here::here(velocity_SA_dir, paste0(polygontogo,"_",res_raster,".csv")), row.names = FALSE)
 
 # delete temporary files
-unlink(list.files(tmp_dir,pattern = polygontogo,full.names = TRUE))
+rem <- list.files(tmp_dir,pattern = polygontogo,full.names = TRUE)
+unlink(rem)
