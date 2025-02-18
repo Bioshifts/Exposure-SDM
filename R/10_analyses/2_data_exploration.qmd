@@ -1,0 +1,1624 @@
+---
+title: "Exploratory analyses"
+author: "Bioshifts"
+format: 
+  html:
+    toc: true
+    number-sections: true
+    code-fold: true
+    code-summary: "Code"
+editor: source
+---
+
+# *Setup*
+
+```{r warning=FALSE, message=FALSE}
+rm(list=ls())
+gc()
+
+library(dplyr)
+library(tidyverse)
+library(tidyr)
+library(ggplot2)
+library(knitr)
+library(pbapply)
+library(data.table)
+library(GGally)
+library(here)
+library(terra)
+library(tidyterra)
+library(rcompanion)
+library(lme4)
+library(lmerTest)
+library(cowplot)
+library(circular)
+library(ggh4x)
+
+computer = "personal"
+source(here("R/custom_legend.R"))
+source(here("R/settings.R"))
+source(here("R/my_functions.R"))
+source(here("R/velocity_functions.R"))
+
+# amount of data to use
+data_amount <- "all"
+
+```
+
+
+```{r warning=FALSE, message=FALSE}
+myramp1 <- colorRampPalette(colors = c("red","gray","blue","gray","red"))(360)
+
+the_palette_fc <- leaflet::colorNumeric(
+    palette = myramp1, 
+    domain = c(0,360),
+    reverse = FALSE)
+
+myramp_angle <- the_palette_fc(seq(0, 360, length.out = 50))
+
+```
+
+# *Load data*
+```{r}
+
+# data amount
+if(data_amount=="all"){
+    
+    bioshifts <- read.csv(here("Data/Output/Bioshifts_merge_Exposure_all.csv"))
+    
+} else {
+    
+    bioshifts <- read.csv(here("Data/Output/Bioshifts_merge_Exposure.csv"))
+    
+}
+
+```
+
+```{r warning=FALSE, message=FALSE}
+
+# select classes with more than X observations per edge
+N_obs_class = 5
+class_param_select <- bioshifts |>
+    group_by(class, Param) |>
+    tally() |>
+    filter(n >= N_obs_class) |>
+    mutate(class_param = paste(class,Param))
+
+bioshifts <- bioshifts |> 
+    mutate(class_param = paste(class,Param)) |> 
+    filter(class_param %in% class_param_select$class_param) |>
+    select(!class_param)
+
+# remove one outlier species
+bioshifts <- bioshifts |> 
+    filter(!(Eco == "Ter" & bvel_lat < -15))
+```
+
+
+```{r}
+
+# N species
+length(unique(bioshifts$sp_name_std))
+
+bioshifts |> 
+    group_by(Param) |> 
+    summarise(N=length(unique(sp_name_std)))
+
+bioshifts |> 
+    group_by(Eco) |> 
+    summarise(N=length(unique(sp_name_std)))
+
+# N range shifts
+length(bioshifts$sp_name_std)
+
+bioshifts |> 
+    group_by(Param) |> 
+    summarise(N=length(sp_name_std))
+
+bioshifts |> 
+    group_by(Eco) |>
+    summarise(N=length(sp_name_std))
+
+```
+
+Colors for lifeforms
+```{r}
+
+ramps <- list(Endotherm = c("red4", "pink"),
+              Ectotherm = c("deepskyblue", "lightblue"),
+              Cryptogam = c("darkgreen", "lightgreen"),
+              Phanerogam = c("darkorange", "yellow"))
+
+bio_cols <- bioshifts |>
+    group_by(lifeform, class) |>
+    tally |>
+    select(lifeform, class)
+bio_cols$hex <- NA
+
+for(i in 1:length(ramps)){
+    pos <- which(bio_cols$lifeform == names(ramps)[i])
+    ramp_i <- ramps[[i]]
+    cols_i <- bio_cols[pos,]
+    bio_cols$hex[pos] <- colorRampPalette(ramp_i)(length(unique(cols_i$class)))
+}
+
+# add colors
+bioshifts <- merge(bioshifts, bio_cols[,2:3], by="class")
+
+GP_legend <- custom_legend(mdf = bioshifts |>
+                               mutate(Top_lifeform = lifeform,
+                                      Top_class = class), 
+                           cdf = bio_cols |>
+                               mutate(Top_lifeform = lifeform,
+                                      Top_class = class), 
+                           group_level = "lifeform", 
+                           subgroup_level = "class", 
+                           x = "bvel_lat", y = "ShiftRate",
+                           legend_orientation = "horizontal")
+
+```
+
+# *SDM evaluation results*
+```{r fig.width=8, fig.height=4*2}
+sdms_CV <- bioshifts |>
+    select("sensitivity", "calibration","validation","Boyce",
+           "Eco","sp_name_std","class") |>
+    group_by(sp_name_std,Eco,class) |>
+    summarise(sensitivity = mean(sensitivity,na.rm=TRUE),
+              calibration = mean(calibration,na.rm=TRUE),
+              validation = mean(validation,na.rm=TRUE),
+              Boyce = mean(Boyce,na.rm=TRUE)) |>
+    mutate(Eco = case_when(Eco == "Mar" ~ "Marine",
+                           Eco == "Ter" ~ "Terrestrial"))
+```
+
+
+```{r fig.width=8, fig.height=4*2}
+p1 <- ggplot(sdms_CV, aes(x = calibration, 
+                          y = factor(class, level = rev(sort(unique(sdms_CV$class))))))+
+    geom_boxplot(outlier.alpha = 0)+
+    facet_wrap(.~Eco, scales = "free")+
+    labs(x="TSS calibration",y="")+
+    scale_x_continuous(limits=c(0,1))+
+    # intercept 0
+    geom_vline(xintercept = 0, color='gray', linetype = "dashed")+
+    # grand mean
+    geom_vline(xintercept = mean(bioshifts$calibration,na.rm=TRUE),
+               color='black', linewidth = 1, alpha = .5)+
+    # grand mean terrestrial
+    geom_vline(data=filter(sdms_CV, Eco=="Terrestrial"),
+               aes(xintercept = mean(calibration, na.rm = TRUE)),
+               color='red', linewidth = 1, alpha = .5)+
+    # grand mean marine
+    geom_vline(data=filter(sdms_CV, Eco=="Marine"),
+               aes(xintercept = mean(calibration, na.rm = TRUE)),
+               color='red', linewidth = 1, alpha = .5)+
+    theme_classic()
+
+p2 <- ggplot(sdms_CV, aes(x = validation, 
+                          y = factor(class, level = rev(sort(unique(sdms_CV$class))))))+
+    geom_boxplot(outlier.alpha = 0)+
+    facet_wrap(.~Eco, scales = "free")+
+    labs(x="TSS validation",y="")+
+    scale_x_continuous(limits=c(0,1))+
+    # intercept 0
+    geom_vline(xintercept = 0, color='gray', linetype = "dashed")+
+    # grand mean
+    geom_vline(xintercept = mean(bioshifts$validation,na.rm=TRUE),
+               color='black', linewidth = 1, alpha = .5)+
+    # grand mean terrestrial
+    geom_vline(data=filter(sdms_CV, Eco=="Terrestrial"),
+               aes(xintercept = mean(validation, na.rm = TRUE)),
+               color='red', linewidth = 1, alpha = .5)+
+    # grand mean marine
+    geom_vline(data=filter(sdms_CV, Eco=="Marine"),
+               aes(xintercept = mean(validation, na.rm = TRUE)),
+               color='red', linewidth = 1, alpha = .5)+
+    theme_classic()
+
+p3 <- ggplot(sdms_CV, aes(x = sensitivity, 
+                          y = factor(class, level = rev(sort(unique(sdms_CV$class))))))+
+    geom_boxplot(outlier.alpha = 0)+
+    facet_wrap(.~Eco, scales = "free")+
+    labs(x="Sensitivity",y="")+
+    # intercept 0
+    geom_vline(xintercept = 0, color='gray', linetype = "dashed")+
+    # grand mean
+    geom_vline(xintercept = mean(bioshifts$sensitivity,na.rm=TRUE),
+               color='black', linewidth = 1, alpha = .5)+
+    # grand mean terrestrial
+    geom_vline(data=filter(sdms_CV, Eco=="Terrestrial"),
+               aes(xintercept = mean(sensitivity, na.rm = TRUE)),
+               color='red', linewidth = 1, alpha = .5)+
+    # grand mean marine
+    geom_vline(data=filter(sdms_CV, Eco=="Marine"),
+               aes(xintercept = mean(sensitivity, na.rm = TRUE)),
+               color='red', linewidth = 1, alpha = .5)+
+    theme_classic()
+
+p4 <- ggplot(sdms_CV, aes(x = Boyce, 
+                          y = factor(class, level = rev(sort(unique(sdms_CV$class))))))+
+    geom_boxplot(outlier.alpha = 0)+
+    facet_wrap(.~Eco, scales = "free")+
+    labs(x="Boyce",y="")+
+    # intercept 0
+    geom_vline(xintercept = 0, color='gray', linetype = "dashed")+
+    # grand mean
+    geom_vline(xintercept = mean(bioshifts$Boyce,na.rm=TRUE),
+               color='black', linewidth = 1, alpha = .5)+
+    # grand mean terrestrial
+    geom_vline(data=filter(sdms_CV, Eco=="Terrestrial"),
+               aes(xintercept = mean(Boyce, na.rm = TRUE)),
+               color='red', linewidth = 1, alpha = .5)+
+    # grand mean marine
+    geom_vline(data=filter(sdms_CV, Eco=="Marine"),
+               aes(xintercept = mean(Boyce, na.rm = TRUE)),
+               color='red', linewidth = 1, alpha = .5)+
+    theme_classic()
+
+cowplot::plot_grid(p2,p4,
+                   labels = "AUTO",
+                   ncol = 1)
+
+# data amount
+if(data_amount=="all"){
+    
+    ggsave(filename = here("Figures/SDM_evaluation_all.png"), 
+           device = "png", units = "in", dpi = 300,
+           width = 8, height = 8)
+    
+} else {
+    
+    ggsave(filename = here("Figures/SDM_evaluation.png"), 
+           device = "png", units = "in", dpi = 300,
+           width = 8, height = 8)
+    
+}
+
+
+```
+
+## TSS calibration
+
+```{r fig.width=8, fig.height=4*3}
+sdms_CV |>
+    ungroup() |>
+    summarise(Mean=mean(calibration,na.rm=TRUE),
+              SD=sd(calibration,na.rm=TRUE),
+              Range=paste(range(calibration,na.rm=TRUE),collapse = " - "))
+
+sdms_CV |>
+    group_by(Eco) |>
+    summarise(Mean=mean(calibration,na.rm=TRUE),
+              SD=sd(calibration,na.rm=TRUE),
+              Range=paste(range(calibration,na.rm=TRUE),collapse = " - "))
+
+maov <- aov(calibration~Eco, sdms_CV)
+summary(maov)
+TukeyHSD(maov)
+
+maov <- aov(calibration~class, sdms_CV)
+summary(maov)
+TukeyHSD(maov)
+```
+
+## TSS validation
+
+```{r fig.width=8, fig.height=4*3}
+sdms_CV |>
+    ungroup() |>
+    summarise(Mean=mean(validation,na.rm=TRUE),
+              SD=sd(validation,na.rm=TRUE),
+              Range=paste(range(round(validation,2),na.rm=TRUE),collapse = " - "))
+
+sdms_CV |>
+    group_by(Eco) |>
+    summarise(Mean=mean(validation,na.rm=TRUE),
+              SD=sd(validation,na.rm=TRUE),
+              Range=paste(range(validation,na.rm=TRUE),collapse = " - "))
+
+maov <- aov(calibration~Eco, sdms_CV)
+summary(maov)
+TukeyHSD(maov)
+```
+
+## Sensitivity
+
+```{r fig.width=8, fig.height=4*3}
+sdms_CV |>
+    ungroup() |>
+    summarise(Mean=mean(sensitivity,na.rm=TRUE),
+              SD=sd(sensitivity,na.rm=TRUE),
+              Range=paste(range(sensitivity,na.rm=TRUE),collapse = " - "))
+
+sdms_CV |>
+    group_by(Eco) |>
+    summarise(Mean=mean(sensitivity,na.rm=TRUE),
+              SD=sd(sensitivity,na.rm=TRUE),
+              Range=paste(range(sensitivity,na.rm=TRUE),collapse = " - "))
+
+maov <- aov(sensitivity~Eco, sdms_CV)
+summary(maov)
+TukeyHSD(maov)
+```
+
+## Boyce
+
+```{r fig.width=8, fig.height=4*3}
+sdms_CV |>
+    ungroup() |>
+    summarise(Mean=mean(Boyce,na.rm=TRUE),
+              SD=sd(Boyce,na.rm=TRUE),
+              Range=paste(range(Boyce,na.rm=TRUE),collapse = " - "))
+
+sdms_CV |>
+    group_by(Eco) |>
+    summarise(Mean=mean(Boyce,na.rm=TRUE),
+              SD=sd(Boyce,na.rm=TRUE),
+              Range=paste(range(Boyce,na.rm=TRUE),collapse = " - "))
+
+
+maov <- aov(Boyce~Eco, sdms_CV)
+summary(maov)
+TukeyHSD(maov)
+
+sdms_CV |>
+    group_by(class) |>
+    summarise(Mean=mean(Boyce,na.rm=TRUE),
+              SD=sd(Boyce,na.rm=TRUE),
+              Range=paste(range(Boyce,na.rm=TRUE),collapse = " - "))
+
+maov <- aov(Boyce~class, sdms_CV)
+summary(maov)
+TukeyHSD(maov)
+```
+
+## Correlation between boyce and TSS
+```{r}
+
+plot(validation~Boyce,data=sdms_CV)
+
+cor.test(sdms_CV$Boyce, sdms_CV$validation)
+
+```
+
+# *Explore relationships*
+
+## *N shifts per parameter*
+
+```{r}
+
+ggplot(bioshifts |> 
+           group_by(Param) |>
+           tally, aes(x = n, y = Param))+
+    geom_col()+
+    theme_classic()+
+    geom_text(aes(label = n), vjust = -0.5)+
+    labs(x="N shifts",y="N obs")
+
+ggplot(bioshifts |> 
+           group_by(Param, Eco) |>
+           tally, aes(x = n, y = Param))+
+    geom_col()+
+    theme_classic()+
+    geom_text(aes(label = n), vjust = -0.5)+
+    labs(x="N shifts",y="N obs")+
+    facet_wrap(Eco~., scales = "free")
+
+bioshifts |> 
+    group_by(Param, class) |>
+    tally
+
+```
+
+
+# *How related are observed shifts and climate exposure metrics?*
+
+
+```{r, fig.width=10, fig.height=8,message=FALSE,warning=FALSE}
+
+mydata <- bioshifts |>
+    mutate(`Bioclimatic vel.` = bvel_lat,
+           `Biotic vel.` = ShiftRate) |>
+    select(Eco, Param, `Bioclimatic vel.`, `Biotic vel.`) |>
+    pivot_longer(cols = -c(Eco, Param), names_to = "Metric", values_to = "Velocity") |>
+    na.omit()
+
+mydata$Metric <- factor(mydata$Metric, levels = rev(c("Biotic vel.",  "Bioclimatic vel.")))
+
+plot_cat <- expand.grid(Param=c("LE","O","TE"),
+                        realms=c("Ter","Mar"))
+
+plotlist <- lapply(1:nrow(plot_cat), function(i){
+    toplot <- mydata|>
+        filter(Eco == plot_cat$realms[i],
+               Param == plot_cat$Param[i])
+    ggplot(toplot, 
+           aes(x = Velocity, fill = Metric, color = Metric))+
+        ggtitle(paste(plot_cat$realm[i],plot_cat$Param[i],sep = " - "))+
+        geom_histogram(alpha = .5)+
+        theme_classic()+
+        # scale_x_continuous(limits = quantile(toplot$Velocity, c(0.1, 0.9), na.rm = TRUE))+
+        theme(aspect.ratio=1,
+              plot.title = element_text(hjust = 0.5))
+})
+
+ggpubr::ggarrange(
+    plotlist = plotlist, 
+    align = "v", 
+    ncol=3, nrow=2,common.legend = TRUE)
+
+
+
+```
+
+```{r}
+
+ggplot(bioshifts, 
+       aes(x = log(signoise), fill = Param, color = Param))+
+    geom_histogram(alpha = .5)+
+    theme_classic()+
+    geom_hline(yintercept = 0)+
+    # scale_x_continuous(limits = quantile(toplot$Velocity, c(0.1, 0.9), na.rm = TRUE))+
+    theme(aspect.ratio=1,
+          plot.title = element_text(hjust = 0.5))
+
+
+quantile(bioshifts$signoise, na.rm = TRUE)
+
+```
+
+# *Modeled latitudinal shift*
+
+## Angle
+### Frequency
+#### Eco
+```{r}
+
+# Define the breaks
+breaks <- seq(0, 360, length.out = 25)
+
+# Calculate bin width
+bin_width <- diff(breaks)[1]
+
+# Bin the data and calculate midpoints and counts
+hist_data <- bioshifts |>
+    group_by(Eco) |>
+    mutate(bin = cut(bvel_angle, breaks = breaks, include.lowest = TRUE, right = FALSE, labels = FALSE)) |>
+    group_by(bin,Eco) |>
+    summarise(counts = n()) |>
+    mutate(midpoints = (breaks[bin] + breaks[bin + 1]) / 2)
+
+# Select and arrange the relevant columns
+hist_data <- hist_data |>
+    select(midpoints, counts, Eco) |>
+    arrange(midpoints)
+
+ggplot(hist_data, aes(x = midpoints, y = counts))+
+    ggtitle("Frequence of bioclimatic direction")+
+    geom_bar(stat = "identity", aes(fill=Eco)) +
+    scale_x_continuous(breaks = seq(from=0, to=359, by=45), limits=c(0, 360)) +
+    coord_polar() +
+    theme_minimal()+
+    labs(x="",y="")+
+    theme(legend.position = "none",
+          panel.grid.major.x = element_blank()
+    )+
+    facet_wrap(.~Eco, scales = "free")
+
+bioshifts |>
+    summarise(Polewards = length(which((Hemisphere == "North hemisphere" & bvel_lat>0) | 
+                                           Hemisphere == "South hemisphere" & bvel_lat<0)),
+              Equatorwards = length(which((Hemisphere == "North hemisphere" & bvel_lat<0) | 
+                                              Hemisphere == "South hemisphere" & bvel_lat>0)))
+
+bioshifts |>
+    group_by(Eco) |>
+    summarise(Polewards = length(which((Hemisphere == "North hemisphere" & bvel_lat>0) | 
+                                           Hemisphere == "South hemisphere" & bvel_lat<0)),
+              Equatorwards = length(which((Hemisphere == "North hemisphere" & bvel_lat<0) | 
+                                              Hemisphere == "South hemisphere" & bvel_lat>0)))
+
+```
+
+#### Hemisphere
+```{r}
+
+# Define the breaks
+breaks <- seq(0, 360, length.out = 25)
+
+# Calculate bin width
+bin_width <- diff(breaks)[1]
+
+# Bin the data and calculate midpoints and counts
+hist_data <- bioshifts |>
+    group_by(Hemisphere) |>
+    mutate(bin = cut(bvel_angle, breaks = breaks, include.lowest = TRUE, right = FALSE, labels = FALSE)) |>
+    group_by(bin,Hemisphere) |>
+    summarise(counts = n()) |>
+    mutate(midpoints = (breaks[bin] + breaks[bin + 1]) / 2)
+
+# Select and arrange the relevant columns
+hist_data <- hist_data |>
+    select(midpoints, counts, Hemisphere) |>
+    arrange(midpoints)
+
+ggplot(hist_data, aes(x = midpoints, y = counts))+
+    ggtitle("Frequence of bioclimatic direction")+
+    geom_bar(stat = "identity", aes(fill=Hemisphere)) +
+    scale_x_continuous(breaks = seq(from=0, to=359, by=45), limits=c(0, 360)) +
+    coord_polar() +
+    theme_minimal()+
+    labs(x="",y="")+
+    theme(legend.position = "none",
+          panel.grid.major.x = element_blank()
+    )+
+    facet_wrap(.~Hemisphere, scales = "free")
+
+```
+#### Hemisphere vs Eco
+
+```{r, fig.height=6, fig.width=6}
+
+# Bin the data and calculate midpoints and counts
+hist_data <- bioshifts |>
+    group_by(Eco, Hemisphere) |>
+    mutate(bin = cut(bvel_angle, breaks = breaks, include.lowest = TRUE, right = FALSE, labels = FALSE)) |>
+    group_by(Eco,bin, Hemisphere) |>
+    summarise(counts = n()) |>
+    mutate(midpoints = (breaks[bin] + breaks[bin + 1]) / 2,
+           Eco = case_when(Eco == "Ter"~"Terrestrial",
+                           Eco == "Mar"~"Marine"))
+
+# Select and arrange the relevant columns
+hist_data <- hist_data |>
+    select(Eco,midpoints, counts, Hemisphere) |>
+    arrange(midpoints)
+
+ggplot(hist_data, aes(x = midpoints, y = counts,
+                      fill = Eco))+
+    # ggtitle("Frequence of bioclimatic direction")+
+    geom_bar(stat = "identity") +
+    scale_x_continuous(breaks = seq(from=0, to=359, by=45), limits=c(0, 360)) +
+    coord_polar() +
+    scale_fill_manual(values = c("dodgerblue","orange4"))+
+    theme_minimal()+
+    labs(x="",y="")+
+    theme(legend.position = "none",
+          panel.grid.major.x = element_blank()
+    )+
+    facet_wrap(Hemisphere~Eco, scales = "free")
+
+
+# data amount
+if(data_amount=="all"){
+    
+    ggsave(filename = here("Figures/SDM_angle_all.png"), 
+           device = "png", units = "in", dpi = 300,
+           width = 6, height = 6)
+    
+} else {
+    
+    ggsave(filename = here("Figures/SDM_angle.png"), 
+           device = "png", units = "in", dpi = 300,
+           width = 6, height = 6)
+    
+}
+
+```
+
+<!-- #### Hemisphere vs Eco vs Param -->
+```{r fig.width=10,fig.height=15}
+
+# Bin the data and calculate midpoints and counts
+hist_data <- bioshifts |>
+    group_by(Eco,Param,Hemisphere) |>
+    mutate(bin = cut(bvel_angle, breaks = breaks, include.lowest = TRUE, right = FALSE, labels = FALSE)) |>
+    group_by(Eco,Param,bin,Hemisphere) |>
+    summarise(counts = n()) |>
+    mutate(midpoints = (breaks[bin] + breaks[bin + 1]) / 2)
+
+# Select and arrange the relevant columns
+hist_data <- hist_data |>
+    select(Eco,midpoints, counts,Hemisphere) |>
+    arrange(midpoints)
+
+ggplot(hist_data, aes(x = midpoints, y = counts,
+                      fill = Eco))+
+    ggtitle("Frequence of bioclimatic direction")+
+    geom_bar(stat = "identity", width=12) +
+    scale_x_continuous(breaks = seq(from=0, to=359, by=45), limits=c(0, 360)) +
+    coord_polar() +
+    scale_fill_manual(values = c("dodgerblue","orange4"))+
+    theme_minimal()+
+    labs(x="",y="")+
+    theme(legend.position = "none",
+          panel.grid.major.x = element_blank()
+    )+
+    facet_wrap(Hemisphere+Eco~Param, drop = FALSE, ncol = 3)
+
+
+
+```
+
+### Magnitude
+```{r}
+
+# difference in magnitude
+test <- 
+    bioshifts |> 
+    group_by(Eco) |> 
+    filter(!ShiftRate==0,
+           !bvel_lat==0) |> 
+    mutate(Frac = (ShiftRate - bvel_lat)/ShiftRate)
+
+pos <- which(test$ShiftRate < 0)
+test$Frac[pos] <- test$Frac[pos] * -1
+
+test |> 
+    group_by(Eco) |>
+    summarise(Frac = mean(Frac))
+
+```
+
+
+#### Hemisphere
+```{r}
+ggplot(bioshifts, aes(x = bvel_angle, 
+                      y = abs(bvel_lat), color = Hemisphere))+
+    ggtitle("Absolute magnitude of bioclimatic direction (km/year)")+
+    geom_point(alpha=.5) +
+    geom_linerange(aes(ymin = 0, ymax = abs(bvel_lat)), alpha=.5) +
+    scale_x_continuous(breaks = seq(from=0, to=359, by=45), limits=c(0, 360)) +
+    coord_polar() +
+    theme_minimal()+
+    labs(x="",y="")+
+    theme(legend.position = "none",
+          panel.grid.major.x = element_blank()
+    )+
+    facet_wrap(.~Hemisphere)
+```
+#### Hemisphere vs Eco
+
+```{r, fig.height=8, fig.width=8}
+ggplot(bioshifts, aes(x = bvel_angle, 
+                      y = abs(bvel_lat),
+                      color = Eco))+
+    ggtitle("Absolute magnitude of bioclimatic direction (km/year)")+
+    geom_point(alpha=.5) +
+    geom_linerange(aes(ymin = 0, ymax = abs(bvel_lat)), alpha=.5) +
+    scale_color_manual(values = c("dodgerblue","orange4"))+
+    scale_x_continuous(breaks = seq(from=0, to=359, by=45), limits=c(0, 360)) +
+    coord_polar() +
+    theme_minimal()+
+    labs(x="",y="")+
+    theme(legend.position = "none",
+          panel.grid.major.x = element_blank()
+    )+
+    facet_wrap(Hemisphere~Eco)
+```
+
+#### Hemisphere vs Eco vs Param
+```{r fig.width=10,fig.height=15}
+
+ggplot(bioshifts, aes(x = bvel_angle, 
+                      y = abs(bvel_lat),
+                      color = Eco))+
+    ggtitle("Absolute magnitude of bioclimatic direction (km/year)")+
+    geom_point(alpha=.5) +
+    geom_linerange(aes(ymin = 0, ymax = abs(bvel_lat)), alpha=.5) +
+    scale_color_manual(values = c("dodgerblue","orange4"))+
+    scale_x_continuous(breaks = seq(from=0, to=359, by=45), limits=c(0, 360)) +
+    coord_polar() +
+    theme_minimal()+
+    labs(x="",y="")+
+    theme(legend.position = "none",
+          panel.grid.major.x = element_blank()
+    )+
+    facet_wrap(Hemisphere+Eco~Param, scales = "free", drop = FALSE, ncol = 3)
+
+```
+
+### How much of the angle variability is poleward?
+```{r}
+# Calculate the proportion of the unprojected shift captured by latitude
+
+bioshifts |>
+    group_by(Eco) |>
+    mutate(proportions = abs(bvel_lat) / bvel) |>
+    select(proportions,Eco) |>
+    na.omit() |>
+    summarise(proportions_mean = mean(proportions),
+              proportions_sd = sd(proportions))
+
+
+```
+
+
+```{r}
+# Devide North and South hemisphere
+
+# Terrestrial
+bioshifts |>
+    group_by(Hemisphere,Eco) |>
+    count()
+
+tmp <- bioshifts |>
+    group_by(Eco, Hemisphere) |>
+    summarise(mean_angle = mean(circular(na.omit(bvel_angle), 
+                                         units = "degrees", 
+                                         template = "geographics",
+                                         modulo = "2pi")),
+              sd_angle = sd(circular(na.omit(bvel_angle), 
+                                     units = "degrees", 
+                                     template = "geographics",
+                                     modulo = "2pi")),
+              var_angle = var(circular(na.omit(bvel_angle), 
+                                       units = "degrees", 
+                                       template = "geographics",
+                                       modulo = "2pi")))
+tmp
+
+ggplot(tmp, aes(x = mean_angle, y = 1))+
+    geom_bar(stat = "identity", aes(fill=Eco)) +
+    scale_x_continuous(breaks = seq(from=0, to=359, by=45), limits=c(0, 360)) +
+    coord_polar() +
+    theme_minimal()+
+    labs(x="",y="")+
+    theme(legend.position = "none",
+          panel.grid.major.x = element_blank()
+    )+
+    facet_wrap(Hemisphere~Eco, scales = "free")
+
+```
+
+## Direction match
+```{r fig.height=4.2, fig.width=4.2}
+
+d1 <- ggplot(bioshifts |>
+                 filter(ShiftRate!=0) |>
+                 group_by(match_direction_class) |>
+                 count |>
+                 na.omit |> 
+                 data.frame |>
+                 mutate(n = (n/sum(n))*100,
+                        bioclimatic = c("Equatorward","Equatorward","Poleward","Poleward"),
+                        biotic = c("Equatorward","Poleward","Equatorward","Poleward"),
+                        match_direction_class = match_direction_class), 
+             aes(x = bioclimatic, y = biotic)) + 
+    geom_point(aes(size = n, fill = as.factor(match_direction_class)), 
+               alpha = 0.75, shape = 22) + 
+    scale_fill_manual(values = c("negneg" = "#56B4E9", "pospos" = "#56B4E9",
+                                 "posneg" = "#CC79A7", "negpos" = "#CC79A7"))+
+    geom_text(aes(label = paste(round(n,1),"%")), alpha = 0.75, shape = 22) + 
+    scale_size_continuous(limits = c(1, 100), range = c(1,100), breaks = c(1,10,50,75,100)) +
+    labs( x= "Bioclimatic direction", y = "Biotic direction", 
+          size = "Relative frequency (%)", fill = "")  + 
+    theme(legend.key=element_blank(), 
+          axis.text.y = element_text(angle = 90, vjust = 0.5, hjust=.5),
+          panel.background = element_blank(), 
+          panel.border = element_rect(colour = "black", fill = NA, size = 1), 
+          legend.position = "none") 
+
+d1
+
+```
+
+```{r fig.width=4.5, fig.height=3}
+
+d2 <- ggplot(bioshifts |>
+                 filter(ShiftRate!=0) |>
+                 group_by(Eco, match_direction_class) |>
+                 count |>
+                 na.omit |> 
+                 data.frame |>
+                 group_by(Eco) |>
+                 mutate(n = (n/sum(n))*100) |>
+                 ungroup() |>
+                 mutate(bioclimatic = rep(c("Equatorward","Equatorward","Poleward","Poleward"),2),
+                        biotic = rep(c("Equatorward","Poleward","Equatorward","Poleward"),2),
+                        match_direction_class = match_direction_class,
+                        Eco = case_when(Eco == "Mar" ~ "Marine",
+                                        Eco == "Ter" ~ "Terrestrial")), 
+             aes(x = bioclimatic, y = biotic)) + 
+    geom_point(aes(size = n, fill = as.factor(match_direction_class)), 
+               alpha = 0.5, shape = 22, color = "white") + 
+    scale_fill_manual(values = c("negneg" = "gray16", "pospos" = "gray16",
+                                 "posneg" = "gray81", "negpos" = "gray81"))+
+    geom_text(aes(label = paste(round(n,1),"%")), alpha = 0.75) + 
+    scale_size_continuous(limits = c(1, 40), range = c(1,40), breaks = seq(1,40,length.out=4)) +
+    labs( x= "Bioclimatic direction", y = "Biotic direction", 
+          size = "Relative frequency (%)", fill = "")  + 
+    theme(axis.text.y = element_text(angle = 90, vjust = 0.5, hjust=.5),
+          panel.background = element_blank(), 
+          panel.border = element_blank(), 
+          legend.position = "none",
+          aspect.ratio=1)+
+    facet_wrap(.~Eco)
+
+d2
+
+# data amount
+if(data_amount=="all"){
+    
+    ggsave(filename = here("Figures/directionPlot_Mar_Ter_all.svg"), device = "svg",
+           width = 4.5, height = 3, units = "in")
+    
+} else {
+    
+    ggsave(filename = here("Figures/directionPlot_Mar_Ter.svg"), device = "svg",
+           width = 4.5, height = 3, units = "in")
+    
+}
+
+
+bioshifts |>
+    select(match_direction,Eco) |>
+    na.omit |>
+    group_by(Eco) |>
+    summarise(match = length(which(match_direction=='match'))/length(match_direction),
+              mismatch = length(which(match_direction=='mismatch'))/length(match_direction))
+
+```
+
+
+
+## Scatter plots
+### Shift vs NS Shift
+```{r fig.width=12, fig.height=6, warning=FALSE, message=FALSE, message=FALSE}
+
+
+ggplot(bioshifts |>
+           plyr::rename(replace = c(class = "Class"), warn_missing = FALSE) |>
+           mutate(Eco = case_when(Eco == "Mar" ~ "Marine",
+                                  Eco == "Ter" ~ "Terrestrial")))+
+    geom_point(aes(x = bvel_lat, y = bvel_lat2, color = bvel_angle), size = 2, alpha = .5)+
+    labs(x="Modeled latitudinal shift velocity (km/yr)\nLatitude/time", 
+         y="Modeled latitudinal shift velocity (km/yr)\nAngle transformation")+
+    theme_classic() +
+    theme(aspect.ratio=1,
+          plot.title = element_text(hjust = 0.5)) +
+    scale_color_gradientn(colors = myramp_angle)+
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
+    geom_vline(xintercept = 0, linetype = "dashed", color = "darkgray")+
+    geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")+
+    facet_wrap(Eco~., scales = "free")
+
+
+ggplot(bioshifts |>
+           plyr::rename(replace = c(class = "Class"), warn_missing = FALSE) |>
+           mutate(Eco = case_when(Eco == "Mar" ~ "Marine",
+                                  Eco == "Ter" ~ "Terrestrial")))+
+    geom_point(aes(x = abs(bvel_lat), y = bvel, color = bvel_angle), size = 2, alpha = .5)+
+    labs(x="Modeled absolute latitudinal shift velocity (km/yr)\nLatitude/time", 
+         y="Modeled range shift velocity (km/yr)")+
+    theme_classic() +
+    theme(aspect.ratio=1,
+          plot.title = element_text(hjust = 0.5)) +
+    scale_color_gradientn(colors = myramp_angle)+
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
+    geom_vline(xintercept = 0, linetype = "dashed", color = "darkgray")+
+    geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")+
+    facet_wrap(Eco~., scales = "free")
+
+ggplot(bioshifts |>
+           plyr::rename(replace = c(class = "Class"), warn_missing = FALSE) |>
+           mutate(Eco = case_when(Eco == "Mar" ~ "Marine",
+                                  Eco == "Ter" ~ "Terrestrial")))+
+    geom_point(aes(x = abs(bvel_lat2), y = bvel, color = bvel_angle), size = 2, alpha = .5)+
+    labs(x="Modeled absolute latitudinal shift velocity (km/yr)\nAngle transformation", 
+         y="Modeled range shift velocity (km/yr)")+
+    theme_classic() +
+    theme(aspect.ratio=1,
+          plot.title = element_text(hjust = 0.5)) +
+    scale_color_gradientn(colors = myramp_angle)+
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
+    geom_vline(xintercept = 0, linetype = "dashed", color = "darkgray")+
+    geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")+
+    facet_wrap(Eco~., scales = "free")
+
+ggplot(bioshifts |>
+           plyr::rename(replace = c(class = "Class"), warn_missing = FALSE) |>
+           mutate(Eco = case_when(Eco == "Mar" ~ "Marine",
+                                  Eco == "Ter" ~ "Terrestrial")))+
+    geom_point(aes(x = bvel_lat, y = ShiftRate, color = bvel_angle), size = 2, alpha = .5)+
+    labs(x="Modeled latitudinal shift velocity (km/yr)\nLatitude/time", 
+         y="Documented latitudinal shift velocity (km/yr)")+
+    theme_classic() +
+    theme(aspect.ratio=1,
+          plot.title = element_text(hjust = 0.5)) +
+    scale_color_gradientn(colors = myramp_angle)+
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
+    geom_vline(xintercept = 0, linetype = "dashed", color = "darkgray")+
+    geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")+
+    facet_wrap(Eco~., scales = "free")
+
+ggplot(bioshifts |>
+           plyr::rename(replace = c(class = "Class"), warn_missing = FALSE) |>
+           mutate(Eco = case_when(Eco == "Mar" ~ "Marine",
+                                  Eco == "Ter" ~ "Terrestrial")))+
+    geom_point(aes(x = bvel_lat2, y = ShiftRate, color = bvel_angle), size = 2, alpha = .5)+
+    labs(x="Modeled latitudinal shift velocity (km/yr)\nAngle transformation", 
+         y="Documented latitudinal shift velocity (km/yr)")+
+    theme_classic() +
+    theme(aspect.ratio=1,
+          plot.title = element_text(hjust = 0.5)) +
+    scale_color_gradientn(colors = myramp_angle)+
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed")+
+    geom_vline(xintercept = 0, linetype = "dashed", color = "darkgray")+
+    geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")+
+    facet_wrap(Eco~., scales = "free")
+
+plotrix::polar.plot(
+    start = 90,
+    lengths = c(rnorm(360,mean = 1, sd = 0.001)),
+    polar.pos = seq(0,360,by=1),
+    clockwise = TRUE,
+    cex=.1,
+    show.grid.labels=0,
+    line.col=myramp_angle)
+
+```
+
+### Eco
+```{r fig.width=12, fig.height=6, warning=FALSE, message=FALSE, message=FALSE}
+
+new_data <- as_tibble(bioshifts) |>
+    select(ID, sp_name_std, class, Param, bvel_lat, bvel95_lat, ShiftRate, Eco)|>
+    group_by(ID, class, Param, Eco) |>
+    mutate(Nsps = length(unique(sp_name_std)),
+           Eco = case_when(Eco == "Mar" ~ "Marine",
+                           Eco == "Ter" ~ "Terrestrial")) |>
+    filter(Nsps>3) |>
+    summarise(Nsps = mean(Nsps),
+              bvel_lat_sa = mean(bvel_lat),
+              bvel95_lat_sa = mean(bvel95_lat),
+              shift_sa  = mean(ShiftRate),
+              bvel_lat_sa_sd = sd(bvel_lat),
+              bvel_lat_sa_cv = (bvel_lat_sa_sd/bvel_lat_sa)*100,
+              bvel95_lat_sa_sd = sd(bvel95_lat),
+              bvel95_lat_sa_cv = (bvel95_lat_sa_sd/bvel95_lat_sa)*100,
+              shift_sa_sd = sd(ShiftRate),
+              shift_sa_cv = (shift_sa_sd/shift_sa)*100) |>
+    plyr::rename(replace = c(class = "Class"), warn_missing = FALSE) 
+
+my_colors <- bioshifts |>
+    select(class, hex) |>
+    unique()
+
+my_colors_names <- my_colors$class
+my_colors <- my_colors$hex
+names(my_colors) <- my_colors_names
+
+
+p1 <- ggplot(bioshifts |>
+                 plyr::rename(replace = c(class = "Class"), warn_missing = FALSE) |>
+                 mutate(Eco = case_when(Eco == "Mar" ~ "Marine",
+                                        Eco == "Ter" ~ "Terrestrial"),
+                        Eco = factor(Eco, levels = c("Terrestrial", "Marine")))) +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "darkgray")+
+    geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")+
+    geom_point(aes(x = bvel_lat, y = ShiftRate, fill = Class), 
+               shape = 21)+
+    scale_fill_manual(values = my_colors)+
+    labs(x="Modeled latitudinal shift (km/yr)", 
+         y="Documented latitudinal shift (km/yr)")+
+    theme_classic() +
+    theme(aspect.ratio=1,
+          plot.title = element_text(hjust = 0.5),
+          strip.background = element_rect(colour = NA),
+          strip.text = element_text(size = 14)) +
+    scale_color_manual(values = my_colors)+
+    # scale_y_continuous(limits = range(-30,50))+
+    facet_wrap(Eco~., scales = "free")
+
+p1
+
+p1_95 <- ggplot(bioshifts |>
+                    plyr::rename(replace = c(class = "Class"), warn_missing = FALSE) |>
+                    mutate(Eco = case_when(Eco == "Mar" ~ "Marine",
+                                           Eco == "Ter" ~ "Terrestrial"),
+                           Eco = factor(Eco, levels = c("Terrestrial", "Marine")))) +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "darkgray")+
+    geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")+
+    geom_point(aes(x = bvel95_lat, y = ShiftRate, fill = Class), 
+               shape = 21)+
+    scale_fill_manual(values = my_colors)+
+    labs(x="Modeled latitudinal shift (km/yr)", 
+         y="Documented latitudinal shift (km/yr)")+
+    theme_classic() +
+    theme(aspect.ratio=1,
+          plot.title = element_text(hjust = 0.5),
+          strip.background = element_rect(colour = NA),
+          strip.text = element_text(size = 14)) +
+    scale_color_manual(values = my_colors)+
+    # scale_y_continuous(limits = range(-30,50))+
+    facet_wrap(Eco~., scales = "free")
+
+p1_95
+
+```
+
+### Eco / Param
+```{r fig.height = 8, fig.width = 6}
+
+# require(scales)
+# # useful transformations for ggplot axes
+# signedsqrt = function(x) sign(x)*sqrt(abs(x))
+# signedsq = function(x) sign(x) * x^2
+# signedsqrttrans <- trans_new(name = 'signedsqrt', transform = signedsqrt, inverse = signedsq)
+# 
+# p1_sqrt + 
+#     scale_x_continuous(trans = signedsqrttrans) + 
+#     scale_y_continuous(trans = signedsqrttrans) + 
+#     facet_wrap(Eco~Param, scales = "free") + 
+#     theme(legend.position = "none")
+
+```
+
+
+
+Histograms from the distribution of observed and modeled shifts
+```{r, fig.height=8, fig.width=5}
+# p1 <- ggplot(bioshifts |>
+#                plyr::rename(replace = c(class = "Class"), warn_missing = FALSE) |>
+#                mutate(Eco = case_when(Eco == "Mar" ~ "Marine",
+#                                       Eco == "Ter" ~ "Terrestrial")) |>
+#                filter(!(Eco == "Terrestrial" & bvel_lat < -6)) |>
+#                select(Eco, bvel_lat, ShiftRate, Duration) |>
+#                pivot_longer(cols = c(bvel_lat,ShiftRate)) |>
+#                mutate(name = case_when(name == "bvel_lat" ~ "Modeled velocity (km/year)",
+#                                        name == "ShiftRate" ~ "Documented velocity (km/year)"))) +
+#   geom_histogram(aes(x = value, fill = name), alpha=.5) +
+#   # guides(fill = FALSE)+
+#   facet_wrap(.~Eco, scales = "free")
+# 
+# p2 <- ggplot(bioshifts |>
+#                plyr::rename(replace = c(class = "Class"), warn_missing = FALSE) |>
+#                mutate(Eco = case_when(Eco == "Mar" ~ "Marine",
+#                                       Eco == "Ter" ~ "Terrestrial")) |>
+#                filter(!(Eco == "Terrestrial" & bvel_lat < -6)) |>
+#                select(Eco, bvel_lat, ShiftRate, Duration) |>
+#                pivot_longer(cols = c(bvel_lat,ShiftRate)) |>
+#                mutate(name = case_when(name == "bvel_lat" ~ "Modeled shit (km)",
+#                                        name == "ShiftRate" ~ "Documented shift (km)"))) +
+#   geom_histogram(aes(x = value*Duration, fill = name), alpha=.5) +
+#   guides(fill = FALSE)+
+#   facet_wrap(.~Eco, scales = "free")
+# 
+# p3 <- ggplot(bioshifts |>
+#                plyr::rename(replace = c(class = "Class"), warn_missing = FALSE) |>
+#                mutate(Eco = case_when(Eco == "Mar" ~ "Marine",
+#                                       Eco == "Ter" ~ "Terrestrial")) |>
+#                filter(!(Eco == "Terrestrial" & bvel_lat < -6)))+
+#   geom_histogram(aes(x = abs(mismatch)), alpha=.5) +
+#   facet_wrap(.~Eco, scales = "free")
+# 
+# 
+# cowplot::plot_grid(p1,p2,p3,nrow = 3)
+
+```
+
+
+```{r fig.width=12, fig.height=6, warning=FALSE, message=FALSE, message=FALSE}
+
+p2 <- p1 + 
+    geom_point(data = new_data,
+               aes(x=bvel_lat_sa,y=shift_sa, 
+                   size = Nsps, color = Class, fill = Class), 
+               shape = 21, 
+               alpha=.3) +
+    scale_size_continuous(range = c(5,10),
+                          breaks = seq(4,100,length.out=3))+
+    geom_linerange(data = new_data,
+                   aes(x=bvel_lat_sa,y=shift_sa,
+                       xmin = bvel_lat_sa-bvel_lat_sa_sd,
+                       xmax = bvel_lat_sa+bvel_lat_sa_sd), 
+                   alpha = .3) +
+    geom_linerange(data = new_data,
+                   aes(x=bvel_lat_sa,y=shift_sa,
+                       ymin = shift_sa-shift_sa_sd,
+                       ymax = shift_sa+shift_sa_sd), 
+                   alpha = .3)
+
+p2
+
+p3 <- p1 + 
+    geom_point(data = new_data,
+               aes(x=bvel_lat_sa,y=shift_sa, size = Nsps), 
+               shape = 21, 
+               alpha=.3) +
+    scale_size_continuous(range = c(5,10),
+                          breaks = seq(4,100,length.out=3))+
+    geom_linerange(data = new_data,
+                   aes(x=bvel_lat_sa,y=shift_sa,
+                       xmin = bvel_lat_sa-bvel_lat_sa_sd,
+                       xmax = bvel_lat_sa+bvel_lat_sa_sd), 
+                   alpha = .3) +
+    geom_linerange(data = new_data,
+                   aes(x=bvel_lat_sa,y=shift_sa,
+                       ymin = shift_sa-shift_sa_sd,
+                       ymax = shift_sa+shift_sa_sd), 
+                   alpha = .3)
+
+p3
+
+p4 <- ggplot()+
+    geom_point(data = new_data,
+               aes(x=bvel_lat_sa,y=shift_sa, size = Nsps, color = Class, fill = Class), 
+               shape = 21, 
+               alpha=.3) +
+    scale_size_continuous(range = c(5,10),
+                          breaks = seq(4,100,length.out=3))+
+    geom_linerange(data = new_data,
+                   aes(x=bvel_lat_sa,y=shift_sa,
+                       xmin = bvel_lat_sa-bvel_lat_sa_sd,
+                       xmax = bvel_lat_sa+bvel_lat_sa_sd), 
+                   alpha = .3) +
+    geom_linerange(data = new_data,
+                   aes(x=bvel_lat_sa,y=shift_sa,
+                       ymin = shift_sa-shift_sa_sd,
+                       ymax = shift_sa+shift_sa_sd), 
+                   alpha = .3)+
+    labs(x="Modeled latitudinal shift (km/yr)", 
+         y="Documented latitudinal shift (km/yr)")+
+    theme_classic() +
+    theme(aspect.ratio=1,
+          plot.title = element_text(hjust = 0.5)) +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "darkgray")+
+    geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray")+
+    facet_wrap(Eco~., scales = "free_x")
+
+p4
+
+```
+
+
+#### Inset plot (match)
+
+Load model results
+```{r}
+
+# data amount
+if(data_amount=="all"){
+    
+    sm_SA_glmm_res <- read.csv(here("Data/Output/res_sm_SA_glmm_all.csv"))
+    
+} else {
+    
+    sm_SA_glmm_res <- read.csv(here("Data/Output/res_sm_SA_glmm.csv"))
+    
+}
+
+sm_SA_glmm_res$sig <- ifelse(sm_SA_glmm_res$P.value < .05, 1, 0)
+
+sm_SA_glmm_res <- sm_SA_glmm_res |>
+    mutate(Eco = case_when(Eco == "Mar" ~ "Marine",
+                           Eco == "Ter" ~ "Terrestrial")) |>
+    select(Param, Estimate, Eco, sig)
+
+sm_SA_glmm_res <- sm_SA_glmm_res |>
+    pivot_wider(names_from = Param, values_from = c(Estimate,sig))
+names(sm_SA_glmm_res) <- c("Eco","intercept","slope","sig_Intercept", "sig_slope")
+
+sm_SA_glmm_res$Eco <- factor(sm_SA_glmm_res$Eco, levels = c("Marine","Terrestrial"))
+
+
+sm_SA_deming_res <- read.csv(here("Data/Output/res_sm_SA_deming.csv"))
+sm_SA_deming_res$sig <- sapply(1:nrow(sm_SA_deming_res), function(x){
+    test <- sign(sm_SA_deming_res$lower.0.95[x]) == sign(sm_SA_deming_res$upper.0.95[x])
+    ifelse(test, 1, 0)
+})
+
+sm_SA_deming_res <- sm_SA_deming_res |>
+    mutate(Eco = case_when(Eco == "Mar" ~ "Marine",
+                           Eco == "Ter" ~ "Terrestrial")) |>
+    select(Param, Estimate, Eco, sig)
+
+sm_SA_deming_res <- sm_SA_deming_res |>
+    pivot_wider(names_from = Param, values_from = c(Estimate,sig))
+names(sm_SA_deming_res) <- c("Eco","intercept","slope","sig_Intercept", "sig_slope")
+
+sm_SA_deming_res$Eco <- factor(sm_SA_deming_res$Eco, levels = c("Marine","Terrestrial"))
+
+
+# data amount
+if(data_amount=="all"){
+    
+    sm_glmm_res <- read.csv(here("Data/Output/res_glmm_sm_all.csv"))
+    
+} else {
+    
+    sm_glmm_res <- read.csv(here("Data/Output/res_glmm_sm.csv"))
+    
+}
+sm_glmm_res$sig <- ifelse(sm_glmm_res$P.value < .05, 1, 0)
+
+sm_glmm_res <- sm_glmm_res |>
+    mutate(Eco = case_when(Eco == "Mar" ~ "Marine",
+                           Eco == "Ter" ~ "Terrestrial"))|>
+    select(Param, Estimate, Eco, sig)
+
+sm_glmm_res <- sm_glmm_res |>
+    pivot_wider(names_from = Param, values_from = c(Estimate,sig))
+names(sm_glmm_res) <- c("Eco","intercept","slope","sig_Intercept", "sig_slope")
+
+sm_glmm_res$Eco <- factor(sm_glmm_res$Eco, levels = c("Marine","Terrestrial"))
+
+```
+
+```{r fig.width=8, fig.height=6, warning=FALSE, message=FALSE, message=FALSE}
+
+plot_inset_dir_theme <- list(
+    scale_fill_manual(values = c("negneg" = "#73D055FF", "pospos" = "#404788FF",
+                                 "posneg" = "#FDE725FF", "negpos" = "#FDE725FF")),
+    geom_text(aes(label = paste(round(n,1),"%")), alpha = 0.75, size = 3), 
+    geom_vline(xintercept = 0, linetype = "dashed", color = "darkgray"),
+    geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray"),
+    scale_size_continuous(limits = c(1, 50), range = c(1,20), breaks = seq(1,50,length.out=4)),
+    scale_x_continuous(limits = c(-2,2)),
+    scale_y_continuous(limits = c(-2,2)),
+    labs( x= "", y = ""),
+    theme_void(),
+    theme(panel.background = element_blank(), 
+          panel.border = element_blank(), 
+          legend.position = "none",
+          aspect.ratio=1))
+
+plot_inset_SA_theme <- list(
+    scale_size_continuous(range = c(1,5),
+                          breaks = seq(1,50,length.out=10)),
+    geom_vline(xintercept = 0, linetype = "dashed", color = "darkgray"),
+    geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray"),
+    labs(x="", y=""),
+    scale_linetype_manual(values= c("1"="solid","0"="dotted")),
+    theme_bw(),
+    theme(legend.position="none", aspect.ratio=1, 
+          axis.text = element_text(size = 8),
+          panel.grid = element_blank(),
+          panel.background = element_rect(fill='transparent',
+                                          color='transparent'),
+          plot.background = element_rect(fill='transparent',
+                                         color='transparent')))
+
+
+plot_inset_dir_mar <- ggplot(bioshifts |>
+                                 filter(Eco == "Mar",
+                                        ShiftRate!=0) |> 
+                                 group_by(match_direction_class) |>
+                                 count |>
+                                 na.omit |> 
+                                 data.frame |>
+                                 mutate(n = (n/sum(n))*100) |>
+                                 ungroup() |>
+                                 mutate(
+                                     bioclimatic = c(-1,-1,1,1),
+                                     biotic = c(-1,1,-1,1),
+                                     match_direction_class = match_direction_class), 
+                             aes(x = bioclimatic, y = biotic)) + 
+    geom_point(aes(size = n, fill = as.factor(match_direction_class)), 
+               alpha = 0.5, shape = 22, color = "white") + 
+    plot_inset_dir_theme
+
+plot_inset_dir_ter <- ggplot(bioshifts |>
+                                 filter(Eco == "Ter",
+                                        ShiftRate!=0) |> 
+                                 group_by(match_direction_class) |>
+                                 count |>
+                                 na.omit |> 
+                                 data.frame |>
+                                 mutate(n = (n/sum(n))*100) |>
+                                 ungroup() |>
+                                 mutate(
+                                     bioclimatic = c(-1,-1,1,1),
+                                     biotic = c(-1,1,-1,1),
+                                     match_direction_class = match_direction_class), 
+                             aes(x = bioclimatic, y = biotic)) + 
+    geom_point(aes(size = n, fill = as.factor(match_direction_class)), 
+               alpha = 0.5, shape = 22, color = "white") +  
+    plot_inset_dir_theme
+
+
+```
+
+#### Inset plot (match + SA)
+
+```{r fig.width=9, fig.height=6, warning=FALSE, message=FALSE, message=FALSE}
+
+pp <- p1 + 
+    geom_abline(
+        data = sm_glmm_res,
+        aes(intercept = intercept, slope = slope, 
+            linetype = as.factor(sig_slope)), 
+        color = ifelse(sm_glmm_res$sig_slope==1,"red",NA)) +
+    scale_linetype_manual(values= c("1"="solid","0"="dotted"))+
+    # coord_cartesian(xlim = c(-20,25),
+    #                 ylim = c(-30,42))+
+    facetted_pos_scales(
+        x = list(
+            scale_x_continuous(limits = c(-20,25)),
+            NULL),
+        y = list(
+            scale_y_continuous(limits = c(-30,42)),
+            NULL)) +
+    theme(legend.position="none",
+          strip.text.x = element_text(vjust = 2),
+          panel.spacing = unit(2, "lines")) # Panel 2
+
+pg <- plot_grid(pp, 
+                GP_legend,  rel_heights = c(1, .4), nrow = 2)
+
+plot_inset_SA_mar <-
+    ggplot(data = new_data |>
+               filter(Eco == "Marine")) +
+    plot_inset_SA_theme +
+    coord_cartesian(xlim = c(-2,3),
+                    ylim = c(-5,12)) + 
+    scale_fill_manual(values = my_colors)+
+    scale_color_manual(values = my_colors) +
+    geom_linerange(aes(x=bvel_lat_sa,y=shift_sa,
+                       ymin = shift_sa-shift_sa_sd,
+                       ymax = shift_sa+shift_sa_sd, 
+                       color = Class), 
+                   alpha = .3)+
+    geom_linerange(aes(x=bvel_lat_sa,y=shift_sa,
+                       xmin = bvel_lat_sa-bvel_lat_sa_sd,
+                       xmax = bvel_lat_sa+bvel_lat_sa_sd, 
+                       color = Class), 
+                   alpha = .3)+
+    geom_point(aes(x=bvel_lat_sa,y=shift_sa, size = Nsps, fill = Class), shape = 21)+
+    geom_abline(
+        data = sm_SA_glmm_res |>
+            # data = sm_SA_deming_res |>
+            filter(Eco == "Marine"),
+        aes(intercept = intercept, slope = slope, linetype = as.factor(sig_slope)), 
+        color = ifelse(sm_SA_glmm_res$sig_slope[which(sm_SA_glmm_res$Eco=="Marine")]==1,"red",NA)) 
+
+plot_inset_SA_ter <-
+    ggplot(data = new_data |>
+               filter(Eco == "Terrestrial")) +
+    plot_inset_SA_theme +
+    coord_cartesian(xlim = c(-1.5,2.5),
+                    ylim = c(-15,15))+
+    scale_fill_manual(values = my_colors)+
+    scale_color_manual(values = my_colors) +
+    geom_linerange(aes(x=bvel_lat_sa,y=shift_sa,
+                       ymin = shift_sa-shift_sa_sd,
+                       ymax = shift_sa+shift_sa_sd, 
+                       color = Class), 
+                   alpha = .3)+
+    geom_linerange(aes(x=bvel_lat_sa,y=shift_sa,
+                       xmin = bvel_lat_sa-bvel_lat_sa_sd,
+                       xmax = bvel_lat_sa+bvel_lat_sa_sd, 
+                       color = Class), 
+                   alpha = .3)+
+    geom_point(aes(x=bvel_lat_sa,y=shift_sa, size = Nsps, fill = Class), shape = 21)+
+    geom_abline(data = sm_SA_glmm_res |>
+                    # data = sm_SA_deming_res |>
+                    filter(Eco == "Terrestrial"),
+                aes(intercept = intercept, 
+                    slope = slope, 
+                    linetype = as.factor(sig_slope)), 
+                color = ifelse(sm_SA_glmm_res$sig_slope[which(sm_SA_glmm_res$Eco=="Terrestrial")]==1,"red",NA))
+
+plot_w_inset <-
+    ggdraw() +
+    draw_plot(pg) +
+    draw_plot(plot_inset_dir_mar, x = .537, y = .74, width = .2, height = .2) +
+    draw_plot(plot_inset_dir_ter, x = 0.078, y = .74, width = .2, height = .2) +
+    draw_plot(plot_inset_SA_mar, x = .72, y = .65, width = .33, height = .33) +
+    draw_plot(plot_inset_SA_ter, x = .26, y = .65, width = .33, height = .33)
+
+plot_w_inset
+
+# data amount
+if(data_amount=="all"){
+    
+    ggsave(filename = here("Figures/Scatter_Mar_Ter_inset_all.svg"), device = "svg",
+           width = 9, height = 6, units = "in")
+    
+} else {
+    
+    ggsave(filename = here("Figures/Scatter_Mar_Ter_inset.svg"), device = "svg",
+           width = 9, height = 6, units = "in")
+    
+}
+
+
+```
+
+#### Load model results 95
+```{r}
+
+# data amount
+if(data_amount=="all"){
+    
+    sm_SA_glmm_res <- read.csv(here("Data/Output/res_sm_SA_glmm95_all.csv"))
+    
+} else {
+    
+    sm_SA_glmm_res <- read.csv(here("Data/Output/res_sm_SA_glmm95.csv"))
+    
+}
+sm_SA_glmm_res$sig <- ifelse(sm_SA_glmm_res$P.value < .05, 1, 0)
+
+sm_SA_glmm_res <- sm_SA_glmm_res |>
+    mutate(Eco = case_when(Eco == "Mar" ~ "Marine",
+                           Eco == "Ter" ~ "Terrestrial")) |>
+    select(Param, Estimate, Eco, sig)
+
+sm_SA_glmm_res <- sm_SA_glmm_res |>
+    pivot_wider(names_from = Param, values_from = c(Estimate,sig))
+names(sm_SA_glmm_res) <- c("Eco","intercept","slope","sig_Intercept", "sig_slope")
+
+sm_SA_glmm_res$Eco <- factor(sm_SA_glmm_res$Eco, levels = c("Marine","Terrestrial"))
+
+
+sm_SA_deming_res <- read.csv(here("Data/Output/res_sm_SA_deming95.csv"))
+sm_SA_deming_res$sig <- sapply(1:nrow(sm_SA_deming_res), function(x){
+    test <- sign(sm_SA_deming_res$lower.0.95[x]) == sign(sm_SA_deming_res$upper.0.95[x])
+    ifelse(test, 1, 0)
+})
+
+sm_SA_deming_res <- sm_SA_deming_res |>
+    mutate(Eco = case_when(Eco == "Mar" ~ "Marine",
+                           Eco == "Ter" ~ "Terrestrial")) |>
+    select(Param, Estimate, Eco, sig)
+
+sm_SA_deming_res <- sm_SA_deming_res |>
+    pivot_wider(names_from = Param, values_from = c(Estimate,sig))
+names(sm_SA_deming_res) <- c("Eco","intercept","slope","sig_Intercept", "sig_slope")
+
+sm_SA_deming_res$Eco <- factor(sm_SA_deming_res$Eco, levels = c("Marine","Terrestrial"))
+
+
+
+sm_glmm_res <- read.csv(here("Data/Output/res_glmm_sm95.csv"))
+sm_glmm_res$sig <- ifelse(sm_glmm_res$P.value < .05, 1, 0)
+
+sm_glmm_res <- sm_glmm_res |>
+    mutate(Eco = case_when(Eco == "Mar" ~ "Marine",
+                           Eco == "Ter" ~ "Terrestrial"))|>
+    select(Param, Estimate, Eco, sig)
+
+sm_glmm_res <- sm_glmm_res |>
+    pivot_wider(names_from = Param, values_from = c(Estimate,sig))
+names(sm_glmm_res) <- c("Eco","intercept","slope","sig_Intercept", "sig_slope")
+
+sm_glmm_res$Eco <- factor(sm_glmm_res$Eco, levels = c("Marine","Terrestrial"))
+
+```
+
+#### Inset plot 95 (match + SA)
+
+
+```{r fig.width=9, fig.height=6, warning=FALSE, message=FALSE, message=FALSE}
+
+pp <- p1_95 + 
+    geom_abline(
+        data = sm_glmm_res,
+        aes(intercept = intercept, slope = slope, 
+            linetype = as.factor(sig_slope)), 
+        color = ifelse(sm_glmm_res$sig_slope==1,"red",NA)) +
+    scale_linetype_manual(values= c("1"="solid","0"="dotted"))+
+    theme(legend.position="none",
+          strip.text.x = element_text(vjust = 2),
+          panel.spacing = unit(2, "lines"))
+
+pg <- plot_grid(pp, 
+                GP_legend,  rel_heights = c(1, .4), nrow = 2)
+
+plot_inset_SA_mar <-
+    ggplot(data = new_data |>
+               filter(Eco == "Marine")) +
+    plot_inset_SA_theme +
+    coord_cartesian(xlim = c(-2,3),
+                    ylim = c(-7,12)) +
+    scale_fill_manual(values = my_colors)+
+    scale_color_manual(values = my_colors) +
+    geom_linerange(aes(x=bvel95_lat_sa,y=shift_sa,
+                       ymin = shift_sa-shift_sa_sd,
+                       ymax = shift_sa+shift_sa_sd, 
+                       color = Class), 
+                   alpha = .3)+
+    geom_linerange(aes(x=bvel95_lat_sa,y=shift_sa,
+                       xmin = bvel95_lat_sa-bvel95_lat_sa_sd,
+                       xmax = bvel95_lat_sa+bvel95_lat_sa_sd, 
+                       color = Class), 
+                   alpha = .3)+
+    geom_point(aes(x=bvel95_lat_sa,y=shift_sa, size = Nsps, fill = Class), shape = 21)+
+    geom_abline(
+        data = sm_SA_glmm_res |>
+            # data = sm_SA_deming_res |>
+            filter(Eco == "Marine"),
+        aes(intercept = intercept, slope = slope, linetype = as.factor(sig_slope)), 
+        color = ifelse(sm_SA_glmm_res$sig_slope[which(sm_SA_glmm_res$Eco=="Marine")]==1,"red",NA)) 
+
+plot_inset_SA_ter <-
+    ggplot(data = new_data |>
+               filter(Eco == "Terrestrial")) +
+    plot_inset_SA_theme +
+    coord_cartesian(xlim = c(-1,2),
+                    ylim = c(-10,20))+
+    scale_fill_manual(values = my_colors)+
+    scale_color_manual(values = my_colors) +
+    geom_linerange(aes(x=bvel95_lat_sa,y=shift_sa,
+                       ymin = shift_sa-shift_sa_sd,
+                       ymax = shift_sa+shift_sa_sd, 
+                       color = Class), 
+                   alpha = .3)+
+    geom_linerange(aes(x=bvel95_lat_sa,y=shift_sa,
+                       xmin = bvel95_lat_sa-bvel95_lat_sa_sd,
+                       xmax = bvel95_lat_sa+bvel95_lat_sa_sd, 
+                       color = Class), 
+                   alpha = .3)+
+    geom_point(aes(x=bvel95_lat_sa,y=shift_sa, size = Nsps, fill = Class), shape = 21)+
+    geom_abline(data = sm_SA_glmm_res |>
+                    # data = sm_SA_deming_res |>
+                    filter(Eco == "Terrestrial"),
+                aes(intercept = intercept, 
+                    slope = slope, 
+                    linetype = as.factor(sig_slope)), 
+                color = ifelse(sm_SA_glmm_res$sig_slope[which(sm_SA_glmm_res$Eco=="Terrestrial")]==1,"red",NA))
+
+plot_inset_dir_mar <- ggplot(bioshifts |>
+                                 filter(Eco == "Mar",
+                                        ShiftRate!=0) |> 
+                                 group_by(match_direction95_class) |>
+                                 count |>
+                                 na.omit |> 
+                                 data.frame |>
+                                 mutate(n = (n/sum(n))*100) |>
+                                 ungroup() |>
+                                 mutate(
+                                     bioclimatic = c(-1,-1,1,1),
+                                     biotic = c(-1,1,-1,1),
+                                     match_direction95_class = match_direction95_class), 
+                             aes(x = bioclimatic, y = biotic)) + 
+    geom_point(aes(size = n, fill = as.factor(match_direction95_class)), 
+               alpha = 0.5, shape = 22, color = "white") + 
+    plot_inset_dir_theme
+
+plot_inset_dir_ter <- ggplot(bioshifts |>
+                                 filter(Eco == "Ter",
+                                        ShiftRate!=0) |> 
+                                 group_by(match_direction95_class) |>
+                                 count |>
+                                 na.omit |> 
+                                 data.frame |>
+                                 mutate(n = (n/sum(n))*100) |>
+                                 ungroup() |>
+                                 mutate(
+                                     bioclimatic = c(-1,-1,1,1),
+                                     biotic = c(-1,1,-1,1),
+                                     match_direction95_class = match_direction95_class), 
+                             aes(x = bioclimatic, y = biotic)) + 
+    geom_point(aes(size = n, fill = as.factor(match_direction95_class)), 
+               alpha = 0.5, shape = 22, color = "white") +  
+    plot_inset_dir_theme
+
+plot_w_inset <-
+    ggdraw() +
+    draw_plot(pg) +
+    draw_plot(plot_inset_dir_mar, x = 0.07, y = .74, width = .2, height = .2) +
+    draw_plot(plot_inset_dir_ter, x = .537, y = .74, width = .2, height = .2) +
+    draw_plot(plot_inset_SA_mar, x = .26, y = .65, width = .33, height = .33) +
+    draw_plot(plot_inset_SA_ter, x = .72, y = .65, width = .33, height = .33)
+
+plot_w_inset
+
+# data amount
+if(data_amount=="all"){
+    
+    ggsave(filename = here("Figures/Scatter_Mar_Ter_inset95_all.svg"), device = "svg",
+           width = 9, height = 6, units = "in")
+    
+} else {
+    
+    ggsave(filename = here("Figures/Scatter_Mar_Ter_inset95.svg"), device = "svg",
+           width = 9, height = 6, units = "in")
+    
+}
+
+```
+

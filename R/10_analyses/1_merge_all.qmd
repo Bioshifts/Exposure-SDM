@@ -1,0 +1,838 @@
+---
+title: "Merging exposure metrics"
+author: "Bioshifts"
+format: 
+  html:
+    toc: true
+    number-sections: true
+    code-fold: false
+    code-summary: "Code"
+---
+
+# Part I - Add traits, connectivity and bioclimatic velocities to bioshifts
+```{r warning=FALSE, message=FALSE}
+
+rm(list=ls())
+gc()
+
+library(dplyr)
+library(tidyverse)
+library(tidyr)
+library(ggplot2)
+library(knitr)
+library(pbapply)
+library(data.table)
+library(here)
+
+```
+
+```{r source, warning=FALSE, message=FALSE}
+
+computer = "personal"
+source(here("R/settings.R"))
+source(here("R/my_functions.R"))
+source(here("R/velocity_functions.R"))
+
+shift_dir <- here::here("Data/SHIFT")
+sdm_dir <- here::here("Data/SDMs")
+velocity_SA_dir <- here::here("Data/Velocity_SA")
+
+# amount of data to use
+data_amount <- "all"
+
+```
+
+
+```{r}
+
+bioshifts <- read.csv(here(Bioshifts_dir,Bioshifts_DB_v3))
+# remove shifts coded as non-significant
+bioshifts <- bioshifts %>% filter(!Significance == "N")
+
+# subset usefull columns from bioshifts
+bioshifts <- bioshifts_sdms_selection(bioshifts)
+# remove shifts == 0
+# bioshifts <- bioshifts %>% filter(abs(ShiftRate) > 0)
+
+# N shifts
+nrow(bioshifts)
+
+# N species
+length(unique(bioshifts$sp_name_std))
+
+# create ID for merging
+bioshifts$new_ID <- paste(bioshifts$ID,
+                          bioshifts$sp_name_std,
+                          round(bioshifts$Start,0),
+                          round(bioshifts$End,0),
+                          bioshifts$Type,
+                          bioshifts$Param)
+
+# any(duplicated(bioshifts$new_ID))
+# test <- bioshifts$new_ID[which(duplicated(bioshifts$new_ID))]
+# tocheck <- bioshifts %>% filter(new_ID %in% test)
+# write.csv(tocheck,here("tocheck.csv"),row.names = FALSE)
+# head(sort(table(tocheck$new_ID)))
+
+table(bioshifts$class)
+
+```
+
+
+```{r}
+# N species
+length(unique(bioshifts$sp_name_std))
+
+bioshifts %>% 
+    group_by(Eco) %>%
+    summarise(N=length(unique(sp_name_std)))
+
+# N species with GBIF data
+n_occ <- read.csv(here("Data/N_OCC.csv"))
+n_occ$scientificName <- gsub(" ","_",n_occ$scientificName)
+n_occ <- n_occ %>% filter(N_OCC >= 30)
+
+sps <- unique(bioshifts$sp_name_std[which(bioshifts$sp_name_std %in% n_occ$scientificName)])
+length(sps)
+
+bioshifts %>%
+    filter(sp_name_std %in% sps) %>%
+    group_by(Eco) %>%
+    summarise(N=length(unique(sp_name_std)))
+```
+
+
+
+N species in bioshifts that can be used for modeling (i.e., Latitudinal shifts, terrestrial or marine species, shifts starting after 1901 for terrestrial species or after 1958 for marine species, and removing marine shifts for Aves and terrestrial shifts for fish)
+
+```{r}
+
+# New ID
+bioshifts$new_ID <- paste(bioshifts$ID,
+                          bioshifts$sp_name_std,
+                          round(bioshifts$Start,0),
+                          round(bioshifts$End,0))
+
+# any(duplicated(bioshifts$new_ID))
+# test = which(duplicated(bioshifts$new_ID))
+# bioshifts$new_ID[test][1]
+# bioshifts[which(bioshifts$new_ID == bioshifts$new_ID[test][1]),]
+
+bioshifts$Eco <- ifelse(bioshifts$Eco=="Mar", "Marine", "Terrestrial")
+
+table(bioshifts$Eco, bioshifts$Param)
+
+```
+
+N shifts per range edge.
+
+
+## Life form
+```{r}
+
+lifeform <- read.csv(here(Bioshifts_dir,"LifeForm.csv"))
+bioshifts <- merge(bioshifts, 
+                   lifeform, 
+                   by = "class",
+                   all.x = TRUE)
+# extra fixes
+# Tunas are endotherms
+pos <- which(bioshifts$class == "Actinopteri" & bioshifts$family == "Scombridae")
+bioshifts$lifeform[pos] <- "endotherm"
+
+```
+
+## Dispersal traits
+```{r}
+
+traits_full <- read.csv(here(Bioshifts_dir,"Mobility_sp_bioshiftsv1.csv"))
+traits <- traits_full %>%
+    mutate(t_publi_name = gsub(" ","_",publi_name),
+           t_sp_name = gsub(" ","_",SpeciesChecked),
+           Locomotion_mode = gsub(" ","",Locomotion_mode)) %>%
+    select(c("t_publi_name", "t_sp_name" , "Locomotion_mode", "Mobility"))
+# remove sub species
+traits$t_publi_name <- sapply(traits$t_publi_name, function(x){
+    tmp <- strsplit(x,"_")[[1]]
+    return(paste(tmp[1],tmp[2],sep = "_"))
+})
+traits$t_sp_name <- sapply(traits$t_sp_name, function(x){
+    tmp <- strsplit(x,"_")[[1]]
+    return(paste(tmp[1],tmp[2],sep = "_"))
+})
+
+# add taxonomy v3
+sp_list_full <- read.csv(here(Bioshifts_dir,"splist_v3.csv"))
+sp_list <- sp_list_full %>%
+    filter(v1 == 1,
+           !kingdom == "Plantae") %>%
+    mutate(b_publi_name = gsub(" ","_",reported_name_fixed),
+           b_sp_name = gsub(" ","_",species)) %>%
+    select(b_publi_name, b_sp_name, scientificName) %>%
+    unique()
+# # reduce taxonomy resolution to the genus level
+# sp_list$b_publi_name_genus <- sapply(sp_list$b_publi_name, function(x){
+#   tmp <- strsplit(x," ")[[1]]
+#   return(tmp[1])
+# })
+
+# test if have traits for all v1 species
+all(traits$t_publi_name %in% sp_list$b_publi_name)
+# View(traits[which(!traits$t_publi_name %in% sp_list$b_publi_name),]) # only a few
+
+traits <- merge(traits, sp_list,
+                by.x = "t_publi_name",
+                by.y = "b_publi_name",
+                all.x = TRUE)
+
+traits <- merge(traits, sp_list,
+                by.x = "t_sp_name",
+                by.y = "b_sp_name",
+                all.x = TRUE)
+
+traits <- unique(traits)
+
+traits$new_spname <- traits$scientificName.x
+traits$kingdom <- traits$kingdom.x
+traits$class <- traits$class.x
+traits$family <- traits$family.x
+
+pos <- which(is.na(traits$new_spname))
+traits$new_spname[pos] <- traits$scientificName.y[pos]
+
+# there is one species that dont match
+pos <- which(is.na(traits$t_sp_name=="Anas_penelope"))
+traits$new_spname[pos] <- "Mareca penelope"
+
+traits <- traits %>%
+    select(new_spname, Locomotion_mode, Mobility) %>%
+    mutate(new_spname = gsub(" ","_",new_spname)) %>%
+    unique()
+
+
+bioshifts_traits <- merge(bioshifts,
+                          traits,
+                          by.x = "sp_name_std",
+                          by.y = "new_spname",
+                          all.x = TRUE)
+
+write.csv(bioshifts_traits %>%
+              select(sp_name_std, kingdom, phylum, class, family, Coarse_gp, Locomotion_mode, Mobility) %>%
+              unique,
+          here(Bioshifts_dir,"Mobility_sp_bioshiftsv3.csv"), row.names = FALSE)
+
+# manual gap-filling
+
+traits <- read.csv(here(Bioshifts_dir,"Mobility_sp_bioshiftsv3_brunno.csv"))
+traits <- traits %>%
+    select(sp_name_std, Locomotion_mode, Mobility)
+
+bioshifts <- merge(bioshifts,
+                   traits,
+                   by = "sp_name_std",
+                   all.x = TRUE)
+bioshifts <- unique(bioshifts)
+
+```
+
+## SDM evaluation results
+### TSS
+```{r}
+
+sdms_CV <- read.csv(here("Data/sdms_CV.csv"))
+n_occ <- read.csv(here("Data/N_OCC.csv"))
+n_occ$scientificName <- gsub(" ","_",n_occ$scientificName)
+
+sdms_CV$Species <- sapply(sdms_CV$full.name, function(x){
+    tmp <- strsplit(x,split = "_")[[1]][1]
+    gsub(".","_",tmp,fixed = TRUE)
+})
+
+sdms_CV <- sdms_CV %>%
+    filter(metric.eval == "TSS") %>%
+    select("cutoff",
+           "sensitivity","specificity",
+           "calibration","validation",
+           "ECO","Species") %>%
+    group_by(Species,ECO) %>%
+    summarise(cutoff = weighted.mean(cutoff,calibration,na.rm=TRUE),
+              sensitivity = weighted.mean(sensitivity,calibration,na.rm=TRUE),
+              specificity = weighted.mean(specificity,calibration,na.rm=TRUE),
+              calibration = mean(calibration,na.rm=TRUE),
+              validation = mean(validation,na.rm=TRUE))
+
+sdms_CV <- merge(sdms_CV, n_occ[,c("scientificName","class")], 
+                 by.x = "Species", 
+                 by.y = "scientificName",
+                 all.x = TRUE)
+
+
+bioshifts$merge_ID <- paste(bioshifts$sp_name_std,ifelse(bioshifts$Eco == "Terrestrial","Ter","Mar"))
+sdms_CV$merge_ID <- paste(sdms_CV$Species,sdms_CV$ECO)
+
+bioshifts <- merge(bioshifts, sdms_CV[,c(c(3:7,9))], 
+                   by = "merge_ID",
+                   all.x = TRUE)
+
+bioshifts <- bioshifts[,-1]
+
+```
+
+### Boyce
+```{r}
+
+sdms_boyce <- read.csv(here("Data/sdms_boyce.csv"))
+sdms_boyce$merge_ID <- paste(sdms_boyce$species,sdms_boyce$ECO)
+sdms_boyce$Boyce <- sdms_boyce$best.stat
+bioshifts$merge_ID <- paste(bioshifts$sp_name_std,ifelse(bioshifts$Eco == "Terrestrial","Ter","Mar"))
+
+bioshifts <- merge(bioshifts, sdms_boyce[,c("merge_ID","Boyce")], 
+                   by = "merge_ID",
+                   all.x = TRUE)
+bioshifts <- bioshifts[,-1]
+
+```
+
+## Bioclimatic velocity
+```{r}
+
+bioveloMar <- list.files(here("Data/SHIFT/Mar"), 
+                         full.names = TRUE, 
+                         recursive = TRUE, 
+                         pattern = "_SA.csv")
+
+bioveloTer <- list.files(here("Data/SHIFT/Ter"), 
+                         full.names = TRUE, 
+                         recursive = TRUE, 
+                         pattern = "_SA.csv")
+
+# data amount
+if(!data_amount=="all"){
+    
+    rem <- grep("/New/", bioveloMar, fixed = TRUE)
+    bioveloMar <- bioveloMar[-rem]
+    
+    rem <- grep("/New/", bioveloTer, fixed = TRUE)
+    bioveloTer <- bioveloTer[-rem]
+    
+}
+
+biovelo <- c(bioveloMar,bioveloTer)
+biovelo <- pblapply(biovelo, function(x) {
+    info <- strsplit(x,"/")[[1]]
+    info <- info[length(info)]
+    info <- strsplit(info,"_")[[1]]
+    tmp <- read.csv(x)
+    tmp$Species <- paste(info[1],info[2],sep = "_")
+    tmp$ID <- paste(info[3],info[4],sep = "_")
+    tmp$Start <- as.numeric(strsplit(info[5],"-")[[1]][1])
+    tmp$End <- as.numeric(strsplit(info[5],"-")[[1]][2])
+    return(tmp)
+})
+biovelo <- data.table::rbindlist(biovelo, fill = TRUE)
+
+biovelo$new_ID <- paste(biovelo$ID,
+                        biovelo$Species,
+                        round(biovelo$Start,0),
+                        round(biovelo$End,0))
+
+# N species
+length(unique(biovelo$Species))
+
+bioshifts <- merge(bioshifts,
+                   biovelo[,-c(49:52)],
+                   by = "new_ID",
+                   all.x = TRUE)
+
+
+```
+
+
+
+## Connectivity
+```{r}
+
+connectivity <- c(list.files(here("Data/Connectivity_SA_edges/Ter"), full.names = TRUE),
+                  list.files(here("Data/Connectivity_SA_edges/Mar"), full.names = TRUE))
+
+connectivity <- pblapply(connectivity, read.csv)
+connectivity <- rbindlist(connectivity,fill = TRUE)
+
+keep <- grep("ID|Species|conn.median|time",names(connectivity))
+
+connectivity <- data.frame(connectivity)[,keep]
+
+connectivity$new_ID <- paste(connectivity$ID, connectivity$Species, gsub("-", " ",connectivity$time_period))
+connectivity <- connectivity[,-c(1:3)]
+
+bioshifts <- merge(bioshifts,
+                   connectivity,
+                   by = "new_ID",
+                   all.x = TRUE)
+
+# use connectivity SA when it was not possible to calculate connectivity at the edges
+# this happens when the edge extent is too tiny and there are not enough cells to calculate avg connectivity at the edge portion
+connectivity_SA <- c(list.files(here("Data/Connectivity/Ter"), full.names = TRUE),
+                     list.files(here("Data/Connectivity/Mar"), full.names = TRUE))
+
+connectivity_SA <- lapply(connectivity_SA, read.csv)
+connectivity_SA <- rbindlist(connectivity_SA,fill = TRUE)
+connectivity_SA$ID <- connectivity_SA$SA
+
+keep <- grep("ID|conn.median",names(connectivity_SA))
+
+connectivity_SA <- as.data.frame(connectivity_SA)[,keep]
+
+bioshifts <- merge(bioshifts,
+                   connectivity_SA,
+                   by = "ID",
+                   all.x = TRUE)
+
+```
+
+
+## SA extent
+```{r}
+
+all_SAs <- list.files("C:/Users/brunn/ShadowDrive/CreateGeodatabaseBioShifts/Data/ShapefilesBioShiftsv3", full.names = TRUE, pattern = ".shp")
+all_SAs_ext <- pblapply(all_SAs, function(x){
+    tmp <- terra::vect(x)
+    ID = tmp$Name
+    tmp <- data.frame(terra::ext(tmp)[3:4])
+    data.frame(ID = ID,
+               SA_y_min = tmp[1,1],
+               SA_y_max = tmp[2,1])
+})
+all_SAs_ext <- do.call(rbind, all_SAs_ext)
+
+bioshifts <- merge(bioshifts,
+                   all_SAs_ext,
+                   by = "ID",
+                   all.x = TRUE)
+
+```
+
+
+
+## Save exposure data
+
+```{r}
+
+if(!dir.exists(here("Data/Output"))){
+    dir.create(here("Data/Output"),recursive = TRUE)
+}
+
+# data amount
+if(data_amount=="all"){
+    
+    write.csv(bioshifts, here("Data/Output/ExposureData_all.csv"), row.names = FALSE)
+    
+} else {
+    
+    write.csv(bioshifts, here("Data/Output/ExposureData.csv"), row.names = FALSE)
+    
+}
+
+
+```
+
+# Part II - Clean data
+
+## Get exposure metrics
+
+```{r}
+bioshifts <- read.csv(here(Bioshifts_dir,Bioshifts_DB_v3))
+# remove shifts coded as non-significant
+bioshifts <- bioshifts %>% filter(!Significance == "N")
+
+# subset usefull columns from bioshifts
+bioshifts <- bioshifts_sdms_selection(bioshifts)
+# remove shifts == 0
+# bioshifts <- bioshifts %>% filter(abs(ShiftRate) > 0)
+
+# create ID for merging
+bioshifts$new_ID <- paste(bioshifts$ID,
+                          bioshifts$sp_name_std,
+                          round(bioshifts$Start,0),
+                          round(bioshifts$End,0),
+                          bioshifts$Type,
+                          bioshifts$Param)
+
+# any(duplicated(bioshifts$new_ID))
+# test <- bioshifts$new_ID[which(duplicated(bioshifts$new_ID))]
+# tocheck <- bioshifts %>% filter(new_ID %in% test)
+# write.csv(tocheck,here("tocheck.csv"),row.names = FALSE)
+# head(sort(table(tocheck$new_ID)))
+
+table(bioshifts$class)
+
+# data amount
+if(data_amount=="all"){
+    
+    sp_bioshifts <- read.csv(here("Data/Output/ExposureData_all.csv"))
+    
+} else {
+    
+    sp_bioshifts <- read.csv(here("Data/Output/ExposureData.csv"))
+    
+}
+```
+
+
+```{r}
+# N species with bioclimatic 
+sp_bioshifts %>% filter(!is.na(centroid_shift_lat_lm)) %>% summarise(N=length(unique(sp_name_std)))
+
+length(unique(sp_bioshifts$sp_name_std))
+sp_bioshifts %>% group_by(Eco) %>% summarise(N=length(unique(sp_name_std)))
+
+```
+
+```{r warning=FALSE, message=FALSE}
+
+# Variables to get
+
+# Modeled range shift (slope from lm for latitude and longitude). 
+sp_bioshifts$bvel <- NA 
+# Modeled latitudinal shift (slope from lm for latitude). 
+sp_bioshifts$bvel_lat <- NA 
+## error from lm for latitude
+sp_bioshifts$bvel_lat_error <- NA
+# bioclimatic angle (angle of the vector from the magnitudes lat and long)
+sp_bioshifts$bvel_angle <- NA 
+# Use the centroid shift when study estimated shifts of one edge only. We assume the study area is located at the edge position.
+sp_bioshifts$bvel2 <- sp_bioshifts$bvel_lat2 <- sp_bioshifts$bvel_angle2 <- NA 
+
+# Modeled range shift (slope from lm for latitude and longitude). 
+sp_bioshifts$bvel95 <- NA 
+# Modeled latitudinal shift (slope from lm for latitude). 
+sp_bioshifts$bvel95_lat <- NA 
+## error from lm for latitude
+sp_bioshifts$bvel95_lat_error <- NA
+# bioclimatic angle (angle of the vector from the magnitudes lat and long)
+sp_bioshifts$bvel95_angle <- NA 
+# Use the centroid shift when study estimated shifts of one edge only. We assume the study area is located at the edge position.
+sp_bioshifts$bvel952 <- sp_bioshifts$bvel95_lat2 <- sp_bioshifts$bvel95_angle2 <- NA 
+
+# edge velocities
+# median climate change velocity at the edge and at the latitudinal direction. Use the centroid shift when study estimated shifts of one edge only
+sp_bioshifts$vel_lat_mat <- NA 
+# sd of climate change velocity at the edge and at the latitudinal direction
+sp_bioshifts$vel_lat_mat_sd <- NA
+
+# edge connectivity
+sp_bioshifts$connectivity <- NA 
+
+# Change shift direction for studies located at the south hemisphere
+# Find studies located at the south hemisphere
+North <- (sp_bioshifts$SA_y_min > 0 & sp_bioshifts$SA_y_max > 0)
+South <- (sp_bioshifts$SA_y_min < 0 & sp_bioshifts$SA_y_max < 0)
+sp_bioshifts$Hemisphere <- ifelse(North,"North hemisphere","South hemisphere")
+table(sp_bioshifts$Hemisphere)
+
+# Populate bioclimatic velocities
+# O 75
+pos <- which(sp_bioshifts$Param=="O")
+sp_bioshifts$bvel[pos] <- sp_bioshifts$centroid_shift_xy_lm[pos]  
+sp_bioshifts$bvel_lat[pos] <- sp_bioshifts$centroid_shift_lat_lm[pos] 
+sp_bioshifts$bvel_lat_error[pos] <- sp_bioshifts$centroid_shift_lat_lm_error[pos] 
+sp_bioshifts$bvel_angle[pos] <- sp_bioshifts$centroid_shift_xy_angle[pos] 
+# O 95
+sp_bioshifts$bvel95[pos] <- sp_bioshifts$centroid_shift_xy_lm[pos]  
+sp_bioshifts$bvel95_lat[pos] <- sp_bioshifts$centroid_shift_lat_lm[pos] 
+sp_bioshifts$bvel95_lat_error[pos] <- sp_bioshifts$centroid_shift_lat_lm_error[pos] 
+sp_bioshifts$bvel95_angle[pos] <- sp_bioshifts$centroid_shift_xy_angle[pos] 
+
+# sp_bioshifts$vel_mat_lat[pos] <- sp_bioshifts$vel_edge5[pos] 
+sp_bioshifts$connectivity[pos] <- sp_bioshifts$conn.median_CE[pos] 
+
+# LE + North 75
+pos <- which(sp_bioshifts$Param=="LE" & North)
+sp_bioshifts$bvel[pos] <- sp_bioshifts$edge_shift_xy_lm_0.75[pos]  
+sp_bioshifts$bvel_lat[pos] <- sp_bioshifts$edge_shift_lat_lm_0.75[pos]
+sp_bioshifts$bvel_lat_error[pos] <- sp_bioshifts$edge_shift_lat_lm_error_0.75[pos] 
+sp_bioshifts$bvel_angle[pos] <- sp_bioshifts$edge_shift_xy_angle_0.75[pos] 
+# LE + North 95
+sp_bioshifts$bvel95[pos] <- sp_bioshifts$edge_shift_xy_lm_0.95[pos]  
+sp_bioshifts$bvel95_lat[pos] <- sp_bioshifts$edge_shift_lat_lm_0.95[pos]
+sp_bioshifts$bvel95_lat_error[pos] <- sp_bioshifts$edge_shift_lat_lm_error_0.95[pos] 
+sp_bioshifts$bvel95_angle[pos] <- sp_bioshifts$edge_shift_xy_angle_0.95[pos] 
+
+# sp_bioshifts$vel_mat_lat[pos] <- sp_bioshifts$vel_edge75[pos] 
+sp_bioshifts$connectivity[pos] <- sp_bioshifts$conn.median_upper[pos] 
+
+# TE + North 25
+pos <- which(sp_bioshifts$Param=="TE" & North)
+sp_bioshifts$bvel[pos] <- sp_bioshifts$edge_shift_xy_lm_0.25[pos]  
+sp_bioshifts$bvel_lat[pos] <- sp_bioshifts$edge_shift_lat_lm_0.25[pos]
+sp_bioshifts$bvel_lat_error[pos] <- sp_bioshifts$edge_shift_lat_lm_error_0.25[pos] 
+sp_bioshifts$bvel_angle[pos] <- sp_bioshifts$edge_shift_xy_angle_0.25[pos] 
+# TE + North 5
+sp_bioshifts$bvel95[pos] <- sp_bioshifts$edge_shift_xy_lm_0.05[pos]  
+sp_bioshifts$bvel95_lat[pos] <- sp_bioshifts$edge_shift_lat_lm_0.05[pos]
+sp_bioshifts$bvel95_lat_error[pos] <- sp_bioshifts$edge_shift_lat_lm_error_0.05[pos] 
+sp_bioshifts$bvel95_angle[pos] <- sp_bioshifts$edge_shift_xy_angle_0.05[pos] 
+
+# sp_bioshifts$vel_mat_lat[pos] <- sp_bioshifts$vel_edge25[pos] 
+sp_bioshifts$connectivity[pos] <- sp_bioshifts$conn.median_lower[pos] 
+
+# LE + South 25
+pos <- which(sp_bioshifts$Param=="LE" & South)
+sp_bioshifts$bvel[pos] <- sp_bioshifts$edge_shift_xy_lm_0.25[pos]  
+sp_bioshifts$bvel_lat[pos] <- sp_bioshifts$edge_shift_lat_lm_0.25[pos]
+sp_bioshifts$bvel_lat_error[pos] <- sp_bioshifts$edge_shift_lat_lm_error_0.25[pos] 
+sp_bioshifts$bvel_angle[pos] <- sp_bioshifts$edge_shift_xy_angle_0.25[pos] 
+# LE + South 5
+sp_bioshifts$bvel95[pos] <- sp_bioshifts$edge_shift_xy_lm_0.05[pos]  
+sp_bioshifts$bvel95_lat[pos] <- sp_bioshifts$edge_shift_lat_lm_0.05[pos]
+sp_bioshifts$bvel95_lat_error[pos] <- sp_bioshifts$edge_shift_lat_lm_error_0.05[pos] 
+sp_bioshifts$bvel95_angle[pos] <- sp_bioshifts$edge_shift_xy_angle_0.05[pos] 
+
+# sp_bioshifts$vel_mat_lat[pos] <- sp_bioshifts$vel_edge25[pos] 
+sp_bioshifts$connectivity[pos] <- sp_bioshifts$conn.median_lower[pos] 
+
+# TE + South 75
+pos <- which(sp_bioshifts$Param=="TE" & South)
+sp_bioshifts$bvel[pos] <- sp_bioshifts$edge_shift_xy_lm_0.75[pos]  
+sp_bioshifts$bvel_lat[pos] <- sp_bioshifts$edge_shift_lat_lm_0.75[pos]
+sp_bioshifts$bvel_lat_error[pos] <- sp_bioshifts$edge_shift_lat_lm_error_0.75[pos] 
+sp_bioshifts$bvel_angle[pos] <- sp_bioshifts$edge_shift_xy_angle_0.75[pos] 
+# TE + South 95
+sp_bioshifts$bvel95[pos] <- sp_bioshifts$edge_shift_xy_lm_0.95[pos]  
+sp_bioshifts$bvel95_lat[pos] <- sp_bioshifts$edge_shift_lat_lm_0.95[pos]
+sp_bioshifts$bvel95_lat_error[pos] <- sp_bioshifts$edge_shift_lat_lm_error_0.95[pos] 
+sp_bioshifts$bvel95_angle[pos] <- sp_bioshifts$edge_shift_xy_angle_0.95[pos] 
+
+# sp_bioshifts$vel_mat_lat[pos] <- sp_bioshifts$vel_edge75[pos] 
+sp_bioshifts$connectivity[pos] <- sp_bioshifts$conn.median_upper[pos] 
+
+# Use centroid shift for studies with only one edge
+# if study estimated shifts of one edge only, we assume the SA is located at the edge of species range and thus we can use the SA centroid shift directly.
+one_edge_study <- bioshifts %>%
+    filter(!Param=="O") %>%
+    group_by(ID) %>%
+    summarise(N = length(unique(Param))) %>%
+    filter(N == 1) %>%
+    select(ID)
+
+pos <- which(sp_bioshifts$ID %in% one_edge_study$ID)
+sp_bioshifts$bvel[pos] <- sp_bioshifts$centroid_shift_xy_lm[pos] 
+sp_bioshifts$bvel_lat[pos] <- sp_bioshifts$centroid_shift_lat_lm[pos] 
+sp_bioshifts$bvel_angle[pos] <- sp_bioshifts$centroid_shift_xy_angle[pos] 
+
+sp_bioshifts$bvel95[pos] <- sp_bioshifts$centroid_shift_xy_lm[pos] 
+sp_bioshifts$bvel95_lat[pos] <- sp_bioshifts$centroid_shift_lat_lm[pos] 
+sp_bioshifts$bvel95_angle[pos] <- sp_bioshifts$centroid_shift_xy_angle[pos] 
+
+# sp_bioshifts$vel_mat_lat[pos] <- sp_bioshifts$vel_edge5[pos] 
+sp_bioshifts$connectivity[pos] <- sp_bioshifts$conn.median_CE[pos] 
+
+# get velocity at latitude from angle and vector velocity xy
+sp_bioshifts$bvel_lat2 <- sp_bioshifts$bvel * cos(deg_to_rad(sp_bioshifts$bvel_angle))
+
+# Change the sign of velocities in the South hemisphere (positive values mean edges shift towards the poles)
+pos <- which(South)
+sp_bioshifts$bvel_lat[pos] <- sp_bioshifts$bvel_lat[pos] * -1
+sp_bioshifts$bvel95_lat[pos] <- sp_bioshifts$bvel95_lat[pos] * -1
+
+v_ang <- sp_bioshifts$bvel_angle
+v_ang[pos] <- (v_ang[pos] + 180) %% 360
+sp_bioshifts$bvel_lat2 <- sp_bioshifts$bvel * (cos(deg_to_rad(v_ang)))
+
+
+sp_bioshifts$new_ID <- paste(sp_bioshifts$ID,
+                             sp_bioshifts$sp_name_std,
+                             round(sp_bioshifts$Start,0),
+                             round(sp_bioshifts$End,0),
+                             sp_bioshifts$Type,
+                             sp_bioshifts$Param)
+
+pos <- which(is.na(sp_bioshifts$connectivity))
+sp_bioshifts$connectivity[pos] <- sp_bioshifts$conn.median[pos]
+
+sp_bioshifts <- sp_bioshifts %>%
+    mutate(connectivity_SA = conn.median) %>% 
+    select(new_ID, Hemisphere, 
+           bvel, bvel_lat, bvel_lat2, bvel_lat_error, bvel_angle,
+           bvel95, bvel95_lat, bvel95_lat_error, bvel95_angle,
+           # vel_mat_lat, vel_mat_lat_median, vel_mat_lat_median_25km, 
+           sensitivity, validation, calibration, Boyce,
+           connectivity, connectivity_SA,
+           lifeform, Mobility, Locomotion_mode) %>%
+    mutate(TSS=calibration)
+
+keep_col <- c("new_ID", names(sp_bioshifts)[!names(sp_bioshifts) %in% names(bioshifts)])
+sp_bioshifts <- sp_bioshifts %>% dplyr::select(keep_col)
+sp_bioshifts <- unique(sp_bioshifts)
+
+
+```
+
+```{r warning=FALSE, message=FALSE}
+
+# add methods from bioshifts to the data
+bioshifts <- merge(bioshifts, sp_bioshifts, by = "new_ID", all.x = TRUE)
+
+# N species
+length(unique(bioshifts$sp_name_std))
+
+```
+
+
+```{r warning=FALSE, message=FALSE}
+# shifts are in meters >> convert to km
+bioshifts$bvel_lat <- bioshifts$bvel_lat/1000
+bioshifts$bvel95_lat <- bioshifts$bvel95_lat/1000
+
+bioshifts$bvel_lat2 <- bioshifts$bvel_lat2/1000
+
+bioshifts$bvel <- bioshifts$bvel/1000
+bioshifts$bvel_lat_error <- bioshifts$bvel_lat_error/1000
+bioshifts$bvel95_lat_error <- bioshifts$bvel95_lat_error/1000
+
+```
+
+
+```{r warning=FALSE, message=FALSE}
+# calculate signal to noise ratio
+bioshifts$signoise <- abs(bioshifts$bvel_lat) / bioshifts$bvel_lat_error
+# bioshifts$signoise <- sqrt(bioshifts$bvel_lat) / sqrt(bioshifts$bvel_lat_error)
+```
+
+75
+```{r warning=FALSE, message=FALSE}
+# calculate mismatch between observed and predicted
+bioshifts$mismatch <- bioshifts$ShiftRate - bioshifts$bvel_lat
+bioshifts$mismatch_percent <- (bioshifts$mismatch/bioshifts$ShiftRate)*100
+bioshifts$mismatch_trend <- (bioshifts$ShiftRate*bioshifts$Duration) - (bioshifts$bvel_lat*bioshifts$Duration)
+
+# get mismatch direction
+# apply threshold to mismatch (any mismatch in trends < 1km is considered a match)
+bioshifts <- bioshifts %>%
+    mutate(match_direction = case_when(
+        ShiftRate >= 0 & bvel_lat  >= 0 ~ "match",
+        ShiftRate <= 0 & bvel_lat  <= 0 ~ "match",
+        ShiftRate <= 0 & bvel_lat  >= 0 ~ "mismatch",
+        ShiftRate >= 0 & bvel_lat  <= 0 ~ "mismatch",
+        TRUE ~ "mismatch")) %>%
+    # tolerance for direction match (2x resolution of the environmental data)
+    mutate(match_direction = case_when(
+        Eco == "Ter" & abs(mismatch_trend) < 2 ~ "match",
+        Eco == "Mar" & abs(mismatch_trend) < 50 ~ "match",
+        TRUE ~ match_direction))
+
+table(bioshifts$match_direction)
+
+# get lag vs overshoot
+bioshifts <- bioshifts %>%
+    mutate(lag_overshoot = case_when(
+        mismatch < 0 ~ "overshoot",
+        mismatch > 0 ~ "lag")) %>%
+    mutate(lag_overshoot = case_when(
+        match_direction == "mismatch" ~ "misalignment",
+        TRUE ~ lag_overshoot))
+
+# get mismatch classification
+bioshifts <- bioshifts %>%
+    mutate(match_direction_class = case_when(
+        ShiftRate >= 0 & bvel_lat  >= 0 ~ "pospos",
+        ShiftRate <= 0 & bvel_lat  <= 0 ~ "negneg",
+        ShiftRate <= 0 & bvel_lat  >= 0 ~ "negpos",
+        ShiftRate >= 0 & bvel_lat  <= 0 ~ "posneg",
+        TRUE ~ NA)) %>%
+    mutate(match_direction_class = 
+               case_when(match_direction == "match" & match_direction_class == "negpos" ~ "pospos",
+                         match_direction == "match" & match_direction_class == "posneg" ~ "negneg",
+                         TRUE ~ match_direction_class))
+
+table(bioshifts$match_direction_class)
+
+```
+
+95
+```{r warning=FALSE, message=FALSE}
+# calculate mismatch95 between observed and predicted
+bioshifts$mismatch95 <- bioshifts$ShiftRate - bioshifts$bvel95_lat
+bioshifts$mismatch95_percent <- (bioshifts$mismatch95/bioshifts$ShiftRate)*100
+bioshifts$mismatch95_trend <- (bioshifts$ShiftRate*bioshifts$Duration) - (bioshifts$bvel95_lat*bioshifts$Duration)
+
+# get mismatch direction
+# apply threshold to mismatch (any mismatch in trends < 1km is considered a match)
+bioshifts <- bioshifts %>%
+    mutate(match_direction95 = case_when(
+        ShiftRate >= 0 & bvel95_lat  >= 0 ~ "match",
+        ShiftRate <= 0 & bvel95_lat  <= 0 ~ "match",
+        ShiftRate <= 0 & bvel95_lat  >= 0 ~ "mismatch",
+        ShiftRate >= 0 & bvel95_lat  <= 0 ~ "mismatch",
+        TRUE ~ "mismatch")) %>%
+    # tolerance for direction match (2x resolution of the environmental data)
+    mutate(match_direction95 = case_when(
+        Eco == "Ter" & abs(mismatch95_trend) < 2 ~ "match",
+        Eco == "Mar" & abs(mismatch95_trend) < 50 ~ "match",
+        TRUE ~ match_direction95))
+
+table(bioshifts$match_direction95)
+
+# get lag vs overshoot
+bioshifts <- bioshifts %>%
+    mutate(lag_overshoot95 = case_when(
+        mismatch95 < 0 ~ "overshoot",
+        mismatch95 > 0 ~ "lag")) %>%
+    mutate(lag_overshoot95 = case_when(
+        match_direction95 == "mismatch" ~ "misalignment",
+        TRUE ~ lag_overshoot95))
+
+# get mismatch95 classification
+bioshifts <- bioshifts %>%
+    mutate(match_direction95_class = case_when(
+        ShiftRate >= 0 & bvel95_lat  >= 0 ~ "pospos",
+        ShiftRate <= 0 & bvel95_lat  <= 0 ~ "negneg",
+        ShiftRate <= 0 & bvel95_lat  >= 0 ~ "negpos",
+        ShiftRate >= 0 & bvel95_lat  <= 0 ~ "posneg",
+        TRUE ~ NA)) %>%
+    # tolerance for direction match (2x resolution of the environmental data)
+    mutate(match_direction95_class = 
+               case_when(match_direction95 == "match" & match_direction95_class == "negpos" ~ "pospos",
+                         match_direction95 == "match" & match_direction95_class == "posneg" ~ "negneg",
+                         TRUE ~ match_direction95_class))
+
+table(bioshifts$match_direction95_class)
+
+```
+
+```{r warning=FALSE, message=FALSE}
+
+# classify grain
+bioshifts$Grain_size <- factor(bioshifts$Grain_size, levels = c("small","moderate","large","very_large"))
+
+# classify category
+bioshifts$Category <- factor(bioshifts$Category, levels = c("TimeSeries","CensusPeriods","Survey-Resurvey", "Census-Resurvey", "Synthesis"))
+
+# exclude observations without predicted shift
+bioshifts <- bioshifts %>% filter(!is.na(bvel95_lat))
+
+# fix col names
+bioshifts <- bioshifts %>%
+    mutate(class = tools::toTitleCase(as.character(class)),
+           lifeform = tools::toTitleCase(as.character(lifeform)))
+
+bioshifts$lifeform <- factor(bioshifts$lifeform, 
+                             levels = c("Endotherm","Ectotherm","Cryptogam","Phanerogam"))
+
+```
+
+## Save dataset
+```{r}
+
+# data amount
+if(data_amount=="all"){
+    
+    write.csv(bioshifts, here("Data/Output/Bioshifts_merge_Exposure_all.csv"), row.names = FALSE)
+    
+} else {
+    
+    write.csv(bioshifts, here("Data/Output/Bioshifts_merge_Exposure.csv"), row.names = FALSE)
+    
+}
+
+```
