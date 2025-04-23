@@ -131,7 +131,7 @@ ramps <- list(Endotherm = c("red4", "pink"),
 
 bio_cols <- bioshifts |>
     group_by(lifeform, class) |>
-    tally |>
+    tally() |>
     select(lifeform, class)
 bio_cols$hex <- NA
 
@@ -170,41 +170,41 @@ sdms_CV <- bioshifts |>
               Boyce = mean(Boyce,na.rm=TRUE)) |>
     mutate(Eco = case_when(Eco == "Mar" ~ "Marine",
                            Eco == "Ter" ~ "Terrestrial"))
+
+N_sps_class <- sdms_CV |>
+    group_by(class) |>
+    summarise(N = length(class))
+
+sdms_CV <- merge(sdms_CV, N_sps_class)
+sdms_CV$class <- paste0(sdms_CV$class, " (",sdms_CV$N,")")
+
+sdms_CV_mean <- sdms_CV |>
+    group_by(Eco,class) |>
+    summarise(sensitivity = mean(sensitivity,na.rm=TRUE),
+              calibration = mean(calibration,na.rm=TRUE),
+              validation = mean(validation,na.rm=TRUE),
+              Boyce = mean(Boyce,na.rm=TRUE))
 ```
 
 
 ```{r fig.width=8, fig.height=4*2}
-p1 <- ggplot(sdms_CV, aes(x = calibration, 
+p1 <-
+    ggplot(sdms_CV, aes(x = validation, 
                           y = factor(class, level = rev(sort(unique(sdms_CV$class))))))+
-    geom_boxplot(outlier.alpha = 0)+
-    facet_wrap(.~Eco, scales = "free")+
-    labs(x="TSS calibration",y="")+
-    scale_x_continuous(limits=c(0,1))+
-    # intercept 0
-    geom_vline(xintercept = 0, color='gray', linetype = "dashed")+
-    # grand mean
-    geom_vline(xintercept = mean(bioshifts$calibration,na.rm=TRUE),
-               color='black', linewidth = 1, alpha = .5)+
-    # grand mean terrestrial
-    geom_vline(data=filter(sdms_CV, Eco=="Terrestrial"),
-               aes(xintercept = mean(calibration, na.rm = TRUE)),
-               color='red', linewidth = 1, alpha = .5)+
-    # grand mean marine
-    geom_vline(data=filter(sdms_CV, Eco=="Marine"),
-               aes(xintercept = mean(calibration, na.rm = TRUE)),
-               color='red', linewidth = 1, alpha = .5)+
-    theme_classic()
-
-p2 <- ggplot(sdms_CV, aes(x = validation, 
-                          y = factor(class, level = rev(sort(unique(sdms_CV$class))))))+
-    geom_boxplot(outlier.alpha = 0)+
+    geom_jitter(alpha=.3, height = .1, color = "darkgray")+
+    geom_boxplot(outlier.alpha = 0, alpha = .5)+
+    geom_point(data = sdms_CV_mean,
+               aes(x = validation, 
+                          y = factor(class, level = rev(sort(unique(sdms_CV$class))))),
+               size = 4,shape = 21, 
+               fill = "white", color = "black", alpha = .5)+
     facet_wrap(.~Eco, scales = "free")+
     labs(x="TSS validation",y="")+
     scale_x_continuous(limits=c(0,1))+
     # intercept 0
     geom_vline(xintercept = 0, color='gray', linetype = "dashed")+
     # grand mean
-    geom_vline(xintercept = mean(bioshifts$validation,na.rm=TRUE),
+    geom_vline(xintercept = mean(sdms_CV$validation,na.rm=TRUE),
                color='black', linewidth = 1, alpha = .5)+
     # grand mean terrestrial
     geom_vline(data=filter(sdms_CV, Eco=="Terrestrial"),
@@ -216,35 +216,22 @@ p2 <- ggplot(sdms_CV, aes(x = validation,
                color='red', linewidth = 1, alpha = .5)+
     theme_classic()
 
-p3 <- ggplot(sdms_CV, aes(x = sensitivity, 
+p2 <- ggplot(sdms_CV, aes(x = Boyce, 
                           y = factor(class, level = rev(sort(unique(sdms_CV$class))))))+
-    geom_boxplot(outlier.alpha = 0)+
-    facet_wrap(.~Eco, scales = "free")+
-    labs(x="Sensitivity",y="")+
-    # intercept 0
-    geom_vline(xintercept = 0, color='gray', linetype = "dashed")+
-    # grand mean
-    geom_vline(xintercept = mean(bioshifts$sensitivity,na.rm=TRUE),
-               color='black', linewidth = 1, alpha = .5)+
-    # grand mean terrestrial
-    geom_vline(data=filter(sdms_CV, Eco=="Terrestrial"),
-               aes(xintercept = mean(sensitivity, na.rm = TRUE)),
-               color='red', linewidth = 1, alpha = .5)+
-    # grand mean marine
-    geom_vline(data=filter(sdms_CV, Eco=="Marine"),
-               aes(xintercept = mean(sensitivity, na.rm = TRUE)),
-               color='red', linewidth = 1, alpha = .5)+
-    theme_classic()
-
-p4 <- ggplot(sdms_CV, aes(x = Boyce, 
-                          y = factor(class, level = rev(sort(unique(sdms_CV$class))))))+
-    geom_boxplot(outlier.alpha = 0)+
+    geom_jitter(alpha=.3, height = .1, color = "darkgray")+
+    geom_boxplot(outlier.alpha = 0,
+                 alpha = .5)+
+    geom_point(data = sdms_CV_mean,
+               aes(x = Boyce, 
+                          y = factor(class, level = rev(sort(unique(sdms_CV$class))))),
+               size = 4,shape = 21, 
+               fill = "white", color = "black", alpha = .5)+
     facet_wrap(.~Eco, scales = "free")+
     labs(x="Boyce",y="")+
     # intercept 0
     geom_vline(xintercept = 0, color='gray', linetype = "dashed")+
     # grand mean
-    geom_vline(xintercept = mean(bioshifts$Boyce,na.rm=TRUE),
+    geom_vline(xintercept = mean(sdms_CV$Boyce,na.rm=TRUE),
                color='black', linewidth = 1, alpha = .5)+
     # grand mean terrestrial
     geom_vline(data=filter(sdms_CV, Eco=="Terrestrial"),
@@ -255,8 +242,12 @@ p4 <- ggplot(sdms_CV, aes(x = Boyce,
                aes(xintercept = mean(Boyce, na.rm = TRUE)),
                color='red', linewidth = 1, alpha = .5)+
     theme_classic()
+```
 
-cowplot::plot_grid(p2,p4,
+
+```{r fig.width=8, fig.height=4*2}
+
+cowplot::plot_grid(p1,p2,
                    labels = "AUTO",
                    ncol = 1)
 
@@ -317,9 +308,17 @@ sdms_CV |>
               SD=sd(validation,na.rm=TRUE),
               Range=paste(range(validation,na.rm=TRUE),collapse = " - "))
 
-maov <- aov(calibration~Eco, sdms_CV)
+maov <- aov(validation~Eco, sdms_CV)
 summary(maov)
 TukeyHSD(maov)
+
+# top highest values
+sdms_CV |>
+    group_by(class,Eco) |>
+    summarise(Mean=mean(validation,na.rm=TRUE),
+              N = length(class)) |>
+    arrange(desc(Mean))
+
 ```
 
 ## Sensitivity
@@ -371,6 +370,19 @@ sdms_CV |>
 maov <- aov(Boyce~class, sdms_CV)
 summary(maov)
 TukeyHSD(maov)
+
+# top highest values
+sdms_CV |>
+    group_by(class,Eco) |>
+    summarise(Mean=mean(Boyce,na.rm=TRUE),
+              N = length(class)) |>
+    arrange(desc(Mean))
+
+bioshifts |>
+    filter(class == "Elasmobranchii") |>
+    select(class,family) |>
+    group_by(class,family) |>
+    tally()
 ```
 
 ## Correlation between boyce and TSS
@@ -556,6 +568,8 @@ ggplot(hist_data, aes(x = midpoints, y = counts))+
     facet_wrap(.~Hemisphere, scales = "free")
 
 ```
+
+
 #### Hemisphere vs Eco
 
 ```{r, fig.height=6, fig.width=6}
@@ -734,7 +748,7 @@ bioshifts |>
 
 ```
 
-
+### Mean angle
 ```{r}
 # Devide North and South hemisphere
 

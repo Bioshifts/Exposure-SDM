@@ -1,3 +1,8 @@
+# test if elements in vector have the same sign
+same_sign <- function(x, y) {
+    sign(x) == sign(y)
+}
+
 # get coeffs from variables
 get_glmmTMB_coeffs_from_variables <- function(model = mm_ter, 
                                               continuous_variables = cont_vars, 

@@ -170,11 +170,6 @@ sp_list <- sp_list_full %>%
            b_sp_name = gsub(" ","_",species)) %>%
     select(b_publi_name, b_sp_name, scientificName) %>%
     unique()
-# # reduce taxonomy resolution to the genus level
-# sp_list$b_publi_name_genus <- sapply(sp_list$b_publi_name, function(x){
-#   tmp <- strsplit(x," ")[[1]]
-#   return(tmp[1])
-# })
 
 # test if have traits for all v1 species
 all(traits$t_publi_name %in% sp_list$b_publi_name)
@@ -726,8 +721,8 @@ table(bioshifts$match_direction)
 # get lag vs overshoot
 bioshifts <- bioshifts %>%
     mutate(lag_overshoot = case_when(
-        mismatch < 0 ~ "overshoot",
-        mismatch > 0 ~ "lag")) %>%
+        mismatch < 0 ~ "lag",
+        mismatch > 0 ~ "overshoot")) %>%
     mutate(lag_overshoot = case_when(
         match_direction == "mismatch" ~ "misalignment",
         TRUE ~ lag_overshoot))
@@ -776,8 +771,8 @@ table(bioshifts$match_direction95)
 # get lag vs overshoot
 bioshifts <- bioshifts %>%
     mutate(lag_overshoot95 = case_when(
-        mismatch95 < 0 ~ "overshoot",
-        mismatch95 > 0 ~ "lag")) %>%
+        mismatch95 < 0 ~ "lag",
+        mismatch95 > 0 ~ "overshoot")) %>%
     mutate(lag_overshoot95 = case_when(
         match_direction95 == "mismatch" ~ "misalignment",
         TRUE ~ lag_overshoot95))

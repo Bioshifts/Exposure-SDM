@@ -27,22 +27,22 @@ shiftmodtype_to_go <- "75" # use 95 or 75
 # render script
 # run this at the console
 
-library(rmarkdown)
-
-output_file <- here::here(paste0("R/10_merge_all/3_SDM_models_report_",data_amount_to_go,"_",shiftmodtype_to_go,".html"))
-
-rmarkdown::render(
-    params = list(shiftmodtype = shiftmodtype_to_go,
-                  data_amount = data_amount_to_go),
-    input = here::here("R/10_merge_all/3_SDM_models.qmd"),
-    output_file = output_file,
-    output_format = html_document(toc = TRUE,
-                                  toc_depth = 2,
-                                  toc_float = TRUE,
-                                  number_sections = TRUE,
-                                  code_folding = "hide",
-                                  code_download = TRUE,
-                                  code_summary = "Code"))
+# library(rmarkdown)
+# 
+# output_file <- here::here(paste0("R/10_analyses/3_SDM_models_report_",data_amount_to_go,"_",shiftmodtype_to_go,".html"))
+# 
+# rmarkdown::render(
+#     params = list(shiftmodtype = shiftmodtype_to_go,
+#                   data_amount = data_amount_to_go),
+#     input = here::here("R/10_analyses/3_SDM_models.qmd"),
+#     output_file = output_file,
+#     output_format = html_document(toc = TRUE,
+#                                   toc_depth = 2,
+#                                   toc_float = TRUE,
+#                                   number_sections = TRUE,
+#                                   code_folding = "hide",
+#                                   code_download = TRUE,
+#                                   code_summary = "Code"))
 
 ```
 
@@ -72,7 +72,7 @@ if(is.null(params$shiftmodtype)){
 
 ```{r warning=FALSE, message=FALSE}
 
-list.of.packages <- c("dplyr", "tidyverse", "tidyr", "ggplot2", "knitr", "pbapply", "data.table", "GGally", "here", "terra", "tidyterra", "rcompanion", "lme4", "glmmTMB", "MuMIn", "emmeans", "parallel", "sjPlot", "jtools", "deming", "cowplot", "DescTools", "gtools", "ggpp", "gridExtra", "ggeffects", "svglite", "ggpubr","rnaturalearth","parallel", "effects","rnaturalearthdata")
+list.of.packages <- c("dplyr", "tidyverse", "tidyr", "ggplot2", "knitr", "pbapply", "data.table", "GGally", "here", "terra", "tidyterra", "rcompanion", "lme4", "glmmTMB", "MuMIn", "emmeans", "parallel", "sjPlot", "jtools", "gt", "gtsummary", "deming", "cowplot", "DescTools", "gtools", "ggpp", "gridExtra", "ggeffects", "svglite", "ggpubr","rnaturalearth","parallel", "effects","rnaturalearthdata")
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
 if(length(new.packages)) install.packages(new.packages)
 sapply(list.of.packages, require, character.only = TRUE)
@@ -105,113 +105,19 @@ if(data_amount=="all"){
 
 if(shiftmodtype == "95"){
     bioshifts <- bioshifts |>
-    mutate(bvel_lat = bvel95_lat,
-           lag_overshoot = lag_overshoot95,
-           mismatch = mismatch95,
-           mismatch_percent = mismatch95_percent,
-           mismatch_trend = mismatch95_trend,
-           match_direction = match_direction95,
-           match_direction_class = match_direction95_class)
+        mutate(bvel_lat = bvel95_lat,
+               lag_overshoot = lag_overshoot95,
+               mismatch = mismatch95,
+               mismatch_percent = mismatch95_percent,
+               mismatch_trend = mismatch95_trend,
+               match_direction = match_direction95,
+               match_direction_class = match_direction95_class)
 }
 
 
 ```
 
-```{r warning=FALSE, message=FALSE}
 
-# select classes with more than X observations per edge
-N_obs_class = 5
-class_param_select <- bioshifts |>
-    group_by(class, Param) |>
-    tally() |>
-    filter(n >= N_obs_class) |>
-    mutate(class_param = paste(class,Param))
-
-bioshifts <- bioshifts |> 
-    mutate(class_param = paste(class,Param)) |> 
-    filter(class_param %in% class_param_select$class_param) |>
-    select(!class_param)
-
-# remove one outlier species
-bioshifts <- bioshifts |>
-    filter(!(Eco == "Ter" & bvel_lat < -15))
-```
-
-
-```{r summarizing}
-# N species
-length(unique(bioshifts$sp_name_std))
-
-bioshifts |> 
-    group_by(Param) |> 
-    summarise(N=length(unique(sp_name_std)))
-
-bioshifts |> 
-    group_by(Eco) |> 
-    summarise(N=length(unique(sp_name_std)))
-
-bioshifts |> 
-    group_by(Eco,Param) |> 
-    summarise(N=length(unique(sp_name_std)))
-
-# N range shifts
-length(bioshifts$sp_name_std)
-
-bioshifts |> 
-    group_by(Param) |> 
-    summarise(N=length(sp_name_std))
-
-bioshifts |> 
-    group_by(Eco) |>
-    summarise(N=length(sp_name_std))
-
-bioshifts |> 
-    group_by(Eco,Param) |>
-    summarise(N=length(sp_name_std))
-```
-
-
-```{r testfaster}
-# dev.off()
-
-# how faster are documented to modeled shifts?
-bioshifts |>
-    group_by(Eco) |>
-    filter(!is.infinite(mismatch_percent)) |>
-    summarise(mean_documented = mean(ShiftRate),
-              mean_modeled = mean(bvel_lat),
-              mean_mismatch = mean(mismatch),
-              perc_mismatch = mean(mismatch_percent,na.rm = TRUE))
-
-tmp <- bioshifts |>
-    select(Eco, ShiftRate, bvel_lat) |>
-    pivot_longer(!Eco, names_to = "Shift")
-
-ggplot(tmp, 
-       aes(x = value, color = Shift)) +
-    geom_density() +
-    scale_x_continuous(limits = c(quantile(tmp$value, c(.05, .95))))+
-    geom_vline(data = tmp |>
-                   group_by(Eco,Shift) |>
-                   summarise(M = mean(((value)))),
-               aes(xintercept = M, color = Shift))+
-    facet_wrap(.~Eco)
-
-# how faster are documented to modeled shifts when they match in direction?
-bioshifts |>
-    group_by(Eco,match_direction) |>
-    filter(!is.infinite(mismatch_percent)) |>
-    summarise(mean_documented = mean(ShiftRate),
-              mean_modeled = mean(bvel_lat),
-              mean_mismatch = mean(mismatch),
-              perc_mismatch = median(mismatch_percent,na.rm = TRUE))
-
-bioshifts |>
-    group_by(Eco,lag_overshoot) |>
-    tally()
-
-
-```
 
 # Make dataset for modeling
 ```{r}
@@ -231,7 +137,7 @@ mod_data <- bioshifts |>
            Mobility = as.character(str_to_sentence(Mobility)),
            Locomotion_mode = as.character(str_to_sentence(Locomotion_mode)),
            Life_form = as.character(str_to_sentence(lifeform)),
-           Sampling_category = Category,
+           Sampling_method = Category,
            Random_ID_Param_Class = paste(ID,Param,class),
            Random_ID_Class = paste(ID,class),
            Random_Param_Class = paste(Param,class),
@@ -245,11 +151,11 @@ mod_data <- bioshifts |>
                case_when(match_direction=="Misalignment" ~ 0,
                          match_direction=="Alignment" ~ 1),
            
-           Match_dir = 
+           Shift_alignment = 
                case_when(match_direction_class=="pospos" ~ "Poleward",
                          match_direction_class=="negneg" ~ "Equatorward",
                          match_direction == "Misalignment" ~ "Misalignment"),
-           Match_dir = relevel(factor(Match_dir), ref = "Misalignment"),
+           Shift_alignment = relevel(factor(Shift_alignment), ref = "Misalignment"),
            
            lag_overshoot = 
                case_when(lag_overshoot=="lag" ~ "Lag",
@@ -257,9 +163,9 @@ mod_data <- bioshifts |>
                          lag_overshoot == "misalignment" ~ "Misalignment"),
            lag_overshoot = relevel(factor(lag_overshoot), ref = "Misalignment")) |>
     select(ShiftRate_raw, ShiftMod_raw, ShiftRate, ShiftMod,
-           mismatch, match_direction, mismatch_binary, Match_dir,
+           mismatch, match_direction, mismatch_binary, Shift_alignment,
            mismatch_trend, lag_overshoot, lag_overshoot95,
-           Lat_extent, Sampling_category, Boyce, Interannual_var, N_periods, Study_duration,
+           Lat_extent, Sampling_method, Boyce, Interannual_var, N_periods, Study_duration, Hemisphere,
            Life_form, Mobility, Locomotion_mode, Connectivity, 
            ID, Param, class, Eco, sp_name_std, 
            Random_ID_Param_Class, Random_Param_Class, Random_ID_Class)
@@ -269,7 +175,6 @@ mod_data <- bioshifts |>
 
 Extra fixes for variables
 ```{r}
-
 # fixing Locomotion_mode
 unique(mod_data$Locomotion_mode)
 # if multiple locomotion modes, use the first (the main locomotion mode)
@@ -313,45 +218,16 @@ mod_data$Locomotion_mode <- factor(
     mod_data$Locomotion_mode,
     levels = c("Fly", "Run/Walk", "Swim", "Slither/Crawl", "Planktonic", "Sessile"))
 
-table(mod_data$Locomotion_mode[which(mod_data$Eco=="Ter")])
-table(mod_data$Locomotion_mode[which(mod_data$Eco=="Mar")])
-
-# fixing Sampling_category
-table(mod_data$Sampling_category)
+# fixing Sampling_method
+table(mod_data$Sampling_method)
 # remove synthesis because there is a only a single study
-mod_data <- mod_data |> filter(!Sampling_category == "Synthesis")
+mod_data <- mod_data |> filter(!Sampling_method == "Synthesis")
 # combine census-resurvey and survey-resurvey 
-pos <- grep("Census-Resurvey",mod_data$Sampling_category)
-mod_data$Sampling_category[pos] <- "Survey-Resurvey"
-table(mod_data$Sampling_category)
-mod_data$Sampling_category <- factor(mod_data$Sampling_category, 
-                                     levels = c("TimeSeries", "CensusPeriods", "Survey-Resurvey"))
-
-# Fix direction levels
-table(mod_data$Mobility[which(mod_data$Eco=="Ter")])
-table(mod_data$Mobility[which(mod_data$Eco=="Mar")])
-
-table(mod_data$Life_form[which(mod_data$Eco=="Ter")])
-table(mod_data$Life_form[which(mod_data$Eco=="Mar")])
-
-# Fix lag overshoot
-table(mod_data$lag_overshoot)
-
-table(mod_data$lag_overshoot[which(mod_data$Eco=="Ter")])
-table(mod_data$lag_overshoot[which(mod_data$Eco=="Mar")])
-
-table(mod_data$lag_overshoot95[which(mod_data$Eco=="Ter")])
-table(mod_data$lag_overshoot95[which(mod_data$Eco=="Mar")])
-
-# N classes 
-mod_data |> 
-    group_by(Eco) |>
-    summarise(N = length(unique(class)))
-
-# N studies 
-mod_data |> 
-    group_by(Eco) |>
-    summarise(N = length(unique(ID)))
+pos <- grep("Census-Resurvey",mod_data$Sampling_method)
+mod_data$Sampling_method[pos] <- "Survey-Resurvey"
+table(mod_data$Sampling_method)
+mod_data$Sampling_method <- factor(mod_data$Sampling_method, 
+                                   levels = c("TimeSeries", "CensusPeriods", "Survey-Resurvey"))
 
 # make numeric as.numeric
 pos <- which(sapply(mod_data, is.numeric))
@@ -359,6 +235,198 @@ tmp <- lapply(mod_data[pos], as.numeric)
 tmp <- do.call(cbind,tmp)
 mod_data[pos] <- tmp
 
+
+# select classes with more than X observations per edge
+N_obs_class = 5
+class_param_select <- mod_data |>
+    group_by(class, Param) |>
+    tally() |>
+    filter(n >= N_obs_class) |>
+    mutate(class_param = paste(class,Param))
+
+mod_data <- mod_data |> 
+    mutate(class_param = paste(class,Param)) |> 
+    filter(class_param %in% class_param_select$class_param) |>
+    select(!class_param)
+
+# remove one outlier species
+mod_data <- mod_data |>
+    filter(!(Eco == "Ter" & ShiftMod < -15))
+
+
+# remove swimming terrestrials
+mod_data <- mod_data |>
+    filter(!(Eco == "Ter" & Locomotion_mode == "Swim"))
+```
+
+# Stats
+
+N species
+```{r summarizing}
+length(unique(mod_data$sp_name_std))
+
+mod_data |> 
+    group_by(Param) |> 
+    summarise(N=length(unique(sp_name_std)))
+
+mod_data |> 
+    group_by(Eco) |> 
+    summarise(N=length(unique(sp_name_std)))
+
+mod_data |> 
+    group_by(Eco,Param) |> 
+    summarise(N=length(unique(sp_name_std)))
+
+mod_data |> 
+    group_by(Eco,Hemisphere) |> 
+    summarise(N=length(unique(sp_name_std)))
+```
+
+N range shifts
+```{r summarizing2}
+nrow(mod_data)
+
+mod_data |> 
+    group_by(Param) |> 
+    summarise(N=length(sp_name_std))
+
+mod_data |> 
+    group_by(Eco) |>
+    summarise(N=length(sp_name_std))
+
+mod_data |> 
+    group_by(Eco,Param) |>
+    summarise(N=length(sp_name_std))
+```
+
+
+```{r summarizing2}
+
+mod_data |> 
+    summarise(mean=mean(abs(ShiftMod_raw)),
+              SD=sd(abs(ShiftMod_raw)))
+
+# are modeled marine shifts faster than terrestrial shifts? 
+mod_data |> 
+    group_by(Eco) |>
+    summarise(mean=mean(abs(ShiftMod_raw)),
+              SD=sd(abs(ShiftMod_raw)))
+
+ggplot(mod_data, aes(x = Eco, y = abs(ShiftMod_raw)))+
+    scale_y_continuous(trans = "log1p")+
+    geom_boxplot(outlier.alpha = 0)+
+    theme_classic()
+
+mod <- aov(abs(ShiftMod_raw) ~ Eco, mod_data)
+summary(mod)
+
+```
+
+N classes 
+```{r summarizing3}
+mod_data |> 
+    group_by(Eco) |>
+    summarise(N = length(unique(class)))
+```
+
+N studies 
+```{r summarizing4}
+mod_data |> 
+    group_by(Eco) |>
+    summarise(N = length(unique(ID)))
+```
+
+N lags, overshoots and misalignments
+```{r summarizing5}
+mod_data |> 
+    group_by(lag_overshoot) |>
+    summarise(Perc=length(lag_overshoot)/nrow(mod_data)*100) |>
+    mutate(across(where(is.numeric), round, 1))
+
+mod_data |> 
+    group_by(Eco, lag_overshoot) |>
+    summarise(Count = n(),
+              Mean = mean(mismatch)) |> 
+    mutate(Perc = (Count / sum(Count)) * 100) |> 
+    mutate(across(where(is.numeric), round, 2))
+
+# what is the proportion of lags/overshoots after removing misalignments?
+mod_data |> 
+    filter(!lag_overshoot == "Misalignment") |>
+    group_by(lag_overshoot) |>
+    summarise(Count = n()) |> 
+    mutate(Perc = (Count / sum(Count)) * 100) |> 
+    mutate(across(where(is.numeric), round, 1))
+
+# mean mistmach value by category
+bioshifts |>
+    group_by(Eco,lag_overshoot) |>
+    filter(!is.infinite(mismatch_percent)) |>
+    summarise(mean_mismatch = mean(mismatch)) |>
+    mutate(across(where(is.numeric), round, 2))
+```
+
+Locomotion, mobility and life form
+```{r}
+table(mod_data$Locomotion_mode[which(mod_data$Eco=="Ter")])
+table(mod_data$Locomotion_mode[which(mod_data$Eco=="Mar")])
+
+table(mod_data$Mobility[which(mod_data$Eco=="Ter")])
+table(mod_data$Mobility[which(mod_data$Eco=="Mar")])
+
+table(mod_data$Life_form[which(mod_data$Eco=="Ter")])
+table(mod_data$Life_form[which(mod_data$Eco=="Mar")])
+```
+
+How faster are documented to modeled shifts?
+```{r testfaster}
+
+bioshifts |>
+    group_by(Eco) |>
+    filter(!is.infinite(mismatch_percent)) |>
+    summarise(mean_documented = mean(ShiftRate),
+              mean_modeled = mean(bvel_lat),
+              mean_mismatch = mean(mismatch),
+              perc_mismatch = mean(mismatch_percent,na.rm = TRUE))
+
+tmp <- bioshifts |>
+    select(Eco, ShiftRate, bvel_lat) |>
+    pivot_longer(!Eco, names_to = "Shift")
+
+ggplot(tmp, 
+       aes(x = value, color = Shift)) +
+    geom_density() +
+    scale_x_continuous(limits = c(quantile(tmp$value, c(.05, .95))))+
+    geom_vline(data = tmp |>
+                   group_by(Eco,Shift) |>
+                   summarise(M = mean(((value)))),
+               aes(xintercept = M, color = Shift))+
+    facet_wrap(.~Eco)
+
+
+# how faster are documented to modeled shifts when they match in direction?
+bioshifts |>
+    group_by(Eco,match_direction) |>
+    filter(!is.infinite(mismatch_percent)) |>
+    summarise(mean_documented = mean(ShiftRate),
+              mean_modeled = mean(bvel_lat),
+              mean_mismatch = mean(mismatch),
+              perc_mismatch = median(mismatch_percent,na.rm = TRUE)) |>
+    mutate(across(where(is.numeric), round, 2))
+
+bioshifts |>
+    group_by(Eco,lag_overshoot) |>
+    tally()
+
+
+# avg observed and modeled shifts
+bioshifts |>
+    group_by(Eco) |>
+    summarise(mean_documented = mean(ShiftRate),
+              sd_documented = sd(ShiftRate),
+              mean_modeled = mean(bvel_lat),
+              sd_modeled = sd(bvel_lat)) |>
+    mutate(across(where(is.numeric), round, 2))
 ```
 
 # Check for correlations
@@ -393,15 +461,15 @@ mod_data[pos] <- tmp
 #   geom_smooth()+
 #   facet_wrap(.~Eco)
 # 
-# # is NPeriods correlated with Sampling_category?
-# ggplot(mod_data, aes(Sampling_category,(N_periods)))+
+# # is NPeriods correlated with Sampling_method?
+# ggplot(mod_data, aes(Sampling_method,(N_periods)))+
 #   geom_point()+
 #   theme_classic()+
 #   geom_smooth()+
 #   facet_wrap(.~Eco)
 # 
-# # is Study_duration correlated with Sampling_category?
-# ggplot(mod_data, aes(Sampling_category,Study_duration))+
+# # is Study_duration correlated with Sampling_method?
+# ggplot(mod_data, aes(Sampling_method,Study_duration))+
 #   geom_point()+
 #   theme_classic()+
 #   geom_smooth()+
@@ -418,7 +486,7 @@ mod_data[pos] <- tmp
 
 
 
-Removed N_periods as it is highly correlated with Sampling_category
+Removed N_periods as it is highly correlated with Sampling_method
 
 # VIF
 ## Terrestrial
@@ -426,10 +494,10 @@ Removed N_periods as it is highly correlated with Sampling_category
 ```{r}
 subdata_ter <- mod_data |>
     filter(Eco=="Ter") |>
-    select("mismatch", "Boyce", "Study_duration", "Interannual_var", "Lat_extent", "Connectivity", "Sampling_category", "Life_form", "Locomotion_mode") |>
+    select("mismatch", "Boyce", "Study_duration", "Interannual_var", "Lat_extent", "Connectivity", "Sampling_method", "Life_form", "Locomotion_mode") |>
     na.omit()
 
-mm_formula_ter <- "mismatch ~ Boyce + Study_duration + Interannual_var + Lat_extent + Connectivity + Sampling_category + Life_form + Locomotion_mode"
+mm_formula_ter <- "mismatch ~ Boyce + Study_duration + Interannual_var + Lat_extent + Connectivity + Sampling_method + Life_form + Locomotion_mode"
 
 m1 <- glm(mm_formula_ter, 
           data = subdata_ter,
@@ -437,7 +505,7 @@ m1 <- glm(mm_formula_ter,
 summary(m1)
 # locomotion mode is problematic >> remove
 
-mm_formula_ter <- "mismatch ~ Boyce + Study_duration + Interannual_var + Lat_extent + Connectivity + Sampling_category + Life_form"
+mm_formula_ter <- "mismatch ~ Boyce + Study_duration + Interannual_var + Lat_extent + Connectivity + Sampling_method + Life_form"
 
 m1 <- glm(mm_formula_ter, 
           data = subdata_ter,
@@ -447,7 +515,7 @@ VIF(m1)
 # high VIF value for life form
 # try keeping locomotion mode and removing life form
 
-mm_formula_ter <- "mismatch ~ Boyce + Study_duration + Interannual_var + Lat_extent + Connectivity + Sampling_category + Locomotion_mode"
+mm_formula_ter <- "mismatch ~ Boyce + Study_duration + Interannual_var + Lat_extent + Connectivity + Sampling_method + Locomotion_mode"
 m1 <- glm(mm_formula_ter, 
           data = subdata_ter,
           family = Gamma(link = "log"))
@@ -462,10 +530,10 @@ VIF(m1) # Ok
 
 subdata_mar <- mod_data |>
     filter(Eco=="Mar") |>
-    select("mismatch", "Boyce", "Study_duration", "N_periods", "Interannual_var", "Connectivity", "Lat_extent", "Sampling_category", "Life_form", "Locomotion_mode") |>
+    select("mismatch", "Boyce", "Study_duration", "N_periods", "Interannual_var", "Connectivity", "Lat_extent", "Sampling_method", "Life_form", "Locomotion_mode") |>
     na.omit()
 
-mm_formula_mar <- "mismatch ~ Boyce + Study_duration + Interannual_var + Lat_extent + Connectivity + Sampling_category + Life_form + Locomotion_mode"
+mm_formula_mar <- "mismatch ~ Boyce + Study_duration + Interannual_var + Lat_extent + Connectivity + Sampling_method + Life_form + Locomotion_mode"
 
 m1 <- glm(mm_formula_mar, 
           data = subdata_mar,
@@ -475,7 +543,7 @@ VIF(m1)
 # high VIF value for locomotion mode
 # try keeping locomotion mode and removing life form
 
-mm_formula_mar <- "mismatch ~ Boyce + Study_duration + Interannual_var + Lat_extent + Connectivity + Sampling_category + Locomotion_mode"
+mm_formula_mar <- "mismatch ~ Boyce + Study_duration + Interannual_var + Lat_extent + Connectivity + Sampling_method + Locomotion_mode"
 
 m1 <- glm(mm_formula_mar,
           data = subdata_mar,
@@ -508,7 +576,7 @@ cont_vars <- c(
 )
 cat_vars <- c(
     "Life_form",
-    "Sampling_category",
+    "Sampling_method",
     "Locomotion_mode"
 )
 
@@ -542,7 +610,7 @@ cont_vars_names <- c(
 )
 cat_vars_names <- c(
     "Life form",
-    "Sampling category",
+    "Sampling method",
     "Locomotion mode"
 )
 
@@ -566,7 +634,7 @@ sm_fixed_eff <- "ShiftRate ~  ShiftMod"
 sm_formula <- paste(sm_fixed_eff, RE_nest, sep = " + ")
 
 # simple model * direction
-sm_fixed_eff_dir <- "ShiftRate ~  ShiftMod * Match_dir"
+sm_fixed_eff_dir <- "ShiftRate ~  ShiftMod * Shift_alignment"
 sm_formula_dir <- paste(sm_fixed_eff_dir, RE_nest, sep = " + ")
 
 # mismatch model
@@ -909,7 +977,6 @@ tab_model(sm_SA_glmm_ter,sm_SA_glmm_mar,
 
 ### Terrestrial
 ```{r fig.width=8, fig.height=4}
-
 var_to_go <- strsplit(sm_formula_dir,"~|[+]|[/]|[|]|[*]")[[1]]
 var_to_go <- gsub(" |[(]|[)]","",var_to_go)
 var_to_go <- var_to_go[-which(var_to_go=="1")]
@@ -925,15 +992,18 @@ sm_dir_ter <- glmmTMB(as.formula(sm_formula_dir),
 # tab_model(sm_dir_ter)
 
 # plot(effects::allEffects(sm_dir_ter), main = "Terrestrial")
+```
 
+
+```{r fig.width=8, fig.height=4}
 # test if this model is better that random 
-sm_formula_dir_random <- gsub("Match_dir","Shuffled_Match_dir",sm_formula_dir)
+sm_formula_dir_random <- gsub("Shift_alignment","Shuffled_Match_dir",sm_formula_dir)
 
 cl <- makeCluster(detectCores()-2)
 clusterExport(cl, c("subdata_ter", "glmmTMB", "sm_formula_dir_random", "r.squaredGLMM"))
 
 null_r_squared <- pbreplicate(100, {
-    subdata_ter$Shuffled_Match_dir  <- sample(subdata_ter$Match_dir)
+    subdata_ter$Shuffled_Match_dir  <- sample(subdata_ter$Shift_alignment)
     model_null <- glmmTMB(as.formula(sm_formula_dir_random),
                           data = subdata_ter)
     data.frame(r.squaredGLMM(model_null))
@@ -978,7 +1048,6 @@ Modeled shift velocity is positively related to observed shift velocity only whe
 ### Marine
 
 ```{r fig.width=8, fig.height=4}
-
 var_to_go <- strsplit(sm_formula_dir,"~|[+]|[/]|[|]|[*]")[[1]]
 var_to_go <- gsub(" |[(]|[)]","",var_to_go)
 var_to_go <- var_to_go[-which(var_to_go=="1")]
@@ -994,15 +1063,18 @@ sm_dir_mar <- glmmTMB(as.formula(sm_formula_dir),
 # tab_model(sm_dir_mar)
 
 # plot(effects::allEffects(sm_dir_mar), main = "Marine")
+```
 
+
+```{r fig.width=8, fig.height=4}
 # test if this model is better that random 
-sm_formula_dir_random <- gsub("Match_dir","Shuffled_Match_dir",sm_formula_dir)
+sm_formula_dir_random <- gsub("Shift_alignment","Shuffled_Match_dir",sm_formula_dir)
 
 cl <- makeCluster(detectCores()-2)
 clusterExport(cl, c("subdata_mar", "glmmTMB", "sm_formula_dir_random", "r.squaredGLMM"))
 
 null_r_squared <- pbreplicate(100, {
-    subdata_mar$Shuffled_Match_dir  <- sample(subdata_mar$Match_dir)
+    subdata_mar$Shuffled_Match_dir  <- sample(subdata_mar$Shift_alignment)
     model_null <- glmmTMB(as.formula(sm_formula_dir_random),
                           data = subdata_mar)
     data.frame(r.squaredGLMM(model_null))
@@ -1050,9 +1122,9 @@ Modeled shift velocity is positively related to observed shift velocity only whe
 ```{r fig.height=6,fig.width=7}
 
 sm_dir_ter_eff <- ggeffects::ggeffect(sm_dir_ter, 
-                                      terms = c("ShiftMod","Match_dir"))
+                                      terms = c("ShiftMod","Shift_alignment"))
 sm_dir_mar_eff <- ggeffects::ggeffect(sm_dir_mar, 
-                                      terms = c("ShiftMod","Match_dir"))
+                                      terms = c("ShiftMod","Shift_alignment"))
 
 # unscale vars
 params_xy <- bioshifts |>
@@ -1096,7 +1168,7 @@ sm_dir_mar_eff_plot <-
     geom_ribbon(aes(ymin=conf.low, ymax=conf.high), alpha = .3) +
     theme_classic(base_size = 10)+
     labs(x = "Modeled latitudinal shift (km/yr)", 
-         y = "Predicted latitudinal shift rate (km/yr)",
+         y = "Documented latitudinal shift rate (km/yr)",
          title = "Marine",
          fill = NULL, 
          color = NULL)+
@@ -1197,7 +1269,7 @@ mm01_mar <- glmmTMB(mismatch_binary ~ 1 + (1 | class/ID),
 
 ```{r}
 tab_model(mm01_ter, mm01_mar, 
-          transform = NULL, string.est = "Estimate",
+          transform = NULL, string.est = "Estimate", string.p = "P-value",
           dv.labels = c("Terrestrial","Marine"),  
           show.icc = FALSE, 
           show.r2 = FALSE,
@@ -1240,6 +1312,30 @@ mm_lag_over_ter <- glmmTMB(as.formula(mm_lagover_formula_ter),
 # R-squared
 r.squaredGLMM(mm_lag_over_ter)
 
+# Decompose variance explained by individual predictors
+# drop1(mm_lag_over_ter, test = "Chisq")
+
+
+```
+
+#### Get effects for continuous variables
+```{r }
+
+mm_lag_over_ter_eff <- lapply(cont_vars, function(x){
+    if(any(grepl(x,var_to_go))){
+        emtrends(object = mm_lag_over_ter, 
+                 specs =  "lag_overshoot",
+                 var = x)
+    }
+})
+names(mm_lag_over_ter_eff) <- cont_vars_names
+
+test <- sapply(mm_lag_over_ter_eff,is.null)
+if(any(test)){
+    mm_lag_over_ter_eff <- mm_lag_over_ter_eff[-which(test)]
+}
+mm_lag_over_ter_eff
+
 ```
 
 #### Get emmeans for categorical variables
@@ -1272,7 +1368,8 @@ mm_lag_over_ter_cont_pairs <- lapply(mm_lag_over_ter_emm,
                                      method = "pairwise",
                                      type = "response",
                                      by = "lag_overshoot",
-                                     adjust = "none"
+                                     adjust = "none",
+                                     ratios = FALSE
 )
 names(mm_lag_over_ter_cont_pairs) <- names(mm_lag_over_ter_cont)
 mm_lag_over_ter_cont_pairs
@@ -1308,6 +1405,26 @@ r.squaredGLMM(mm_lag_over_mar)
 
 ```
 
+#### Get effects for continuous variables
+```{r }
+
+mm_lag_over_mar_eff <- lapply(cont_vars, function(x){
+    if(any(grepl(x,var_to_go))){
+        emtrends(object = mm_lag_over_mar, 
+                 specs =  "lag_overshoot",
+                 var = x)
+    }
+})
+names(mm_lag_over_mar_eff) <- cont_vars_names
+
+test <- sapply(mm_lag_over_mar_eff,is.null)
+if(any(test)){
+    mm_lag_over_mar_eff <- mm_lag_over_mar_eff[-which(test)]
+}
+mm_lag_over_mar_eff
+
+```
+
 #### Get emmeans for categorical variables
 ```{r }
 
@@ -1338,7 +1455,8 @@ mm_lag_over_mar_cont_pairs <- lapply(mm_lag_over_mar_emm,
                                      method = "pairwise",
                                      type = "response",
                                      by = "lag_overshoot",
-                                     adjust = "none"
+                                     adjust = "none",
+                                     ratios = FALSE
 )
 names(mm_lag_over_mar_cont_pairs) <- names(mm_lag_over_mar_cont)
 mm_lag_over_mar_cont_pairs
@@ -1349,13 +1467,275 @@ mm_lag_over_mar_cont_pairs
 
 ```{r}
 tab_model(mm_lag_over_ter, mm_lag_over_mar, 
-          transform = NULL, string.est = "Estimate",
+          transform = NULL, string.est = "Estimate", string.p = "P-value",
           dv.labels = c("Terrestrial","Marine"),  
           show.icc = FALSE, 
           show.r2 = FALSE,
           show.ngroups = FALSE,
           show.re.var = FALSE,
           show.obs = FALSE)
+```
+
+
+### Combined emmeans output
+
+```{r}
+
+emmeans_cont_ter <- lapply(mm_lag_over_ter_eff, function(x) {
+    tmp <- data.frame(x)
+    var_name <- gsub(".trend","",names(tmp[2]))
+    tmp[,1] <- paste("\u2003",tmp[,1],sep = "")
+    tmp$CI <- paste(round(tmp$asymp.LCL,2),round(tmp$asymp.UCL,2),sep = " – ")
+    tmp$z = tmp[,2] / tmp$SE
+    tmp$`P-value` = 2 * pnorm(-abs(tmp$z))
+    tmp <- tmp[,c(1,2,7,9)]
+    names(tmp) <- c("Predictors", "Estimate","CI","P-value")
+    tmp$Estimate <- round(tmp$Estimate,2)
+    tmp <- tmp %>%
+        mutate(`P-value` = case_when(
+            `P-value` < 0.001 ~ "<0.001",
+            `P-value` < 0.01  ~ "<0.01",
+            `P-value` < 0.05  ~ "<0.05",
+            TRUE            ~ sprintf("%.2f", `P-value`)  # Format to 3 decimal places
+        ))
+    
+    tmp_2 <- tmp[1,]
+    tmp_2[1,] <- ""
+    tmp_2[,1] <- var_name
+    
+    return(rbind(tmp_2,tmp))
+})
+emmeans_cont_ter <- rbindlist(emmeans_cont_ter)
+
+
+emmeans_cat_ter <- lapply(mm_lag_over_ter_cont_pairs, function(x) {
+    tmp <- data.frame(x)
+    var_name <- names(x@misc$orig.grid)[1]
+    var_name <- gsub("_"," ",var_name)
+    ps <- tmp
+    tmp <- data.frame(confint(x))
+    tmp$`P-value` = ps$p.value
+    tmp$CI <- paste(round(tmp$asymp.LCL,2),round(tmp$asymp.UCL,2),sep = " – ")
+    
+    tmp[,1] <- gsub("(","",tmp[,1],fixed = TRUE)
+    tmp[,1] <- gsub(")","",tmp[,1],fixed = TRUE)
+    tmp[,1] <- gsub(" - "," – ",tmp[,1],fixed = TRUE)
+    tmp[,1] <- paste("\u2003\u2003",tmp[,1],sep = "")
+    tmp[,2] <- paste("\u2003",tmp[,2],sep = "")
+    
+    tmp <- tmp[,c(1,2,3,9,8)]
+    
+    levels_lag <- unique(tmp$lag_overshoot)
+    
+    levels_lag_res <- lapply(levels_lag, function(i){
+        tmp_tmp <- tmp[which(tmp$lag_overshoot == i),]
+        tmp_tmp <- tmp_tmp[,-2]
+        names(tmp_tmp) <- c("Predictors", "Estimate","CI","P-value")
+        tmp_tmp$Estimate <- round(tmp_tmp$Estimate,2)
+        tmp_tmp <- tmp_tmp %>%
+            mutate(`P-value` = case_when(
+                `P-value` < 0.001 ~ "<0.001",
+                `P-value` < 0.01  ~ "<0.01",
+                `P-value` < 0.05  ~ "<0.05",
+                TRUE            ~ sprintf("%.2f", `P-value`)  # Format to 3 decimal places
+            ))
+        
+        tmp_tmp_2 <- tmp_tmp[1,]
+        tmp_tmp_2[1,] <- ""
+        tmp_tmp_2[,1] <- i
+        
+        return(rbind(tmp_tmp_2,tmp_tmp))
+    }
+    )
+    
+    levels_lag_res <- rbindlist(levels_lag_res)
+    
+    tmp_tmp_3 <- levels_lag_res[1,]
+    tmp_tmp_3[1,] <- ""
+    tmp_tmp_3[,1] <- var_name
+    
+    levels_lag_res <- rbind(tmp_tmp_3,levels_lag_res)
+    
+    return(levels_lag_res)
+})
+emmeans_cat_ter <- rbindlist(emmeans_cat_ter)
+
+
+```
+
+
+```{r}
+emmeans_cont_mar <- lapply(mm_lag_over_mar_eff, function(x) {
+    tmp <- data.frame(x)
+    var_name <- gsub(".trend","",names(tmp[2]))
+    tmp[,1] <- paste("\u2003",tmp[,1],sep = "")
+    tmp$CI <- paste(round(tmp$asymp.LCL,2),round(tmp$asymp.UCL,2),sep = " – ")
+    tmp$z = tmp[,2] / tmp$SE
+    tmp$`P-value` = 2 * pnorm(-abs(tmp$z))
+    tmp <- tmp[,c(1,2,7,9)]
+    names(tmp) <- c("Predictors", "Estimate","CI","P-value")
+    tmp$Estimate <- round(tmp$Estimate,2)
+    tmp <- tmp %>%
+        mutate(`P-value` = case_when(
+            `P-value` < 0.001 ~ "<0.001",
+            `P-value` < 0.01  ~ "<0.01",
+            `P-value` < 0.05  ~ "<0.05",
+            TRUE            ~ sprintf("%.2f", `P-value`)  # Format to 3 decimal places
+        ))
+    
+    tmp_2 <- tmp[1,]
+    tmp_2[1,] <- ""
+    tmp_2[,1] <- var_name
+    
+    return(rbind(tmp_2,tmp))
+})
+emmeans_cont_mar <- rbindlist(emmeans_cont_mar)
+
+
+emmeans_cat_mar <- lapply(mm_lag_over_mar_cont_pairs, function(x) {
+    tmp <- data.frame(x)
+    var_name <- names(x@misc$orig.grid)[1]
+    var_name <- gsub("_"," ",var_name)
+    ps <- tmp
+    tmp <- data.frame(confint(x))
+    tmp$`P-value` = ps$p.value
+    tmp$CI <- paste(round(tmp$asymp.LCL,2),round(tmp$asymp.UCL,2),sep = " – ")
+    
+    tmp[,1] <- gsub("(","",tmp[,1],fixed = TRUE)
+    tmp[,1] <- gsub(")","",tmp[,1],fixed = TRUE)
+    tmp[,1] <- gsub(" - "," – ",tmp[,1],fixed = TRUE)
+    tmp[,1] <- paste("\u2003\u2003",tmp[,1],sep = "")
+    tmp[,2] <- paste("\u2003",tmp[,2],sep = "")
+    
+    tmp <- tmp[,c(1,2,3,9,8)]
+    
+    levels_lag <- unique(tmp$lag_overshoot)
+    
+    levels_lag_res <- lapply(levels_lag, function(i){
+        tmp_tmp <- tmp[which(tmp$lag_overshoot == i),]
+        tmp_tmp <- tmp_tmp[,-2]
+        names(tmp_tmp) <- c("Predictors", "Estimate","CI","P-value")
+        tmp_tmp$Estimate <- round(tmp_tmp$Estimate,2)
+        tmp_tmp <- tmp_tmp %>%
+            mutate(`P-value` = case_when(
+                `P-value` < 0.001 ~ "<0.001",
+                `P-value` < 0.01  ~ "<0.01",
+                `P-value` < 0.05  ~ "<0.05",
+                TRUE            ~ sprintf("%.2f", `P-value`)  # Format to 3 decimal places
+            ))
+        
+        tmp_tmp_2 <- tmp_tmp[1,]
+        tmp_tmp_2[1,] <- ""
+        tmp_tmp_2[,1] <- i
+        
+        return(rbind(tmp_tmp_2,tmp_tmp))
+    }
+    )
+    
+    levels_lag_res <- rbindlist(levels_lag_res)
+    
+    tmp_tmp_3 <- levels_lag_res[1,]
+    tmp_tmp_3[1,] <- ""
+    tmp_tmp_3[,1] <- var_name
+    
+    levels_lag_res <- rbind(tmp_tmp_3,levels_lag_res)
+    
+    return(levels_lag_res)
+})
+emmeans_cat_mar <- rbindlist(emmeans_cat_mar)
+
+
+```
+
+
+```{r}
+emmeans_res_ter <- rbind(emmeans_cont_ter,emmeans_cat_ter)
+names(emmeans_res_ter)[-1] <- paste(names(emmeans_res_ter)[-1],".x", sep = "")
+
+emmeans_res_mar <- rbind(emmeans_cont_mar,emmeans_cat_mar)
+names(emmeans_res_mar)[-1] <- paste(names(emmeans_res_mar)[-1],".y", sep = "")
+
+merged_df <- cbind(emmeans_res_ter, emmeans_res_mar[,-1])
+
+```
+
+
+```{r}
+
+table_lagover <- merged_df %>%
+    gt() %>%
+    tab_spanner(
+        label = "Terrestrial",
+        columns = c("Estimate.x", "CI.x", "P-value.x")
+    ) %>%
+    tab_spanner(
+        label = "Marine",
+        columns = c("Estimate.y", "CI.y", "P-value.y")
+    ) %>%
+    cols_label(
+        Estimate.x = "Estimate",
+        CI.x = "CI",
+        `P-value.x` = "P-value",
+        Estimate.y = "Estimate",
+        CI.y = "CI",
+        `P-value.y` = "P-value"
+    ) %>%
+    fmt_number(
+    columns = c(Estimate.x,Estimate.y),
+    decimals = 5
+  )
+
+table_lagover
+
+gt::gtsave(table_lagover,filename = "Tables/lagovershot_glmmtmb.html")
+```
+
+### Make legend
+```{r}
+
+# Create the scatter plot with quadrants and diagonal splits
+lg <- ggplot() +
+    # Define Quadrant I (x > 0, y > 0)
+    geom_polygon(data = data.frame(x = c(0, Inf, Inf), y = c(0, Inf, 0)),
+                 aes(x, y), fill="#228d8d99") +  # x > y
+    geom_polygon(data = data.frame(x = c(0, 0, Inf), y = c(0, Inf, Inf)),
+                 aes(x, y), fill="#440d5499") +  # x < y
+    
+    # Define Quadrant II (x < 0, y > 0)
+    geom_rect(aes(xmin=-Inf, xmax=0, ymin=0, ymax=Inf), fill="#fde72599") +
+    
+    # Define Quadrant III (x < 0, y < 0) - Split by x > y and x < y
+    geom_polygon(data = data.frame(x = c(-Inf, 0, -Inf), y = c(-Inf, 0, 0)),
+                 aes(x, y), fill="#228d8d99") +  # x > y
+    geom_polygon(data = data.frame(x = c(0, 0, -Inf), y = c(-Inf, 0, -Inf)),
+                 aes(x, y), fill="#440d5499") +  # x < y
+    
+    # Define Quadrant IV (x > 0, y < 0)
+    geom_rect(aes(xmin=0, xmax=Inf, ymin=-Inf, ymax=0), fill="#fde72599") +
+    
+    # Add axis lines
+    geom_hline(yintercept=0, color="black") +
+    geom_vline(xintercept=0, color="black") +
+    geom_abline(slope = 1, intercept = 0, color="black", linetype = "dashed") +
+    
+    # change axis
+    scale_x_continuous(breaks = 0)+
+    scale_y_continuous(breaks = 0)+
+    
+    labs(x = "Modeled\nrange shift", y = "Documented\nrange shift")+
+    theme_classic(base_size = 8)+
+    theme(
+        # axis.text=element_blank(),
+        axis.text.y = element_text(hjust = -5),
+        axis.text.x = element_text(vjust = 2),
+        axis.ticks=element_blank(),
+        aspect.ratio=1,
+        axis.line = element_line(arrow = arrow(
+            angle = 30,
+            length = unit(0.05, "inches"),
+            ends = "last", 
+            type = "closed")))
+# lg
 ```
 
 ### Plot significant results
@@ -1408,16 +1788,23 @@ plots_ter <- lapply(1:length(vars_res), function(x){
             }
         }
         
+        sig_tmp <- data.frame(mm_lag_over_ter_eff[[var2go_name]])
+        
+        preds$sig <- ifelse(same_sign(sig_tmp$asymp.LCL, sig_tmp$asymp.UCL),
+                            0,1)
+        
         my_plot <- ggplot(preds, aes(x = x, y = predicted))+
-            geom_line(aes(color = group), size = 1.5) +
+            geom_line(aes(color = group, linetype = as.factor(sig)), size = 1.5) +
             geom_ribbon(aes(ymin=conf.low, ymax=conf.high, fill = group), alpha = .3) +
             theme_classic(base_size = 10)+
-            scale_color_viridis_d()+
-            scale_fill_viridis_d()+
+            scale_color_viridis_d(direction = -1)+
+            scale_fill_viridis_d(direction = -1)+
             labs(x = var2go_name, 
                  y  = "Mismatch",
                  fill = NULL, 
-                 color = NULL)+
+                 color = NULL,
+                 linetype = NULL)+
+            guides(linetype = "none")+
             theme(aspect.ratio=1)
         
     } else {
@@ -1435,12 +1822,12 @@ plots_ter <- lapply(1:length(vars_res), function(x){
         cat_vars_cont_pairs_res$from <- sapply(
             as.character(cat_vars_cont_pairs_res$contrast), 
             function(x){
-                strsplit(x," / ")[[1]][1]
+                strsplit(x," - ")[[1]][1]
             })
         cat_vars_cont_pairs_res$to <- sapply(
             as.character(cat_vars_cont_pairs_res$contrast), 
             function(x){
-                tmp <- strsplit(x," / ")[[1]][2]
+                tmp <- strsplit(x," - ")[[1]][2]
             })
         
         cat_vars_cont_pairs_res$from <- gsub("(","",cat_vars_cont_pairs_res$from, 
@@ -1483,8 +1870,8 @@ plots_ter <- lapply(1:length(vars_res), function(x){
                        aes(fill = group), color = 'black',
                        position = position_dodge2(.5)) +
             theme_classic(base_size = 10)+
-            scale_color_viridis_d()+
-            scale_fill_viridis_d()+
+            scale_color_viridis_d(direction = -1)+
+            scale_fill_viridis_d(direction = -1)+
             labs(x = var2go_name, 
                  y  = "Mismatch",
                  fill = NULL, 
@@ -1508,21 +1895,31 @@ plots_ter <- lapply(1:length(vars_res), function(x){
 ```
 
 ```{r fig.height=8,fig.width=8}
+plots_go <- plots_ter[1:5]
+plots_go[[6]] <- ggarrange(
+    lg + theme(plot.margin = margin(10, 0, 0, 20)),
+    get_legend(plots_ter[[1]]),
+    align = "h",
+    ncol = 2)
+
 model_plots_ter <- ggarrange(
-    ggarrange(plotlist = plots_ter[1:5], 
-              labels = LETTERS[1:5],
+    ggarrange(plotlist = plots_go, 
+              labels = c(LETTERS[1:5],"Legend"),
               font.label = list(size = 10),
-              align = "hv",
+              align = "h",
               legend = "none"),
     ggarrange(plotlist = plots_ter[6:7],
               labels = LETTERS[6:7],
               font.label = list(size = 10),
               align = "hv",
-              common.legend = TRUE,
-              legend="bottom"),
-    heights = c(5,4), nrow = 2)
+              # common.legend = TRUE,
+              legend="none"),
+    heights = c(5,3.5), nrow = 2)
 model_plots_ter
+```
 
+
+```{r fig.height=8,fig.width=8}
 # 8*(5/(5+4)) + 8*(4/(5+4))
 # 
 # (8*(5/(5+4)) / 2) + 8*(4/(5+4))
@@ -1531,8 +1928,10 @@ model_plots_ter
 if(data_amount=="all"){
     
     ggsave(plot = model_plots_ter, 
-           filename = here("Figures/EffectPlots_lagovershoot_Ter_pairwise_all.svg"), 
-           device = "svg",
+           filename = here("Figures/EffectPlots_lagovershoot_Ter_pairwise_all.png"), 
+           device = "png",
+           dpi = 320,
+           bg = "white",
            width = 8, height = 8, 
            units = "in")
     
@@ -1590,16 +1989,23 @@ plots_mar <- lapply(1:length(vars_res), function(x){
             }
         }
         
+        sig_tmp <- data.frame(mm_lag_over_mar_eff[[var2go_name]])
+        
+        preds$sig <- ifelse(same_sign(sig_tmp$asymp.LCL, sig_tmp$asymp.UCL),
+                            0,1)
+        
         my_plot <- ggplot(preds, aes(x = x, y = predicted))+
-            geom_line(aes(color = group), size = 1.5) +
+            geom_line(aes(color = group, linetype = as.factor(sig)), size = 1.5) +
             geom_ribbon(aes(ymin=conf.low, ymax=conf.high, fill = group), alpha = .3) +
             theme_classic(base_size = 10)+
-            scale_color_viridis_d()+
-            scale_fill_viridis_d()+
+            scale_color_viridis_d(direction = -1)+
+            scale_fill_viridis_d(direction = -1)+
             labs(x = var2go_name, 
                  y  = "Mismatch",
                  fill = NULL, 
-                 color = NULL)+
+                 color = NULL,
+                 linetype = NULL)+
+            guides(linetype = "none")+
             theme(aspect.ratio=1)
         
     } else {
@@ -1617,12 +2023,12 @@ plots_mar <- lapply(1:length(vars_res), function(x){
         cat_vars_cont_pairs_res$from <- sapply(
             as.character(cat_vars_cont_pairs_res$contrast), 
             function(x){
-                strsplit(x," / ")[[1]][1]
+                strsplit(x," - ")[[1]][1]
             })
         cat_vars_cont_pairs_res$to <- sapply(
             as.character(cat_vars_cont_pairs_res$contrast), 
             function(x){
-                tmp <- strsplit(x," / ")[[1]][2]
+                tmp <- strsplit(x," - ")[[1]][2]
             })
         
         cat_vars_cont_pairs_res$from <- gsub("(","",cat_vars_cont_pairs_res$from, 
@@ -1665,8 +2071,8 @@ plots_mar <- lapply(1:length(vars_res), function(x){
                        aes(fill = group), color = 'black',
                        position = position_dodge2(.5)) +
             theme_classic(base_size = 10)+
-            scale_color_viridis_d()+
-            scale_fill_viridis_d()+
+            scale_color_viridis_d(direction = -1)+
+            scale_fill_viridis_d(direction = -1)+
             labs(x = var2go_name, 
                  y  = "Mismatch",
                  fill = NULL, 
@@ -1693,27 +2099,39 @@ plots_mar <- lapply(1:length(vars_res), function(x){
 
 
 ```{r fig.height=5.77,fig.width=8}
+plots_go <- plots_mar[1:2]
+plots_go[[3]] <- ggarrange(
+    lg + theme(plot.margin = margin(10, 0, 0, 20)),
+    get_legend(plots_mar[[1]]),
+    align = "h",
+    ncol = 2)
+
 model_plots_mar <- ggarrange(
-    ggarrange(plotlist = plots_mar[1:2], 
-              labels = LETTERS[1:2],
+    ggarrange(plotlist = plots_go, 
+              labels = c(LETTERS[1:2],"Legend"),
               font.label = list(size = 10),
-              align = "hv",
-              legend = "none"),
+              align = "h",
+              legend = "none",
+              nrow = 1),
     ggarrange(plotlist = plots_mar[3:4],
               labels = LETTERS[3:4],
               font.label = list(size = 10),
               align = "hv",
-              common.legend = TRUE,
-              legend="bottom"),
-    heights = c(2.5,4), nrow = 2)
+              legend="none"),
+    heights = c(2.5,3.5), nrow = 2)
 model_plots_mar
+```
 
+
+```{r fig.height=5.77,fig.width=8}
 # data amount
 if(data_amount=="all"){
     
     ggsave(plot = model_plots_mar, 
-           filename = here("Figures/EffectPlots_lagovershoot_Mar_pairwise_all.svg"), 
-           device = "svg",
+           filename = here("Figures/EffectPlots_lagovershoot_Mar_pairwise_all.png"), 
+           device = "png",
+           bg = "white",
+           dpi = 320,
            width = 8, height = 5.77, 
            units = "in")
     
@@ -1812,7 +2230,7 @@ mm_mar <- glmmTMB(as.formula(paste(mm_formula_mar, "+", RE_nest)),
 # tab_model(mm_mar, transform = NULL, string.est = "Estimate")
 
 # R-squared
-r.squaredGLMM(mm_ter)
+r.squaredGLMM(mm_mar)
 ```
 
 #### Get emmeans for categorical variables
@@ -1856,7 +2274,7 @@ mm_mar_cont_pairs
 
 ```{r}
 tab_model(mm_ter, mm_mar, 
-          transform = NULL, string.est = "Estimate",
+          transform = NULL, string.est = "Estimate", string.p = "P-value",
           dv.labels = c("Terrestrial","Marine"),  
           show.icc = FALSE, 
           show.r2 = FALSE,
@@ -2024,7 +2442,8 @@ if(data_amount=="all"){
     
     ggsave(plot = model_plots_ter, 
            filename = here("Figures/EffectPlots_mismatch_Ter_pairwise_all.svg"), 
-           device = "svg",
+           device = "svg", 
+           dpi = 300,
            width = 8, height = 8, 
            units = "in")
     
@@ -2188,8 +2607,9 @@ model_plots_mar
 if(data_amount=="all"){
     
     ggsave(plot = model_plots_mar, 
-           filename = here("Figures/EffectPlots_mismatch_Mar_pairwise_all.svg"), 
-           device = "svg",
+           filename = here("Figures/EffectPlots_mismatch_Mar_pairwise_all.png"), 
+           device = "png",
+           dpi = 300,
            width = 8, height = 5.77, 
            units = "in")
     
@@ -2260,7 +2680,7 @@ bio_sp_fig <- ggplot(data=mundi_eq) +
         alpha = .5) +
     geom_spatvector() +
     scale_fill_viridis_c(
-        name = "Number of species (log)",
+        name = "Number of species",
         alpha=.7,
         na.value = "white",
         trans="log",
@@ -2288,7 +2708,7 @@ bio_SA_fig <-
         alpha = .5) +
     geom_spatvector() +
     scale_fill_viridis_c(
-        name = "Number of study areas (log)",
+        name = "Number of study areas",
         alpha=.7,
         na.value = "white",
         trans="log",

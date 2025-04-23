@@ -118,7 +118,6 @@ if(Eco == "Ter"){
     names(climate_layers) <- rep(velocity_variables, nlyr(climate_layers))
 }
 
-
 ########################
 # load SA polygon
 SA_i <- terra::vect(here::here(SA_shps_dir,paste0(polygontogo,".shp")))
