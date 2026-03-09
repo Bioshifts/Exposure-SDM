@@ -9,9 +9,12 @@ The study evaluates how well climate-based species distribution models (SDMs) pr
 ## Repository Structure 
 
 ```         
-├── R/                # R scripts for data processing, modeling, and analysis 
-├── Data/             # Raw and processed data (occurrences, environmental layers) ├── Data/Output/      # Processed dataset (merged documented and modeled range shifts)
-├── README.md         # This file
+├── R/                # R scripts for data processing, modeling, and analysis   
+├── Data/             # Raw and processed data (occurrences, environmental layers)
+├── Data/Output/      # Processed dataset (merged documented and modeled range shifts)
+├── renv/             # renv project library
+├── renv.lock         # Reproducible R package environment
+├── README.md         # Project documentation
 ```
 
 ## Workflow
@@ -22,11 +25,11 @@ The study evaluates how well climate-based species distribution models (SDMs) pr
 
 3.  **Download environmental data**
 
-```         
--    Terrestrial species: CHELSAcruts climate datasets
+    -   Terrestrial species: CHELSAcruts climate datasets
 
--   Marine species: ORAS oceanographic datasets
-```
+    -   Marine species: ORAS oceanographic datasets
+
+<!-- -->
 
 4.  **Fit ensemble species distribution models (SDMs)** for each species.
 
@@ -36,11 +39,17 @@ The study evaluates how well climate-based species distribution models (SDMs) pr
 
 ## Reproducibility
 
--   **R version:** 4.3 or higher
+This project uses the **`renv` package** to ensure reproducibility of the R environment.
 
--   **Required packages:** See `renv.lock` (if using `renv`) or install the packages listed in `R/requirements.R`.
+To recreate the computational environment:
 
--   **Optional:** Use a containerized environment (e.g., Docker) or `renv` to ensure exact reproducibility.
+```         
+install.packages("renv") 
+
+renv::restore()
+```
+
+This will install all package versions recorded in `renv.lock`.
 
 ## Data Availability
 
