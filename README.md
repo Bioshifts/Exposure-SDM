@@ -18,15 +18,17 @@ The study evaluates how well climate-based species distribution models (SDMs) pr
 
 1.  **Select species with documented range shifts in the BioShifts and CoRE databases.**
 
-2.   **Download species occurrence data from GBIF**
+2.  **Download species occurrence data from GBIF**
 
-3.   **Download environmental data**
+3.  **Download environmental data**
 
-    -    Terrestrial species: CHELSAcruts climate datasets
+```         
+-    Terrestrial species: CHELSAcruts climate datasets
 
-    -   Marine species: ORAS oceanographic datasets
+-   Marine species: ORAS oceanographic datasets
+```
 
-4.   **Fit ensemble species distribution models (SDMs)** for each species.
+4.  **Fit ensemble species distribution models (SDMs)** for each species.
 
 5.  **Estimate modeled range shifts** using SDM projections across time.
 
@@ -34,13 +36,13 @@ The study evaluates how well climate-based species distribution models (SDMs) pr
 
 ## Reproducibility
 
--    **R version:** 4.3 or higher
+-   **R version:** 4.3 or higher
 
 -   **Required packages:** See `renv.lock` (if using `renv`) or install the packages listed in `R/requirements.R`.
 
 -   **Optional:** Use a containerized environment (e.g., Docker) or `renv` to ensure exact reproducibility.
 
-## Data Availability 
+## Data Availability
 
 -   **Species occurrences:** GBIF (<https://www.gbif.org>)
 
@@ -52,7 +54,7 @@ The study evaluates how well climate-based species distribution models (SDMs) pr
 
     -   ORAS for marine species (<https://www.oceandata.org>)
 
->  ⚠️ Raw data may require downloading separately due to size or licensing.
+> ⚠️ Raw data may require downloading separately due to size or licensing.
 
 ## Citation
 
