@@ -9,10 +9,10 @@ The study evaluates how well climate-based species distribution models (SDMs) pr
 ## Repository Structure 
 
 ```         
-├── R/                # R scripts for data processing, modeling, and analysis
-├── Data/             # Raw and processed data (occurrences, environmental layers)
-├── Data/Output/      # Processed dataset (merged documented and modeled range shifts)
-├── README.md         # This file
+├── R/                # R scripts for data processing, modeling, and analysis   
+├── Data/             # Raw and processed data (occurrences, environmental layers)   
+├── Data/Output/      # Processed dataset (merged documented and modeled range    shifts)
+├── README.md         # This file   
 ```
 
 ## Workflow
