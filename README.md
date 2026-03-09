@@ -59,9 +59,9 @@ This will install all package versions recorded in `renv.lock`.
 
 -   **Environmental data:**
 
-    -   CHELSAcruts for terrestrial species ([http://chelsa-climate.org)](http://chelsa-climate.org))
+    -   CHELSAcruts for terrestrial species (<http://chelsa-climate.org>)
 
-    -   ORAS for marine species (<https://www.oceandata.org>)
+    -   ORAS5 for marine species (<https://cds.climate.copernicus.eu/datasets/reanalysis-oras5?tab=overview>)
 
 > ⚠️ Raw data may require downloading separately due to size or licensing.
 
