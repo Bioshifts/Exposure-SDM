@@ -12,7 +12,9 @@ The study evaluates how well climate-based species distribution models (SDMs) pr
 ├── R/                # R scripts for data processing, modeling, and analysis   
 ├── Data/             # Raw and processed data (occurrences, environmental layers)
 ├── Data/Output/      # Processed dataset (merged documented and modeled range shifts)
-├── README.md         # This file   
+├── renv/             # renv project library
+├── renv.lock         # Reproducible R package environment
+├── README.md         # Project documentation
 ```
 
 ## Workflow
@@ -37,11 +39,17 @@ The study evaluates how well climate-based species distribution models (SDMs) pr
 
 ## Reproducibility
 
--   **R version:** 4.3 or higher
+This project uses the **`renv` package** to ensure reproducibility of the R environment.
 
--   **Required packages:** See `renv.lock` (if using `renv`) or install the packages listed in `R/requirements.R`.
+To recreate the computational environment:
 
--   **Optional:** Use a containerized environment (e.g., Docker) or `renv` to ensure exact reproducibility.
+```         
+install.packages("renv") 
+
+renv::restore()
+```
+
+This will install all package versions recorded in `renv.lock`.
 
 ## Data Availability
 
@@ -51,9 +59,9 @@ The study evaluates how well climate-based species distribution models (SDMs) pr
 
 -   **Environmental data:**
 
-    -   CHELSAcruts for terrestrial species ([http://chelsa-climate.org)](http://chelsa-climate.org))
+    -   CHELSAcruts for terrestrial species (<http://chelsa-climate.org>)
 
-    -   ORAS for marine species (<https://www.oceandata.org>)
+    -   ORAS5 for marine species (<https://cds.climate.copernicus.eu/datasets/reanalysis-oras5?tab=overview>)
 
 > ⚠️ Raw data may require downloading separately due to size or licensing.
 
