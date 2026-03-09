@@ -6,7 +6,7 @@ Oliveira et al. (2026). *Species range shifts often speed ahead of their modeled
 
 The study evaluates how well climate-based species distribution models (SDMs) predict the direction and rate of observed species range shifts.
 
-## Repository Structure
+## Repository Structure 
 
 ```         
 ├── R/                # R scripts for data processing, modeling, and analysis 
