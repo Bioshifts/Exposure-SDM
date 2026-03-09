@@ -1,4 +1,4 @@
-# Species range shifts often speed ahead of their modeled climatic niches
+# Species range shifts often speed ahead of their modeled climatic niches 
 
 This repository contains the code required to reproduce the analyses presented in the study:
 
