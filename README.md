@@ -9,8 +9,9 @@ The study evaluates how well climate-based species distribution models (SDMs) pr
 ## Repository Structure 
 
 ```         
-├── R/                # R scripts for data processing, modeling, and analysis 
-├── Data/             # Raw and processed data (occurrences, environmental layers) ├── Data/Output/      # Processed dataset (merged documented and modeled range shifts)
+├── R/                # R scripts for data processing, modeling, and analysis
+├── Data/             # Raw and processed data (occurrences, environmental layers)
+├── Data/Output/      # Processed dataset (merged documented and modeled range shifts)
 ├── README.md         # This file
 ```
 
@@ -22,11 +23,11 @@ The study evaluates how well climate-based species distribution models (SDMs) pr
 
 3.  **Download environmental data**
 
-```         
--    Terrestrial species: CHELSAcruts climate datasets
+    -   Terrestrial species: CHELSAcruts climate datasets
 
--   Marine species: ORAS oceanographic datasets
-```
+    -   Marine species: ORAS oceanographic datasets
+
+<!-- -->
 
 4.  **Fit ensemble species distribution models (SDMs)** for each species.
 
