@@ -1,0 +1,3636 @@
+---
+params:
+    shiftmodtype:
+    models_included:
+title: "SDMs vs Range shifts: Models"
+subtitle: "Shift Mod: `r params$shiftmodtype`. Models included: `r params$models_included`"
+author: "Brunno Oliveira & Bioshifts working group"
+output:
+  html_document
+---
+
+
+
+```{r include=FALSE, eval=FALSE}
+
+rm(list=ls())
+gc()
+
+# Params
+shiftmodtype_to_go <- "75" # select 95 or 75
+models_included_to_go <- "all" # select "best" or "all" only the best models (TSS > .5)
+
+```
+
+
+
+```{r include=FALSE, eval=FALSE}
+
+# render script
+# run this at the console
+
+library(rmarkdown)
+
+output_file <- here::here(paste0("R/10_analyses/3_SDM_models_report","_shift-",shiftmodtype_to_go,"_models-",models_included_to_go,".html"))
+
+rmarkdown::render(
+    params = list(shiftmodtype = shiftmodtype_to_go,
+                  models_included = models_included_to_go),
+    input = here::here("R/10_analyses/3_SDM_models.qmd"),
+    output_file = output_file,
+    output_format = html_document(toc = TRUE,
+                                  toc_depth = 2,
+                                  toc_float = TRUE,
+                                  number_sections = TRUE,
+                                  code_folding = "hide",
+                                  code_download = TRUE,
+                                  code_summary = "Code"))
+
+```
+
+
+
+```{r include=FALSE}
+
+library(rmarkdown)
+
+# rm(list=ls())
+# gc()
+
+if(is.null(params$shiftmodtype)){
+    shiftmodtype = shiftmodtype_to_go
+} else {
+    shiftmodtype = params$shiftmodtype
+}
+
+if(is.null(params$models_included)){
+    models_included = models_included_to_go
+} else {
+    models_included = params$models_included
+}
+```
+
+# *Setup*
+
+```{r warning=FALSE, message=FALSE}
+
+list.of.packages <- c("dplyr", "tidyverse", "tidyr", "ggplot2", "knitr", "pbapply", "data.table", "GGally", "here", "terra", "tidyterra", "rcompanion", "lme4", "glmmTMB", "MuMIn", "emmeans", "parallel", "sjPlot", "jtools", "gt", "gtsummary", "deming", "cowplot", "DescTools", "gtools", "ggpp", "gridExtra", "ggeffects", "svglite","RSQLite","hexbin", "ggpubr","rnaturalearth","parallel", "effects","rnaturalearthdata","gpkg","scales")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+sapply(list.of.packages, require, character.only = TRUE)
+
+computer = "personal"
+source(here("R/settings.R"))
+source(here("R/my_functions.R"))
+source(here("R/emm_extra_functions.R"))
+
+options(na.action = "na.fail")
+
+```
+
+
+# *Load data*
+
+```{r}
+
+# select vars based on shift mode
+
+bioshifts <- read.csv(here("Data/Output/Bioshifts_merge_Exposure_all.csv"))
+
+if(shiftmodtype == "95"){
+    bioshifts <- bioshifts |>
+        mutate(bvel_lat = bvel95_lat,
+               lag_overshoot = lag_overshoot95,
+               mismatch = mismatch95,
+               mismatch_percent = mismatch95_percent,
+               mismatch_trend = mismatch95_trend,
+               match_direction = match_direction95,
+               match_direction_class = match_direction95_class)
+}
+
+bioshifts$obs_ID <- 1:nrow(bioshifts)
+
+if(models_included == "best"){
+    bioshifts <- bioshifts |>
+        filter(TSS > .5)
+}
+
+```
+
+
+
+Extra fixes for variables
+```{r}
+
+# fixing Locomotion_mode
+bioshifts$Locomotion_mode = as.character(str_to_sentence(bioshifts$Locomotion_mode))
+unique(bioshifts$Locomotion_mode)
+# if multiple locomotion modes, use the first (the main locomotion mode)
+# bioshifts$Locomotion_mode <- sapply(bioshifts$Locomotion_mode, function(x) {
+#   strsplit(x, split = "/", fixed = TRUE)[[1]][1] 
+# })
+
+pos <- grep("Flying",bioshifts$Locomotion_mode)
+bioshifts$Locomotion_mode[pos] <- "Fly"
+pos <- grep("wimming",bioshifts$Locomotion_mode)
+bioshifts$Locomotion_mode[pos] <- "Swim"
+pos <- grep("alk",bioshifts$Locomotion_mode)
+bioshifts$Locomotion_mode[pos] <- "Run/Walk"
+pos <- grep("unning",bioshifts$Locomotion_mode)
+bioshifts$Locomotion_mode[pos] <- "Run/Walk"
+pos <- grep("lithering",bioshifts$Locomotion_mode)
+bioshifts$Locomotion_mode[pos] <- "Slither/Crawl"
+pos <- grep("rawling",bioshifts$Locomotion_mode)
+bioshifts$Locomotion_mode[pos] <- "Slither/Crawl"
+pos <- grep("Burrowing",bioshifts$Locomotion_mode)
+bioshifts$Locomotion_mode[pos] <- "Sessile"
+
+unique(bioshifts$Locomotion_mode)
+
+# bioshifts$Locomotion_mode <- factor(
+#   bioshifts$Locomotion_mode,
+#   levels = c("Flying", "Running", "Swimming", "Walking", "Slithering", "Crawling",  "Planktonic", "Sessile", "Burrowing"))
+# 
+# # group Slithering/Crawling and Running/Walking
+# pos <- grep("Slithering",bioshifts$Locomotion_mode)
+# bioshifts$Locomotion_mode[pos] <- "Slithering/Crawling"
+# pos <- grep("Crawling",bioshifts$Locomotion_mode)
+# bioshifts$Locomotion_mode[pos] <- "Slithering/Crawling"
+# 
+# pos <- grep("Running",bioshifts$Locomotion_mode)
+# bioshifts$Locomotion_mode[pos] <- "Running/Walking"
+# pos <- grep("Walking",bioshifts$Locomotion_mode)
+# bioshifts$Locomotion_mode[pos] <- "Running/Walking"
+# 
+bioshifts$Locomotion_mode <- factor(
+    bioshifts$Locomotion_mode,
+    levels = c("Fly", "Run/Walk", "Swim", "Slither/Crawl", "Planktonic", "Sessile"))
+
+# fixing Category
+table(bioshifts$Category)
+# remove synthesis because there is a only a single study
+bioshifts <- bioshifts |> filter(!Category == "Synthesis")
+# combine census-resurvey and survey-resurvey 
+pos <- grep("Census-Resurvey",bioshifts$Category)
+bioshifts$Category[pos] <- "Survey-Resurvey"
+table(bioshifts$Category)
+bioshifts$Category <- factor(bioshifts$Category, 
+                             levels = c("TimeSeries", "CensusPeriods", "Survey-Resurvey"))
+
+# make numeric as.numeric
+pos <- which(sapply(bioshifts, is.numeric))
+tmp <- lapply(bioshifts[pos], as.numeric)
+tmp <- do.call(cbind,tmp)
+bioshifts[pos] <- tmp
+
+# remove one outlier species
+bioshifts <- bioshifts |>
+    filter(!(Eco == "Ter" & bvel_lat < -15))
+
+
+# remove swimming terrestrials
+bioshifts <- bioshifts |>
+    filter(!(Eco == "Ter" & Locomotion_mode == "Swim"))
+
+# select classes with more than X observations per edge
+N_obs_class = 5
+class_param_select <- bioshifts |>
+    group_by(class, Param) |>
+    tally() |>
+    filter(n >= N_obs_class) |>
+    mutate(class_param = paste(class,Param))
+
+bioshifts <- bioshifts |> 
+    mutate(class_param = paste(class,Param)) |> 
+    filter(class_param %in% class_param_select$class_param) |>
+    select(!class_param)
+
+```
+
+# Make dataset for modeling
+```{r}
+
+mod_data <- bioshifts |>
+    mutate(ShiftRate_raw = ShiftRate,
+           ShiftMod_raw = bvel_lat,
+           ShiftRate = scale(ShiftRate),
+           ShiftMod = scale(bvel_lat),
+           Lat_extent = scale(log(LatExtentk)),
+           Study_duration = scale(Duration),
+           Boyce = scale(Boyce),
+           Interannual_var = scale(log1p(bvel_lat_error)),
+           N_periods = scale(N_periodes),
+           Connectivity = scale(connectivity),
+           mismatch = abs(mismatch),
+           Mobility = as.character(str_to_sentence(Mobility)),
+           Locomotion_mode = as.character(str_to_sentence(Locomotion_mode)),
+           Life_form = as.character(str_to_sentence(lifeform)),
+           Sampling_method = Category,
+           Random_ID_Param_Class = paste(ID,Param,class),
+           Random_ID_Class = paste(ID,class),
+           Random_Param_Class = paste(Param,class),
+           
+           match_direction = 
+               case_when(match_direction=="match" ~ "Alignment",
+                         match_direction=="mismatch" ~ "Misalignment"),
+           match_direction = relevel(factor(match_direction), ref = "Misalignment"),
+           
+           mismatch_binary = 
+               case_when(match_direction=="Misalignment" ~ 0,
+                         match_direction=="Alignment" ~ 1),
+           
+           Shift_alignment = 
+               case_when(match_direction_class=="pospos" ~ "Poleward",
+                         match_direction_class=="negneg" ~ "Equatorward",
+                         match_direction == "Misalignment" ~ "Misalignment"),
+           Shift_alignment = relevel(factor(Shift_alignment), ref = "Misalignment"),
+           
+           lag_overshoot = 
+               case_when(lag_overshoot=="lag" ~ "Lag",
+                         lag_overshoot=="overshoot" ~ "Overshoot",
+                         lag_overshoot == "misalignment" ~ "Misalignment"),
+           lag_overshoot = relevel(factor(lag_overshoot), ref = "Misalignment")) |>
+    select(ShiftRate_raw, ShiftMod_raw, ShiftRate, ShiftMod,
+           mismatch, match_direction, mismatch_binary, Shift_alignment,
+           mismatch_trend, lag_overshoot, lag_overshoot95,
+           mismatch, mismatch_percent,
+           Lat_extent, Sampling_method, Boyce, Interannual_var, N_periods, Study_duration, Hemisphere,
+           Life_form, Mobility, Locomotion_mode, Connectivity, 
+           ID, Param, class, Eco, sp_name_std, 
+           Random_ID_Param_Class, Random_Param_Class, Random_ID_Class, obs_ID)
+
+
+```
+
+# Stats
+
+N species
+```{r summarizing}
+length(unique(mod_data$sp_name_std))
+
+mod_data |> 
+    group_by(Param) |> 
+    summarise(N=length(unique(sp_name_std)))
+
+mod_data |> 
+    group_by(Eco) |> 
+    summarise(N=length(unique(sp_name_std)))
+
+mod_data |> 
+    group_by(Eco,Param) |> 
+    summarise(N=length(unique(sp_name_std)))
+
+mod_data |> 
+    group_by(Eco,Hemisphere) |> 
+    summarise(N=length(unique(sp_name_std)))
+
+DT::datatable(mod_data |>
+                  group_by(Eco,class) |>
+                  tally())
+
+```
+
+N range shifts
+```{r summarizing1}
+nrow(mod_data)
+
+mod_data |> 
+    group_by(Param) |> 
+    summarise(N=length(sp_name_std))
+
+mod_data |> 
+    group_by(Eco) |>
+    summarise(N=length(sp_name_std))
+
+mod_data |> 
+    group_by(Eco,Param) |>
+    summarise(N=length(sp_name_std))
+```
+
+N classes 
+```{r summarizing3}
+mod_data |> 
+    group_by(Eco) |>
+    summarise(N = length(unique(class)))
+```
+
+N studies 
+```{r summarizing4}
+mod_data |> 
+    group_by(Eco) |>
+    summarise(N = length(unique(ID)))
+```
+
+How faster are documented to modeled shifts?
+```{r testfaster}
+tmp <- mod_data |>
+    select(Eco, ShiftRate_raw, ShiftMod_raw) |>
+    pivot_longer(!Eco, names_to = "Shift")
+
+ggplot(tmp, 
+       aes(x = value, color = Shift)) +
+    geom_density() +
+    scale_x_continuous(limits = c(quantile(tmp$value, c(.05, .95))))+
+    geom_vline(data = tmp |>
+                   group_by(Eco,Shift) |>
+                   summarise(M = median(value)),
+               aes(xintercept = M, color = Shift))+
+    facet_wrap(.~Eco)
+
+tmp <- mod_data |>
+    mutate(frac_shift = ShiftRate_raw/ShiftMod_raw) |>
+    filter(!is.infinite(mismatch_percent),
+           !is.infinite(frac_shift),
+           match_direction == "Alignment") |> 
+    select(Eco, frac_shift) |>
+    pivot_longer(!Eco, names_to = "Shift")
+
+ggplot(tmp, 
+       aes(x = value, color = Eco)) +
+    geom_density() +
+    scale_x_continuous(limits = c(quantile(tmp$value, c(.05, .95))))+
+    geom_vline(data = tmp |>
+                   group_by(Eco,Shift) |>
+                   summarise(M = median(value)),
+               aes(xintercept = M, color = Eco))
+
+
+```
+
+
+```{r testfaster2}
+# how faster are documented to modeled shifts when they match in direction?
+table_data <- mod_data |>
+    group_by(Eco) |>
+    mutate(frac_shift = ShiftRate_raw / ShiftMod_raw) |>
+    filter(!is.infinite(mismatch_percent),
+           !is.infinite(frac_shift),
+           match_direction == "Alignment") |> 
+    summarise(
+        # Documented_Mean = mean(ShiftRate_raw),
+        Documented_Median = median(ShiftRate_raw),
+        Documented_SD = sd(ShiftRate_raw),
+        
+        # Modeled_Mean = mean(ShiftMod_raw),
+        Modeled_Median = median(ShiftMod_raw),
+        Modeled_SD = sd(ShiftMod_raw),
+        
+        # Mismatch_Mean = mean(mismatch),
+        Mismatch_Median = median(mismatch),
+        Mismatch_SD = sd(mismatch),
+        
+        # `Mismatch-Percent_Mean` = mean(mismatch_percent, na.rm = TRUE),
+        `Mismatch-Percent_Median` = median(mismatch_percent, na.rm = TRUE),
+        `Mismatch-Percent_SD` = sd(mismatch_percent, na.rm = TRUE),
+        
+        # `Mismatch-Fold_Mean` = mean(frac_shift, na.rm = TRUE),
+        `Mismatch-Fold_Median` = median(frac_shift, na.rm = TRUE),
+        `Mismatch-Fold_SD` = sd(frac_shift, na.rm = TRUE)
+    ) |>
+    pivot_longer(cols = -Eco, names_to = "Metric", values_to = "Value") |>
+    separate(Metric, into = c("Metric", "Stat"), sep = "_", extra = "merge") |>
+    pivot_wider(names_from = c(Eco, Stat), values_from = Value) |>
+    mutate(across(where(is.numeric), ~ round(.x, 2))) |>
+    rename(
+        # `Terrestrial Mean` = Ter_Mean,
+        `Terrestrial Median` = Ter_Median,
+        `Terrestrial SD` = Ter_SD,
+        # `Marine Mean` = Mar_Mean,
+        `Marine Median` = Mar_Median,
+        `Marine SD` = Mar_SD
+    )
+
+# Reorder metrics to match your image
+table_data$Metric <- gsub("-"," ",table_data$Metric)
+metric_order <- c("Documented", "Modeled", "Mismatch", "Mismatch Percent", "Mismatch Fold")
+table_data$Metric <- factor(table_data$Metric, levels = metric_order)
+
+table_data_final <- table_data %>%
+    select(Metric,
+           `Terrestrial Median`, `Terrestrial SD`,
+           `Marine Median`, `Marine SD`) %>%  # Reorder columns
+    gt() %>%
+    tab_spanner(
+        label = "Marine",
+        columns = c("Marine Median", "Marine SD")
+    ) %>%
+    tab_spanner(
+        label = "Terrestrial",
+        columns = c("Terrestrial Median", "Terrestrial SD")
+    ) %>%
+    cols_label(
+        Metric = "",
+        `Marine Median` = "Median",
+        `Marine SD` = "SD",
+        `Terrestrial Median` = "Median",
+        `Terrestrial SD` = "SD"
+    ) %>%
+    fmt(
+        columns = c(`Terrestrial SD`, `Marine SD`),
+        fns = function(x) scientific(x, digits = 2)
+    )
+
+table_data_final
+```
+
+
+```{r testfaster3}
+gt::gtsave(table_data_final,
+           filename = here("Tables/Shift_stats.html"))
+```
+
+
+N lags, overshoots and misalignments
+```{r summarizing5}
+
+mod_data |> 
+    group_by(lag_overshoot) |>
+    summarise(Perc=length(lag_overshoot)/nrow(mod_data)*100) |>
+    mutate(across(where(is.numeric), round, 1))
+
+# N alignment and misalignments
+mod_data |> 
+    group_by(Eco, match_direction) |>
+    summarise(Count = n(),
+              Mean = mean(mismatch)) |> 
+    mutate(Perc = (Count / sum(Count)) * 100) |> 
+    mutate(across(where(is.numeric), round, 2))
+
+# N alignment and lag_overshoot
+mod_data |> 
+    group_by(Eco, lag_overshoot) |>
+    summarise(Count = n(),
+              Mean = mean(mismatch)) |> 
+    mutate(Perc = (Count / sum(Count)) * 100) |> 
+    mutate(across(where(is.numeric), round, 2))
+
+# N alignment and misalignments for the aggregated data
+agg_data <- as_tibble(mod_data) |>
+    select(ID, sp_name_std, class, Param, ShiftMod_raw, ShiftRate_raw, Eco, mismatch_trend)|>
+    group_by(ID, class, Param, Eco) |>
+    mutate(Nsps = length(unique(sp_name_std)),
+           Eco = case_when(Eco == "Mar" ~ "Marine",
+                           Eco == "Ter" ~ "Terrestrial")) |>
+    filter(Nsps>3) |>
+    summarise(Nsps = mean(Nsps),
+              ShiftMod_sa = mean(ShiftMod_raw),
+              ShiftRate_sa  = mean(ShiftRate_raw),
+              ShiftMod_sa_sd = sd(ShiftMod_raw),
+              ShiftRate_sa_sd = sd(ShiftRate_raw),
+              mismatch_trend = mean(mismatch_trend)) |>
+    plyr::rename(replace = c(class = "Class"), warn_missing = FALSE) |> 
+    mutate(match_direction = case_when(
+        ShiftRate_sa >= 0 & ShiftMod_sa  >= 0 ~ "match",
+        ShiftRate_sa <= 0 & ShiftMod_sa  <= 0 ~ "match",
+        ShiftRate_sa <= 0 & ShiftMod_sa  >= 0 ~ "mismatch",
+        ShiftRate_sa >= 0 & ShiftMod_sa  <= 0 ~ "mismatch",
+        TRUE ~ "mismatch")) |>
+    # tolerance for direction match (2x resolution of the environmental data)
+    mutate(match_direction = case_when(
+        Eco == "Terrestrial" & abs(mismatch_trend) < 2 ~ "match",
+        Eco == "Marine" & abs(mismatch_trend) < 50 ~ "match",
+        TRUE ~ match_direction))
+
+agg_data  |>
+    group_by(Eco, match_direction) |>
+    summarise(Count = n()) |> 
+    mutate(Perc = (Count / sum(Count)) * 100) |> 
+    mutate(across(where(is.numeric), round, 2))
+
+# what is the proportion of lags/overshoots after removing misalignments?
+mod_data |> 
+    filter(!lag_overshoot == "Misalignment") |>
+    group_by(lag_overshoot) |>
+    summarise(Count = n()) |> 
+    mutate(Perc = (Count / sum(Count)) * 100) |> 
+    mutate(across(where(is.numeric), round, 1))
+
+# mean mistmach value by category
+bioshifts |>
+    group_by(Eco,lag_overshoot) |>
+    filter(!is.infinite(mismatch_percent)) |>
+    summarise(mean_mismatch = mean(mismatch)) |>
+    mutate(across(where(is.numeric), round, 2))
+```
+
+
+
+
+# Check for correlations
+## Scatters
+
+```{r fig.width=10,fig.height=5}
+# is Duration correlated with range shift mismatch?
+ggplot(bioshifts, aes(Duration,mismatch))+
+    geom_point()+
+    theme_classic()+
+    geom_smooth()+
+    facet_wrap(.~Eco)
+
+# is Duration correlated with env variability?
+ggplot(bioshifts, aes(bvel_lat_error,Duration))+
+    geom_point()+
+    theme_classic()+
+    geom_smooth()+
+    facet_wrap(.~Eco)
+
+# is Duration correlated Sampling method?
+ggplot(bioshifts, aes(Category,Duration))+
+    geom_boxplot()+
+    theme_classic()+
+    geom_smooth()+
+    facet_wrap(.~Eco)
+
+TukeyHSD(aov(Duration~Category, bioshifts |> filter(Eco == "Ter")))
+TukeyHSD(aov(Duration~Category, bioshifts |> filter(Eco == "Mar")))
+
+# is NPeriods correlated with range shift mismatch?
+ggplot(bioshifts, aes((N_periodes),mismatch))+
+    geom_point()+
+    theme_classic()+
+    geom_smooth()+
+    facet_wrap(.~Eco)
+
+# is env variability correlated with range shift mismatch?
+ggplot(bioshifts, aes(bvel_lat_error,mismatch))+
+    geom_point()+
+    theme_classic()+
+    geom_smooth()+
+    facet_wrap(.~Eco)
+
+# is NPeriods correlated with Duration?
+ggplot(bioshifts, aes((N_periodes),Duration))+
+    geom_point()+
+    theme_classic()+
+    geom_smooth()+
+    facet_wrap(.~Eco)
+
+# is NPeriods correlated with Category?
+ggplot(bioshifts, aes(Category,(N_periodes)))+
+    geom_point()+
+    theme_classic()+
+    geom_smooth()+
+    facet_wrap(.~Eco)
+
+# is Duration correlated with Category?
+ggplot(bioshifts, aes(Category,Duration))+
+    geom_boxplot()+
+    theme_classic()+
+    geom_smooth()+
+    facet_wrap(.~Eco)
+
+TukeyHSD(aov(Duration~Category, bioshifts |> filter(Eco == "Ter")))
+TukeyHSD(aov(Duration~Category, bioshifts |> filter(Eco == "Mar")))
+
+# is climate variability correlated with Category?
+ggplot(bioshifts, aes(Category,log(bvel_lat_error)))+
+    geom_boxplot(outliers = FALSE)+
+    theme_classic()+
+    geom_smooth()+
+    facet_wrap(.~Eco)
+
+TukeyHSD(aov(bvel_lat_error~Category, bioshifts |> filter(Eco == "Ter")))
+TukeyHSD(aov(bvel_lat_error~Category, bioshifts |> filter(Eco == "Mar")))
+
+
+
+
+```
+
+
+
+Removed N_periods as it is highly correlated with Sampling_method
+
+# VIF
+## Terrestrial
+
+```{r}
+subdata_ter <- mod_data |>
+    filter(Eco=="Ter") |>
+    select("mismatch", "Boyce", "Study_duration", "Interannual_var", "Lat_extent", "Connectivity", "Sampling_method", "Life_form", "Locomotion_mode") |>
+    na.omit()
+
+mm_formula_ter <- "mismatch ~ Boyce + Study_duration + Interannual_var + Lat_extent + Connectivity + Sampling_method + Life_form + Locomotion_mode"
+
+m1 <- glm(mm_formula_ter, 
+          data = subdata_ter,
+          family = Gamma(link = "log"))
+summary(m1)
+# locomotion mode is problematic >> remove
+
+mm_formula_ter <- "mismatch ~ Boyce + Study_duration + Interannual_var + Lat_extent + Connectivity + Sampling_method + Life_form"
+
+m1 <- glm(mm_formula_ter, 
+          data = subdata_ter,
+          family = Gamma(link = "log"))
+summary(m1)
+VIF(m1)
+# high VIF value for life form
+# try keeping locomotion mode and removing life form
+
+mm_formula_ter <- "mismatch ~ Boyce + Study_duration + Interannual_var + Lat_extent + Connectivity + Sampling_method + Locomotion_mode"
+m1 <- glm(mm_formula_ter, 
+          data = subdata_ter,
+          family = Gamma(link = "log"))
+summary(m1)
+VIF(m1) # Ok
+
+```
+
+## Marine
+
+```{r}
+
+subdata_mar <- mod_data |>
+    filter(Eco=="Mar") |>
+    select("mismatch", "Boyce", "Study_duration", "N_periods", "Interannual_var", "Connectivity", "Lat_extent", "Sampling_method", "Life_form", "Locomotion_mode") |>
+    na.omit()
+
+mm_formula_mar <- "mismatch ~ Boyce + Study_duration + Interannual_var + Lat_extent + Connectivity + Sampling_method + Life_form + Locomotion_mode"
+
+m1 <- glm(mm_formula_mar, 
+          data = subdata_mar,
+          family = Gamma(link = "log"))
+summary(m1)
+VIF(m1) 
+# high VIF value for locomotion mode
+# try keeping locomotion mode and removing life form
+
+mm_formula_mar <- "mismatch ~ Boyce + Study_duration + Interannual_var + Lat_extent + Connectivity + Sampling_method + Locomotion_mode"
+
+m1 <- glm(mm_formula_mar,
+          data = subdata_mar,
+          family = Gamma(link = "log"))
+summary(m1)
+VIF(m1) # Ok
+
+```
+
+# Models
+
+Set random and fixed effects
+```{r}
+# Random effects
+
+## Nested 
+RE_nest <- "(1 | Param/class/ID)"
+## custom 
+RE_cust <- "(1 | Random_ID_Param_Class)"
+
+########################
+
+# fixed effects
+cont_vars <- c(
+    "Boyce",
+    "Study_duration",
+    "Interannual_var",
+    "Lat_extent",
+    "Connectivity"
+)
+cat_vars <- c(
+    "Life_form",
+    "Sampling_method",
+    "Locomotion_mode"
+)
+
+cont_vars_original <- c(
+    "Boyce",
+    "Duration",
+    "bvel_lat_error", # log+1 transformed
+    "LatExtentk", # log transformed
+    "connectivity"
+)
+cat_vars_original <- c(
+    "lifeform",
+    "Category",
+    "Locomotion_mode"
+)
+
+cont_vars_trans <- c(
+    NA,
+    NA,
+    "log1p", # log+1 transformed
+    "log", # log transformed
+    NA
+)
+
+cont_vars_names <- c(
+    "Model performance",
+    "Study duration",
+    "Variability in suitability",
+    "Latitudinal extent",
+    "Landscape connectivity"
+)
+cat_vars_names <- c(
+    "Life form",
+    "Sampling method",
+    "Locomotion mode"
+)
+cont_vars_names_with_units <- c(
+    "Model performance (Boyce index)",
+    "Study duration (Years)",
+    "Variability in suitability (°C)",
+    "Latitudinal extent (Km)",
+    "Landscape connectivity"
+)
+all_vars <- c(cont_vars, cat_vars, "ShiftRate")
+all_vars_names <- c(cont_vars_names, cat_vars_names, "Documented Shift")
+all_vars_original <- c(cont_vars_original, cat_vars_original, "ShiftRate")
+all_vars_data <- data.frame(all_vars,all_vars_names,all_vars_original)
+
+```
+
+
+```{r}
+
+if(is.null(params$shiftmodtype)){
+    shiftmodtype = shiftmodtype_to_go
+} else {
+    shiftmodtype = params$shiftmodtype
+}
+
+# simple model
+sm_fixed_eff <- "ShiftRate ~  ShiftMod"
+sm_formula <- paste(sm_fixed_eff, RE_nest, sep = " + ")
+sm_fixed_eff_raw <- "ShiftRate_raw ~  ShiftMod_raw"
+sm_formula_raw <- paste(sm_fixed_eff_raw, RE_nest, sep = " + ")
+
+# simple model * direction
+sm_fixed_eff_dir <- "ShiftRate ~  ShiftMod * Shift_alignment"
+sm_formula_dir <- paste(sm_fixed_eff_dir, RE_nest, sep = " + ")
+
+# mismatch model
+# set above during the VIF process
+
+# mismatch model lag vs overshoot
+mm_lagover_formula_ter <- mm_formula_ter
+mm_lagover_formula_ter <- strsplit(mm_lagover_formula_ter, "~")[[1]]
+response <- mm_lagover_formula_ter[1]
+response <- gsub(" ","",response)
+predictors <- mm_lagover_formula_ter[2]
+predictors <- strsplit(predictors,"+",fixed = TRUE)[[1]]
+predictors <- gsub(" ","",predictors)
+predictors <- paste0(predictors,"*lag_overshoot")
+predictors <- paste(predictors,collapse = " + ")
+
+mm_lagover_formula_ter <- paste(response, predictors, sep = " ~ ")
+mm_lagover_formula_ter <- paste(mm_lagover_formula_ter, "+", RE_nest)
+
+mm_lagover_formula_mar <- mm_formula_mar
+mm_lagover_formula_mar <- strsplit(mm_lagover_formula_mar, "~")[[1]]
+response <- mm_lagover_formula_mar[1]
+response <- gsub(" ","",response)
+predictors <- mm_lagover_formula_mar[2]
+predictors <- strsplit(predictors,"+",fixed = TRUE)[[1]]
+predictors <- gsub(" ","",predictors)
+predictors <- paste0(predictors,"*lag_overshoot")
+predictors <- paste(predictors,collapse = " + ")
+
+mm_lagover_formula_mar <- paste(response, predictors, sep = " ~ ")
+mm_lagover_formula_mar <- paste(mm_lagover_formula_mar, "+", RE_nest)
+
+```
+
+
+## Simple model - species-level (Shift ~ ShiftMod)
+
+
+### Terrestrial
+```{r fig.width=4, fig.height=4}
+
+subdata_ter <- mod_data |>
+    filter(Eco=="Ter")
+
+# length(unique(mod_data$Random_ID_Param_Class))
+
+sm_ter <- glmmTMB(as.formula(sm_formula_raw),
+                  data = subdata_ter)
+
+# summary(sm_ter)
+
+# tab_model(sm_ter)
+# 
+# plot(effects::allEffects(sm_ter))
+
+# R-squared
+r.squaredGLMM(sm_ter)
+
+# RMSE 
+# Get model predictions
+predicted <- predict(sm_ter)
+
+# Get the observed values
+observed <- subdata_ter$ShiftMod_raw
+
+# Compute RMSE
+rmse_val <- sqrt(mean((observed - predicted)^2))
+rmse_val
+
+# Normalized Metrics (Optional)
+# You can compute NRMSE (normalized RMSE) = RMSE / mean(y), which allows comparisons across datasets.
+# For proportion data (e.g., binomial with response in 0–1), RMSE below 0.1–0.2 is often considered good, but again it depends on your context.
+rmse_val / mean(observed)
+rmse_val / sd(observed)
+
+# 1:1 test
+fit.emt <- emtrends(sm_ter, ~1, var="ShiftMod_raw") 
+fit.emt
+
+fit_11_ter <- test(fit.emt, null=1)
+fit_11_ter
+```
+
+
+### Marine
+
+```{r fig.width=4, fig.height=4}
+
+subdata_mar <- mod_data |>
+    filter(Eco=="Mar")
+
+# length(unique(subdata_mar$Random_ID_Param_Class))
+
+sm_mar <- glmmTMB(as.formula(sm_formula_raw),
+                  data = subdata_mar)
+
+# tab_model(sm_mar)
+# 
+# plot(effects::allEffects(sm_mar))
+
+# R-squared
+r.squaredGLMM(sm_mar)
+
+# RMSE 
+# Get model predictions
+predicted <- predict(sm_mar)
+
+# Get the observed values
+observed <- subdata_mar$ShiftMod_raw
+
+# Compute RMSE
+rmse_val <- sqrt(mean((observed - predicted)^2))
+rmse_val
+
+# Normalized Metrics (Optional)
+# You can compute NRMSE (normalized RMSE) = RMSE / mean(y), which allows comparisons across datasets.
+# For proportion data (e.g., binomial with response in 0–1), RMSE below 0.1–0.2 is often considered good, but again it depends on your context.
+rmse_val / mean(observed)
+rmse_val / sd(observed)
+
+# 1:1 test
+fit.emt <- emtrends(sm_mar, ~1, var="ShiftMod_raw") 
+fit.emt
+
+fit_11_mar <- test(fit.emt, null=1)
+fit_11_mar
+```
+
+
+
+### Save model results
+```{r}
+
+# Make table for the 1:1 test
+rbind(fit_11_ter,
+      fit_11_mar)  |> 
+    select(-null) |>
+    mutate(Eco = c("Ter","Mar"),
+           p.value = case_when(
+               p.value < 0.001 ~ "<0.001",
+               p.value < 0.01  ~ "<0.01",
+               p.value < 0.05  ~ "<0.05",
+               TRUE            ~ sprintf("%.2f", p.value)  # Format to 3 decimal places
+           ))|> 
+    mutate(across(where(is.numeric), round, 2)) |> 
+    gt()
+
+# save regular table
+mar_sm_res <- summary(sm_mar)
+mar_sm_res <- data.frame(mar_sm_res$coefficients$cond)
+mar_sm_res$Param <- rownames(mar_sm_res)
+names(mar_sm_res) <- c("Estimate", "Std_Error", "z-value", "P-value", "Param")
+# use p-value of the 1:1 test
+mar_sm_res$`P-value`[2] <- fit_11_mar$p.value
+
+ter_sm_res <- summary(sm_ter)
+ter_sm_res <- data.frame(ter_sm_res$coefficients$cond)
+ter_sm_res$Param <- rownames(ter_sm_res)
+names(ter_sm_res) <- c("Estimate", "Std_Error", "z-value", "P-value", "Param")
+# use p-value of the 1:1 test
+ter_sm_res$`P-value`[2] <- fit_11_ter$p.value
+
+res_glmm_simple_model <- rbind(
+    data.frame(Eco = "Ter",
+               ter_sm_res),
+    data.frame(Eco = "Mar",
+               mar_sm_res)
+)
+
+
+if(shiftmodtype=="95"){
+    write.csv(res_glmm_simple_model, 
+              here("Data/Output/res_glmm_sm95_all.csv"), 
+              row.names = FALSE)
+} else {
+    write.csv(res_glmm_simple_model, 
+              here("Data/Output/res_glmm_sm_all.csv"), 
+              row.names = FALSE)
+}
+
+```
+
+
+### Combined model output
+
+```{r}
+tab_model(sm_ter,sm_mar, 
+          dv.labels = c("Terrestrial","Marine"),  
+          show.icc = FALSE, 
+          show.r2 = FALSE,
+          show.ngroups = FALSE,
+          show.re.var = FALSE)
+```
+
+
+## Simple model - Study-level (Shift ~ ShiftMod)
+
+### Terrestrial
+```{r fig.width=4, fig.height=4}
+
+new_data <- as_tibble(bioshifts) |>
+    filter(Eco=="Ter") |>
+    select(ID, sp_name_std, class, Param, bvel_lat, bvel95_lat, ShiftRate, Eco)|>
+    group_by(ID, class, Param, Eco) |>
+    mutate(Nsps = length(unique(sp_name_std)),
+           ShiftMod_raw = bvel_lat,
+           ShiftMod_raw95 = bvel95_lat,
+           ShiftRate_raw = ShiftRate) |>
+    filter(Nsps>3) |>
+    summarise(Nsps = mean(Nsps),
+              ShiftMod = mean(ShiftMod_raw),
+              ShiftMod95 = mean(ShiftMod_raw95),
+              ShiftRate  = mean(ShiftRate_raw),
+              ShiftMod95_sd = sd(ShiftMod_raw95),
+              ShiftMod_sd = sd(ShiftMod_raw),
+              ShiftRate_sd = sd(ShiftRate_raw)) |>
+    plyr::rename(replace = c(class = "Class"), warn_missing = FALSE) 
+
+# Fit a deming model
+sm_SA_deming_ter <- deming(
+    formula = as.formula(sm_fixed_eff),
+    xstd = ShiftMod_sd,
+    ystd = ShiftRate_sd,
+    weights = Nsps,
+    data = new_data)
+
+sm_SA_deming_ter
+
+# Fit a GLMM (more appropriate because contains the random effects)
+
+sm_SA_glmm_ter <- glmmTMB(
+    as.formula(paste(sm_fixed_eff, "+ (1 | Param/Class)")),
+    weights = Nsps, 
+    new_data)
+
+# tab_model(sm_SA_glmm_ter)
+tmp <- summary(sm_SA_glmm_ter)
+
+{
+    plot(ShiftRate~ShiftMod, new_data)
+    abline(h = 0, v = 0, lty = "dashed")
+    abline(sm_SA_deming_ter, col = "blue")
+    abline(b = tmp$coefficients$cond[2,1], a = tmp$coefficients$cond[1,1], col = "red")
+}
+
+# R-squared
+r.squaredGLMM(sm_SA_glmm_ter)
+
+# 1:1 test
+fit.emt <- emtrends(sm_SA_glmm_ter, ~1, var="ShiftMod") 
+fit.emt
+
+fit_11_ter_SA <- test(fit.emt, null=1)
+fit_11_ter_SA
+```
+
+No association between modeled shift velocity and observed shift velocity.
+
+### Marine
+
+```{r fig.width=4, fig.height=4}
+
+new_data <- as_tibble(bioshifts) |>
+    filter(Eco=="Mar") |>
+    select(ID, sp_name_std, class, Param, bvel_lat, bvel95_lat, ShiftRate, Eco)|>
+    group_by(ID, class, Param, Eco) |>
+    mutate(Nsps = length(unique(sp_name_std)),
+           ShiftMod_raw = bvel_lat,
+           ShiftMod_raw95 = bvel95_lat,
+           ShiftRate_raw = ShiftRate) |>
+    filter(Nsps>3) |>
+    summarise(Nsps = mean(Nsps),
+              ShiftMod = mean(ShiftMod_raw),
+              ShiftMod95 = mean(ShiftMod_raw95),
+              ShiftRate  = mean(ShiftRate_raw),
+              ShiftMod95_sd = sd(ShiftMod_raw95),
+              ShiftMod_sd = sd(ShiftMod_raw),
+              ShiftRate_sd = sd(ShiftRate_raw)) |>
+    plyr::rename(replace = c(class = "Class"), warn_missing = FALSE) 
+
+# new_data$ShiftMod_sd[which(new_data$ShiftMod_sd==0)] <- 0.0001
+# new_data$ShiftRate_sd[which(new_data$ShiftMod_sd==0)] <- 0.0001
+# new_data[is.na(new_data)] <- 0.0001
+
+# Fit a deming model
+
+
+# sm_SA_deming_mar <- deming(
+#     formula = as.formula(sm_fixed_eff),
+#     xstd = ShiftMod_sd,
+#     ystd = ShiftRate_sd,
+#     weights = Nsps,
+#     data = new_data)
+# 
+# sm_SA_deming_mar
+
+# Fit a GLMM (more appropriate because contains the random effects)
+
+sm_SA_glmm_mar <- glmmTMB(
+    as.formula(paste(sm_fixed_eff, "+ (1 | Param/Class)")),
+    weights = Nsps, 
+    new_data)
+
+# tab_model(sm_SA_glmm_mar)
+tmp <- summary(sm_SA_glmm_mar)
+
+{
+    plot(ShiftRate~ShiftMod, new_data)
+    abline(h = 0, v = 0, lty = "dashed")
+    # abline(sm_SA_deming_mar, col = "blue")
+    abline(b = tmp$coefficients$cond[2,1], 
+           a = tmp$coefficients$cond[1,1], col = "red")
+}
+
+# R-squared
+r.squaredGLMM(sm_SA_glmm_mar)
+
+# 1:1 test
+fit.emt <- emtrends(sm_SA_glmm_mar, ~1, var="ShiftMod") 
+fit.emt
+
+fit_11_mar_SA <- test(fit.emt, null=1)
+fit_11_mar_SA
+
+```
+
+Same here...
+
+
+### Save model results
+```{r}
+
+# Make table for the 1:1 test
+rbind(fit_11_ter_SA,
+      fit_11_mar_SA)  |> 
+    select(-null) |>
+    mutate(Eco = c("Ter","Mar"),
+           p.value = case_when(
+               p.value < 0.001 ~ "<0.001",
+               p.value < 0.01  ~ "<0.01",
+               p.value < 0.05  ~ "<0.05",
+               TRUE            ~ sprintf("%.2f", p.value)  # Format to 3 decimal places
+           ))|> 
+    mutate(across(where(is.numeric), round, 2)) |> 
+    gt()
+
+# save regular table
+ter_sm_SA_glmm_res <- summary(sm_SA_glmm_ter)
+ter_sm_SA_glmm_res <- data.frame(ter_sm_SA_glmm_res$coefficients$cond)
+ter_sm_SA_glmm_res$Param <- rownames(ter_sm_SA_glmm_res)
+names(ter_sm_SA_glmm_res) <- c("Estimate", "Std_Error", "z-value", "P-value", "Param")
+# use p-value of the 1:1 test
+ter_sm_SA_glmm_res$`P-value`[2] <- fit_11_ter$p.value
+
+mar_sm_SA_glmm_res <- summary(sm_SA_glmm_mar)
+mar_sm_SA_glmm_res <- data.frame(mar_sm_SA_glmm_res$coefficients$cond)
+mar_sm_SA_glmm_res$Param <- rownames(mar_sm_SA_glmm_res)
+names(mar_sm_SA_glmm_res) <- c("Estimate", "Std_Error", "z-value", "P-value", "Param")
+# use p-value of the 1:1 test
+mar_sm_SA_glmm_res$`P-value`[2] <- fit_11_mar$p.value
+
+
+sm_SA_glmm_res <- rbind(data.frame(Eco = "Ter",ter_sm_SA_glmm_res),
+                        data.frame(Eco = "Mar",mar_sm_SA_glmm_res))
+
+
+if(shiftmodtype=="95"){
+    write.csv(sm_SA_glmm_res, 
+              here("Data/Output/res_sm_SA_glmm95_all.csv"), 
+              row.names = FALSE)
+} else {
+    write.csv(sm_SA_glmm_res, 
+              here("Data/Output/res_sm_SA_glmm_all.csv"), 
+              row.names = FALSE)
+}
+
+```
+
+### Combined model output
+
+```{r}
+tab_model(sm_SA_glmm_ter,sm_SA_glmm_mar, 
+          dv.labels = c("Terrestrial","Marine"),
+          show.icc = FALSE, 
+          show.r2 = FALSE,
+          show.ngroups = FALSE,
+          show.re.var = FALSE)
+```
+
+## Direction model (Shift ~ ShiftMod * dir)
+
+### Terrestrial
+```{r fig.width=8, fig.height=4}
+var_to_go <- strsplit(sm_formula_dir,"~|[+]|[/]|[|]|[*]")[[1]]
+var_to_go <- gsub(" |[(]|[)]","",var_to_go)
+var_to_go <- var_to_go[-which(var_to_go=="1")]
+
+subdata_ter <- mod_data |>
+    filter(Eco=="Ter") |>
+    select(var_to_go) |>
+    na.omit()
+
+sm_dir_ter <- glmmTMB(as.formula(sm_formula_dir),
+                      data = subdata_ter)
+
+# tab_model(sm_dir_ter)
+
+# plot(effects::allEffects(sm_dir_ter), main = "Terrestrial")
+```
+
+
+```{r fig.width=8, fig.height=4}
+# test if this model is better that random 
+sm_formula_dir_random <- gsub("Shift_alignment","Shuffled_Match_dir",sm_formula_dir)
+
+cl <- makeCluster(detectCores()-2)
+clusterExport(cl, c("subdata_ter", "glmmTMB", "sm_formula_dir_random", "r.squaredGLMM"))
+
+null_r_squared <- pbreplicate(100, {
+    subdata_ter$Shuffled_Match_dir  <- sample(subdata_ter$Shift_alignment)
+    model_null <- glmmTMB(as.formula(sm_formula_dir_random),
+                          data = subdata_ter)
+    data.frame(r.squaredGLMM(model_null))
+}, 
+simplify = FALSE,
+cl = cl)
+
+stopCluster(cl)
+
+null_r_squared <- rbindlist(null_r_squared)
+
+observed_r_squared <- data.frame(r.squaredGLMM(sm_dir_ter))
+mean(null_r_squared$R2m >= observed_r_squared$R2m)
+mean(null_r_squared$R2c >= observed_r_squared$R2c)
+
+plot_data <- rbind(data.frame(data = "Null", 
+                              R2 = "Marginal R2",
+                              value = null_r_squared$R2m),
+                   data.frame(data = "Null", 
+                              R2 = "Conditional R2",
+                              value = null_r_squared$R2c),
+                   data.frame(data = "Observed", 
+                              R2 = "Marginal R2",
+                              value = observed_r_squared$R2m),
+                   data.frame(data = "Observed", 
+                              R2 = "Conditional R2",
+                              value = observed_r_squared$R2c))
+
+ggplot(plot_data |>
+           filter(data == "Null"), 
+       aes(x = value)) +
+    geom_histogram()+
+    geom_vline(data = plot_data |>
+                   filter(data == "Observed"),
+               aes(xintercept = value, color = "red"))+
+    theme_bw()+
+    facet_wrap(.~R2, scales = "free")
+```
+
+Modeled shift velocity is positively related to observed shift velocity only when they shift in the same direction.
+
+### Marine
+
+```{r fig.width=8, fig.height=4}
+var_to_go <- strsplit(sm_formula_dir,"~|[+]|[/]|[|]|[*]")[[1]]
+var_to_go <- gsub(" |[(]|[)]","",var_to_go)
+var_to_go <- var_to_go[-which(var_to_go=="1")]
+
+subdata_mar <- mod_data |>
+    filter(Eco=="Mar") |>
+    select(var_to_go) |>
+    na.omit()
+
+sm_dir_mar <- glmmTMB(as.formula(sm_formula_dir),
+                      data = subdata_mar)
+
+# tab_model(sm_dir_mar)
+
+# plot(effects::allEffects(sm_dir_mar), main = "Marine")
+```
+
+
+```{r fig.width=8, fig.height=4}
+# test if this model is better that random 
+sm_formula_dir_random <- gsub("Shift_alignment","Shuffled_Match_dir",sm_formula_dir)
+
+cl <- makeCluster(detectCores()-2)
+clusterExport(cl, c("subdata_mar", "glmmTMB", "sm_formula_dir_random", "r.squaredGLMM"))
+
+null_r_squared <- pbreplicate(100, {
+    subdata_mar$Shuffled_Match_dir  <- sample(subdata_mar$Shift_alignment)
+    model_null <- glmmTMB(as.formula(sm_formula_dir_random),
+                          data = subdata_mar)
+    data.frame(r.squaredGLMM(model_null))
+}, 
+simplify = FALSE,
+cl = cl)
+
+stopCluster(cl)
+
+null_r_squared <- rbindlist(null_r_squared)
+
+observed_r_squared <- data.frame(r.squaredGLMM(sm_dir_mar))
+mean(null_r_squared$R2m >= observed_r_squared$R2m)
+mean(null_r_squared$R2c >= observed_r_squared$R2c)
+
+plot_data <- rbind(data.frame(data = "Null", 
+                              R2 = "Marginal R2",
+                              value = null_r_squared$R2m),
+                   data.frame(data = "Null", 
+                              R2 = "Conditional R2",
+                              value = null_r_squared$R2c),
+                   data.frame(data = "Observed", 
+                              R2 = "Marginal R2",
+                              value = observed_r_squared$R2m),
+                   data.frame(data = "Observed", 
+                              R2 = "Conditional R2",
+                              value = observed_r_squared$R2c))
+
+ggplot(plot_data |>
+           filter(data == "Null"), 
+       aes(x = value)) +
+    geom_histogram()+
+    geom_vline(data = plot_data |>
+                   filter(data == "Observed"),
+               aes(xintercept = value, color = "red"))+
+    theme_bw()+
+    facet_wrap(.~R2, scales = "free")
+
+```
+
+Modeled shift velocity is positively related to observed shift velocity only when they shift in the same direction.
+
+### Combined model output
+
+```{r fig.height=6,fig.width=7}
+
+sm_dir_ter_eff <- ggeffects::ggeffect(sm_dir_ter, 
+                                      terms = c("ShiftMod","Shift_alignment"))
+sm_dir_mar_eff <- ggeffects::ggeffect(sm_dir_mar, 
+                                      terms = c("ShiftMod","Shift_alignment"))
+
+# unscale vars
+params_xy <- bioshifts |>
+    select(ShiftRate, bvel_lat) |>
+    summarise(ShiftRate_mean = mean(ShiftRate,na.rm = TRUE),
+              bvel_lat_mean = mean(bvel_lat,na.rm = TRUE),
+              ShiftRate_sd = sd(ShiftRate,na.rm = TRUE),
+              bvel_lat_sd = sd(bvel_lat,na.rm = TRUE))
+
+
+# make plot terrestrial
+sm_dir_ter_eff$x <- sm_dir_ter_eff$x * params_xy$bvel_lat_sd + params_xy$bvel_lat_mean
+
+sm_dir_ter_eff$predicted <- sm_dir_ter_eff$predicted * params_xy$ShiftRate_sd + params_xy$ShiftRate_mean
+sm_dir_ter_eff$conf.low <-sm_dir_ter_eff$conf.low * params_xy$ShiftRate_sd + params_xy$ShiftRate_mean
+sm_dir_ter_eff$conf.high <-sm_dir_ter_eff$conf.high * params_xy$ShiftRate_sd + params_xy$ShiftRate_mean
+
+sm_dir_ter_eff_plot <-
+    ggplot(sm_dir_ter_eff, aes(x = x, y = predicted))+
+    geom_line(size = 1.5) +
+    geom_ribbon(aes(ymin=conf.low, ymax=conf.high), alpha = .3) +
+    theme_classic(base_size = 10)+
+    labs(x = "Modeled latitudinal shift (km/yr)", 
+         y = "Predicted latitudinal shift rate (km/yr)",
+         title = "Terrestrial",
+         fill = NULL, 
+         color = NULL)+
+    theme(aspect.ratio=1)+
+    facet_wrap(.~group, scales = "free_x")
+
+# make plot marine
+sm_dir_mar_eff$x <- sm_dir_mar_eff$x * params_xy$bvel_lat_sd + params_xy$bvel_lat_mean
+
+sm_dir_mar_eff$predicted <- sm_dir_mar_eff$predicted * params_xy$ShiftRate_sd + params_xy$ShiftRate_mean
+sm_dir_mar_eff$conf.low <-sm_dir_mar_eff$conf.low * params_xy$ShiftRate_sd + params_xy$ShiftRate_mean
+sm_dir_mar_eff$conf.high <-sm_dir_mar_eff$conf.high * params_xy$ShiftRate_sd + params_xy$ShiftRate_mean
+
+sm_dir_mar_eff_plot <-
+    ggplot(sm_dir_mar_eff, aes(x = x, y = predicted))+
+    geom_line(size = 1.5) +
+    geom_ribbon(aes(ymin=conf.low, ymax=conf.high), alpha = .3) +
+    theme_classic(base_size = 10)+
+    labs(x = "Modeled latitudinal shift (km/yr)", 
+         y = "Documented latitudinal shift rate (km/yr)",
+         title = "Marine",
+         fill = NULL, 
+         color = NULL)+
+    theme(aspect.ratio=1)+
+    facet_wrap(.~group, scales = "free_x")
+
+
+ggarrange(sm_dir_ter_eff_plot,
+          sm_dir_mar_eff_plot,
+          labels = "AUTO",
+          font.label = list(size = 10),
+          align = "hv",
+          ncol = 1)
+
+```
+
+
+```{r}
+tab_model(sm_dir_ter,sm_dir_mar, 
+          dv.labels = c("Terrestrial","Marine"),  
+          show.icc = FALSE, 
+          show.r2 = FALSE,
+          show.ngroups = FALSE,
+          show.re.var = FALSE,
+          show.obs = FALSE)
+```
+
+### Chi-squared test for direction frequency
+```{r}
+
+mod_data  |>
+    group_by(Eco, match_direction) |>
+    summarise(N = length(match_direction)) |>
+    mutate(Percent = round((N / sum(N))*100,1))
+
+# Terrestrial
+dir_table <- mod_data |>
+    filter(Eco == "Ter") |> 
+    group_by(match_direction) |>
+    count() |>
+    na.omit()
+
+dir_table
+chisq.test(dir_table$n)
+
+# Marine
+dir_table <- mod_data |>
+    filter(Eco == "Mar") |> 
+    group_by(match_direction) |>
+    count() |>
+    na.omit()
+
+dir_table
+chisq.test(dir_table$n)
+
+```
+
+
+## Binomial model
+
+### Terrestrial
+```{r}
+
+subdata_ter <- mod_data |>
+    filter(Eco=="Ter") |>
+    select(mismatch_binary,Param,class,ID) |>
+    na.omit()
+
+# fit model
+# models dont converge with (1 | Param/class/ID) 
+mm01_ter <- glmmTMB(mismatch_binary ~ 1 + (1 | class/ID),
+                    family = binomial,
+                    data = subdata_ter,
+                    control = glmmTMBControl(
+                        optimizer = optim,
+                        optArgs = list(
+                            method = "BFGS")
+                    )
+)
+
+# tab_model(mm01_ter, transform = NULL, string.est = "Estimate")
+
+# R-squared
+r.squaredGLMM(mm01_ter)
+
+performance::r2_nakagawa(mm01_ter)
+
+```
+
+### Marine
+```{r}
+
+subdata_mar <- mod_data |>
+    filter(Eco=="Mar") |>
+    select(mismatch_binary,Param,class,ID) |>
+    na.omit()
+
+# fit model
+# models dont converge with (1 | Param/class/ID) 
+mm01_mar <- glmmTMB(mismatch_binary ~ 1 + (1 | Param/class/ID),
+                    family = binomial,
+                    data = subdata_mar,
+                    control = glmmTMBControl(
+                        optimizer = optim,
+                        optArgs = list(
+                            method = "BFGS")
+                    )
+)
+summary(mm01_mar)
+# tab_model(mm01_mar, transform = NULL, string.est = "Estimate")
+
+# R-squared
+r.squaredGLMM(mm01_mar)
+
+performance::r2_nakagawa(mm01_mar)
+
+```
+
+<!-- ### Combined model output -->
+
+```{r}
+tab_model(mm01_ter, mm01_mar, 
+          transform = NULL, string.est = "Estimate", string.p = "P-value",
+          dv.labels = c("Terrestrial","Marine"),  
+          show.icc = FALSE, 
+          show.r2 = FALSE,
+          show.ngroups = FALSE,
+          show.re.var = FALSE,
+          show.obs = FALSE)
+
+# Back-transform the intercept to get the probability
+prob_success_ter <- exp(coeffs(mm01_ter)) / (1 + exp(coeffs(mm01_ter)))
+prob_success_ter
+prob_success_mar <- exp(coeffs(mm01_mar)) / (1 + exp(coeffs(mm01_mar)))
+prob_success_mar
+```
+
+### Terrestrial - aggregated
+```{r}
+
+subdata_ter <- agg_data |>
+    filter(Eco=="Terrestrial") |>
+    select(match_direction,Param,Class,ID) |>
+    mutate(match_direction = case_when(match_direction == "match" ~ 1,
+                                       match_direction == "mismatch" ~ 0)) |>
+    na.omit()
+
+# fit model
+# models dont converge with (1 | Param/class/ID) 
+mm01_agg_ter <- glmmTMB(match_direction ~ 1 + (1 | Param),
+                        family = binomial,
+                        data = subdata_ter,
+                        # control = glmmTMBControl(
+                        #     optimizer = optim,
+                        #     optArgs = list(
+                        #         method = "BFGS")
+                        # )
+)
+
+# tab_model(mm01_agg_ter, transform = NULL, string.est = "Estimate")
+
+# R-squared
+r.squaredGLMM(mm01_agg_ter)
+
+performance::r2(mm01_agg_ter)
+
+```
+
+### Marine - aggregated
+```{r}
+
+subdata_mar <- agg_data |>
+    filter(Eco=="Marine") |>
+    select(match_direction,Param,Class,ID) |>
+    mutate(match_direction = case_when(match_direction == "match" ~ 1,
+                                       match_direction == "mismatch" ~ 0)) |>
+    na.omit()
+
+# fit model
+# models dont converge with (1 | Param/class/ID) 
+mm01_agg_mar <- glmmTMB(match_direction ~ 1 + (1 | Param),
+                        family = binomial,
+                        data = subdata_mar,
+                        control = glmmTMBControl(
+                            optimizer = optim,
+                            optArgs = list(
+                                method = "BFGS")
+                        )
+)
+
+# tab_model(mm01_agg_mar, transform = NULL, string.est = "Estimate")
+
+# R-squared
+r.squaredGLMM(mm01_agg_mar)
+
+performance::r2(mm01_agg_mar)
+
+```
+
+<!-- ### Combined model output -->
+
+```{r}
+tab_model(mm01_agg_ter, mm01_agg_mar, 
+          transform = NULL, string.est = "Estimate", string.p = "P-value",
+          dv.labels = c("Terrestrial","Marine"),  
+          show.icc = FALSE, 
+          show.r2 = FALSE,
+          show.ngroups = FALSE,
+          show.re.var = FALSE,
+          show.obs = FALSE)
+
+# Back-transform the intercept to get the probability
+prob_success_ter <- exp(coeffs(mm01_agg_ter)) / (1 + exp(coeffs(mm01_agg_ter)))
+prob_success_ter
+prob_success_mar <- exp(coeffs(mm01_agg_mar)) / (1 + exp(coeffs(mm01_agg_mar)))
+prob_success_mar
+```
+
+## Lag vs overshoots between documented and modeled shifts
+### Terrestrial
+
+#### Fit model
+
+```{r}
+
+y <- strsplit(mm_lagover_formula_ter," ")[[1]][1]
+
+var_to_go <- strsplit(mm_lagover_formula_ter,"~|[+]|[/]|[|]|[*]")[[1]]
+var_to_go <- gsub(" |[(]|[)]","",var_to_go)
+var_to_go <- var_to_go[-which(var_to_go=="1")]
+var_to_go <- unique(var_to_go)
+
+subdata_ter <- mod_data |>
+    filter(Eco=="Ter") |> 
+    select(var_to_go) |>
+    na.omit()
+
+mm_lag_over_ter <- glmmTMB(as.formula(mm_lagover_formula_ter),
+                           family = Gamma(link = "log"),
+                           data = subdata_ter,
+                           # control = glmmTMBControl(
+                           #     optimizer = optim,
+                           #     optArgs = list(
+                           #         method = "BFGS",
+                           #         rel.tol = 1e-10,   # Reduce relative tolerance
+                           #         maxit = 10000      # Increase max iterations
+                           #     ))
+)
+
+# tab_model(mm_lag_over_ter, transform = NULL, string.est = "Estimate")
+
+# performance::check_model(mm_lag_over_ter)
+
+# R-squared
+r.squaredGLMM(mm_lag_over_ter)
+
+performance::r2(mm_lag_over_ter)
+
+# Decompose variance explained by individual predictors
+# drop1(mm_lag_over_ter, test = "Chisq")
+
+# RMSE 
+# Get model predictions
+predicted <- predict(mm_lag_over_ter)
+
+# Get the observed values
+observed <- subdata_ter$mismatch
+
+# Compute RMSE
+rmse_val <- sqrt(mean((observed - predicted)^2))
+rmse_val
+
+# Normalized Metrics (Optional)
+# You can compute NRMSE (normalized RMSE) = RMSE / mean(y), which allows comparisons across datasets.
+# For proportion data (e.g., binomial with response in 0–1), RMSE below 0.1–0.2 is often considered good, but again it depends on your context.
+rmse_val/mean(observed)
+rmse_val / sd(observed)
+
+# Compute mean bias
+mean_bias <- mean(predicted - observed)
+mean_bias
+
+plot(effect(term = c("lag_overshoot","Locomotion_mode"),mod = mm_lag_over_ter))
+
+```
+
+#### Get effects for continuous variables
+##### overall effects
+```{r }
+
+
+mm_lag_over_ter_eff <- lapply(cont_vars, function(x){
+    if(any(grepl(x,var_to_go))){
+        emtrends(object = mm_lag_over_ter, 
+                 ~1,
+                 var = x)
+    }
+})
+names(mm_lag_over_ter_eff) <- cont_vars_names
+
+test <- sapply(mm_lag_over_ter_eff,is.null)
+if(any(test)){
+    mm_lag_over_ter_eff <- mm_lag_over_ter_eff[-which(test)]
+}
+test <- lapply(mm_lag_over_ter_eff, function(x){
+    x = data.frame(x)
+    names(x)[1] <- "Var"
+    names(x)[2] <- "Estimate"
+    # Compute Wald z and p-value manually
+    z <- x[,2] / x$SE
+    p <- 2 * pnorm(-abs(z))
+    
+    data.frame(x, z = z, p.value = p)
+})
+test <- rbindlist(test)
+test$Var <- cont_vars_names
+test <- data.frame(test)
+test[,-1] <- round(test[,-1],3)
+test$CI <- paste(test$asymp.LCL,test$asymp.UCL,sep = " - ")
+test_ter <- test[,c(1,2,3,9,8)]
+test_ter <- test_ter %>%
+    mutate(p.value = case_when(
+        p.value < 0.001 ~ "<0.001",
+        p.value < 0.01  ~ "<0.01",
+        p.value < 0.05  ~ "<0.05",
+        TRUE            ~ sprintf("%.2f", p.value)  # Format to 3 decimal places
+    ))
+
+```
+
+##### interactions
+```{r }
+
+mm_lag_over_ter_eff <- lapply(cont_vars, function(x){
+    if(any(grepl(x,var_to_go))){
+        emtrends(object = mm_lag_over_ter, 
+                 specs =  "lag_overshoot",
+                 var = x)
+    }
+})
+names(mm_lag_over_ter_eff) <- cont_vars_names
+
+test <- sapply(mm_lag_over_ter_eff,is.null)
+if(any(test)){
+    mm_lag_over_ter_eff <- mm_lag_over_ter_eff[-which(test)]
+}
+mm_lag_over_ter_eff
+
+```
+
+
+
+#### Get emmeans for categorical variables
+```{r }
+
+mm_lag_over_ter_emm <- lapply(cat_vars, function(x){
+    if(any(grepl(x,var_to_go))){
+        emmeans(object = mm_lag_over_ter, 
+                specs = c(x,"lag_overshoot"),
+                type = "response")
+    }
+})
+names(mm_lag_over_ter_emm) <- cat_vars_names
+
+test <- sapply(mm_lag_over_ter_emm,is.null)
+if(any(test)){
+    mm_lag_over_ter_emm <- mm_lag_over_ter_emm[-which(test)]
+}
+mm_lag_over_ter_emm
+
+mm_lag_over_ter_cont <- lapply(mm_lag_over_ter_emm, 
+                               contrast, 
+                               method = "eff",
+                               type = "response")
+names(mm_lag_over_ter_cont) <- names(mm_lag_over_ter_cont)
+mm_lag_over_ter_cont
+
+mm_lag_over_ter_cont_pairs <- lapply(mm_lag_over_ter_emm,
+                                     contrast, 
+                                     method = "pairwise",
+                                     type = "response",
+                                     by = "lag_overshoot",
+                                     adjust = "none",
+                                     ratios = FALSE
+)
+names(mm_lag_over_ter_cont_pairs) <- names(mm_lag_over_ter_cont)
+mm_lag_over_ter_cont_pairs
+
+```
+
+
+### Marine
+
+#### Fit model
+```{r}
+
+y <- strsplit(mm_lagover_formula_mar," ")[[1]][1]
+
+var_to_go <- strsplit(mm_lagover_formula_mar,"~|[+]|[/]|[|]|[*]")[[1]]
+var_to_go <- gsub(" |[(]|[)]","",var_to_go)
+var_to_go <- var_to_go[-which(var_to_go=="1")]
+var_to_go <- unique(var_to_go)
+
+subdata_mar <- mod_data |>
+    filter(Eco=="Mar") |> 
+    select(var_to_go) |>
+    na.omit()
+
+mm_lag_over_mar <- glmmTMB(as.formula(mm_lagover_formula_mar),
+                           family = Gamma(link = "log"),
+                           data = subdata_mar,
+                           # control = glmmTMBControl(
+                           #     optimizer = optim,
+                           #     optArgs = list(
+                           #         method = "BFGS",
+                           #         rel.tol = 1e-10,   # Reduce relative tolerance
+                           #         maxit = 10000      # Increase max iterations
+                           #     ))
+)
+
+# tab_model(mm_lag_over_mar, transform = NULL, string.est = "Estimate")
+
+# R-squared
+r.squaredGLMM(mm_lag_over_mar)
+
+performance::r2(mm_lag_over_mar)
+
+# RMSE 
+# Get model predictions
+predicted <- predict(mm_lag_over_mar)
+
+# Get the observed values
+observed <- subdata_mar$mismatch
+
+# Compute RMSE
+rmse_val <- sqrt(mean((observed - predicted)^2))
+rmse_val
+
+# Normalized Metrics (Optional)
+# You can compute NRMSE (normalized RMSE) = RMSE / mean(y), which allows comparisons across datasets.
+# For proportion data (e.g., binomial with response in 0–1), RMSE below 0.1–0.2 is often considered good, but again it depends on your context.
+rmse_val/mean(observed)
+rmse_val / sd(observed)
+
+# Compute mean bias
+mean_bias <- mean(predicted - observed)
+mean_bias
+```
+
+#### Get effects for continuous variables
+##### overall effects
+```{r }
+
+mm_lag_over_mar_eff <- lapply(cont_vars, function(x){
+    if(any(grepl(x,var_to_go))){
+        emtrends(object = mm_lag_over_mar, 
+                 ~1,
+                 var = x)
+    }
+})
+names(mm_lag_over_mar_eff) <- cont_vars_names
+
+test <- sapply(mm_lag_over_mar_eff,is.null)
+if(any(test)){
+    mm_lag_over_mar_eff <- mm_lag_over_mar_eff[-which(test)]
+}
+test <- lapply(mm_lag_over_mar_eff, function(x){
+    x = data.frame(x)
+    names(x)[1] <- "Var"
+    names(x)[2] <- "Estimate"
+    # Compute Wald z and p-value manually
+    z <- x[,2] / x$SE
+    p <- 2 * pnorm(-abs(z))
+    
+    data.frame(x, z = z, p.value = p)
+})
+test <- rbindlist(test)
+test$Var <- cont_vars_names
+test <- data.frame(test)
+test[,-1] <- round(test[,-1],3)
+test$CI <- paste(test$asymp.LCL,test$asymp.UCL,sep = " - ")
+test_mar<- test[,c(1,2,3,9,8)]
+test_mar <- test_mar %>%
+    mutate(p.value = case_when(
+        p.value < 0.001 ~ "<0.001",
+        p.value < 0.01  ~ "<0.01",
+        p.value < 0.05  ~ "<0.05",
+        TRUE            ~ sprintf("%.2f", p.value)  # Format to 3 decimal places
+    ))
+
+
+```
+
+##### interactions
+```{r }
+
+mm_lag_over_mar_eff <- lapply(cont_vars, function(x){
+    if(any(grepl(x,var_to_go))){
+        emtrends(object = mm_lag_over_mar, 
+                 specs =  "lag_overshoot",
+                 var = x)
+    }
+})
+names(mm_lag_over_mar_eff) <- cont_vars_names
+
+test <- sapply(mm_lag_over_mar_eff,is.null)
+if(any(test)){
+    mm_lag_over_mar_eff <- mm_lag_over_mar_eff[-which(test)]
+}
+mm_lag_over_mar_eff
+
+```
+
+#### Get emmeans for categorical variables
+```{r }
+
+mm_lag_over_mar_emm <- lapply(cat_vars, function(x){
+    if(any(grepl(x,var_to_go))){
+        emmeans(object = mm_lag_over_mar, 
+                specs = c(x,"lag_overshoot"),
+                type = "response")
+    }
+})
+names(mm_lag_over_mar_emm) <- cat_vars_names
+
+test <- sapply(mm_lag_over_mar_emm,is.null)
+if(any(test)){
+    mm_lag_over_mar_emm <- mm_lag_over_mar_emm[-which(test)]
+}
+mm_lag_over_mar_emm
+
+mm_lag_over_mar_cont <- lapply(mm_lag_over_mar_emm, 
+                               contrast, 
+                               method = "eff",
+                               type = "response")
+names(mm_lag_over_mar_cont) <- names(mm_lag_over_mar_cont)
+mm_lag_over_mar_cont
+
+mm_lag_over_mar_cont_pairs <- lapply(mm_lag_over_mar_emm,
+                                     contrast, 
+                                     method = "pairwise",
+                                     type = "response",
+                                     by = "lag_overshoot",
+                                     adjust = "none",
+                                     ratios = FALSE
+)
+names(mm_lag_over_mar_cont_pairs) <- names(mm_lag_over_mar_cont)
+mm_lag_over_mar_cont_pairs
+
+```
+
+### Combined model output
+
+```{r}
+tab_model(mm_lag_over_ter, mm_lag_over_mar, 
+          transform = NULL, string.est = "Estimate", string.p = "P-value",
+          dv.labels = c("Terrestrial","Marine"),  
+          show.icc = FALSE, 
+          show.r2 = FALSE,
+          show.ngroups = FALSE,
+          show.re.var = FALSE,
+          show.obs = FALSE)
+```
+
+
+### Combined emmeans output
+#### interaction
+```{r}
+
+emmeans_cont_ter <- lapply(mm_lag_over_ter_eff, function(x) {
+    tmp <- data.frame(x)
+    var_name <- gsub(".trend","",names(tmp[2]))
+    tmp[,1] <- paste("\u2003",tmp[,1],sep = "")
+    tmp$CI <- paste(round(tmp$asymp.LCL,2),round(tmp$asymp.UCL,2),sep = " – ")
+    tmp$z = tmp[,2] / tmp$SE
+    tmp$`P-value` = 2 * pnorm(-abs(tmp$z))
+    tmp <- tmp[,c(1,2,7,9)]
+    names(tmp) <- c("Predictors", "Estimate","CI","P-value")
+    tmp$Estimate <- round(tmp$Estimate,2)
+    tmp <- tmp %>%
+        mutate(`P-value` = case_when(
+            `P-value` < 0.001 ~ "<0.001",
+            `P-value` < 0.01  ~ "<0.01",
+            `P-value` < 0.05  ~ "<0.05",
+            TRUE            ~ sprintf("%.2f", `P-value`)  # Format to 3 decimal places
+        ))
+    
+    tmp_2 <- tmp[1,]
+    tmp_2[1,] <- ""
+    tmp_2[,1] <- var_name
+    
+    return(rbind(tmp_2,tmp))
+})
+emmeans_cont_ter <- rbindlist(emmeans_cont_ter)
+
+
+emmeans_cat_ter <- lapply(mm_lag_over_ter_cont_pairs, function(x) {
+    tmp <- data.frame(x)
+    var_name <- names(x@misc$orig.grid)[1]
+    var_name <- gsub("_"," ",var_name)
+    ps <- tmp
+    tmp <- data.frame(confint(x))
+    tmp$`P-value` = ps$p.value
+    tmp$CI <- paste(round(tmp$asymp.LCL,2),round(tmp$asymp.UCL,2),sep = " – ")
+    
+    tmp[,1] <- gsub("(","",tmp[,1],fixed = TRUE)
+    tmp[,1] <- gsub(")","",tmp[,1],fixed = TRUE)
+    tmp[,1] <- gsub(" - "," – ",tmp[,1],fixed = TRUE)
+    tmp[,1] <- paste("\u2003\u2003",tmp[,1],sep = "")
+    tmp[,2] <- paste("\u2003",tmp[,2],sep = "")
+    
+    tmp <- tmp[,c(1,2,3,9,8)]
+    
+    levels_lag <- unique(tmp$lag_overshoot)
+    
+    levels_lag_res <- lapply(levels_lag, function(i){
+        tmp_tmp <- tmp[which(tmp$lag_overshoot == i),]
+        tmp_tmp <- tmp_tmp[,-2]
+        names(tmp_tmp) <- c("Predictors", "Estimate","CI","P-value")
+        tmp_tmp$Estimate <- round(tmp_tmp$Estimate,2)
+        tmp_tmp <- tmp_tmp %>%
+            mutate(`P-value` = case_when(
+                `P-value` < 0.001 ~ "<0.001",
+                `P-value` < 0.01  ~ "<0.01",
+                `P-value` < 0.05  ~ "<0.05",
+                TRUE            ~ sprintf("%.2f", `P-value`)  # Format to 3 decimal places
+            ))
+        
+        tmp_tmp_2 <- tmp_tmp[1,]
+        tmp_tmp_2[1,] <- ""
+        tmp_tmp_2[,1] <- i
+        
+        return(rbind(tmp_tmp_2,tmp_tmp))
+    }
+    )
+    
+    levels_lag_res <- rbindlist(levels_lag_res)
+    
+    tmp_tmp_3 <- levels_lag_res[1,]
+    tmp_tmp_3[1,] <- ""
+    tmp_tmp_3[,1] <- var_name
+    
+    levels_lag_res <- rbind(tmp_tmp_3,levels_lag_res)
+    
+    return(levels_lag_res)
+})
+emmeans_cat_ter <- rbindlist(emmeans_cat_ter)
+
+
+```
+
+
+```{r}
+emmeans_cont_mar <- lapply(mm_lag_over_mar_eff, function(x) {
+    tmp <- data.frame(x)
+    var_name <- gsub(".trend","",names(tmp[2]))
+    tmp[,1] <- paste("\u2003",tmp[,1],sep = "")
+    tmp$CI <- paste(round(tmp$asymp.LCL,2),round(tmp$asymp.UCL,2),sep = " – ")
+    tmp$z = tmp[,2] / tmp$SE
+    tmp$`P-value` = 2 * pnorm(-abs(tmp$z))
+    tmp <- tmp[,c(1,2,7,9)]
+    names(tmp) <- c("Predictors", "Estimate","CI","P-value")
+    tmp$Estimate <- round(tmp$Estimate,2)
+    tmp <- tmp %>%
+        mutate(`P-value` = case_when(
+            `P-value` < 0.001 ~ "<0.001",
+            `P-value` < 0.01  ~ "<0.01",
+            `P-value` < 0.05  ~ "<0.05",
+            TRUE            ~ sprintf("%.2f", `P-value`)  # Format to 3 decimal places
+        ))
+    
+    tmp_2 <- tmp[1,]
+    tmp_2[1,] <- ""
+    tmp_2[,1] <- var_name
+    
+    return(rbind(tmp_2,tmp))
+})
+emmeans_cont_mar <- rbindlist(emmeans_cont_mar)
+
+
+emmeans_cat_mar <- lapply(mm_lag_over_mar_cont_pairs, function(x) {
+    tmp <- data.frame(x)
+    var_name <- names(x@misc$orig.grid)[1]
+    var_name <- gsub("_"," ",var_name)
+    ps <- tmp
+    tmp <- data.frame(confint(x))
+    tmp$`P-value` = ps$p.value
+    tmp$CI <- paste(round(tmp$asymp.LCL,2),round(tmp$asymp.UCL,2),sep = " – ")
+    
+    tmp[,1] <- gsub("(","",tmp[,1],fixed = TRUE)
+    tmp[,1] <- gsub(")","",tmp[,1],fixed = TRUE)
+    tmp[,1] <- gsub(" - "," – ",tmp[,1],fixed = TRUE)
+    tmp[,1] <- paste("\u2003\u2003",tmp[,1],sep = "")
+    tmp[,2] <- paste("\u2003",tmp[,2],sep = "")
+    
+    tmp <- tmp[,c(1,2,3,9,8)]
+    
+    levels_lag <- unique(tmp$lag_overshoot)
+    
+    levels_lag_res <- lapply(levels_lag, function(i){
+        tmp_tmp <- tmp[which(tmp$lag_overshoot == i),]
+        tmp_tmp <- tmp_tmp[,-2]
+        names(tmp_tmp) <- c("Predictors", "Estimate","CI","P-value")
+        tmp_tmp$Estimate <- round(tmp_tmp$Estimate,2)
+        tmp_tmp <- tmp_tmp %>%
+            mutate(`P-value` = case_when(
+                `P-value` < 0.001 ~ "<0.001",
+                `P-value` < 0.01  ~ "<0.01",
+                `P-value` < 0.05  ~ "<0.05",
+                TRUE            ~ sprintf("%.2f", `P-value`)  # Format to 3 decimal places
+            ))
+        
+        tmp_tmp_2 <- tmp_tmp[1,]
+        tmp_tmp_2[1,] <- ""
+        tmp_tmp_2[,1] <- i
+        
+        return(rbind(tmp_tmp_2,tmp_tmp))
+    }
+    )
+    
+    levels_lag_res <- rbindlist(levels_lag_res)
+    
+    tmp_tmp_3 <- levels_lag_res[1,]
+    tmp_tmp_3[1,] <- ""
+    tmp_tmp_3[,1] <- var_name
+    
+    levels_lag_res <- rbind(tmp_tmp_3,levels_lag_res)
+    
+    return(levels_lag_res)
+})
+emmeans_cat_mar <- rbindlist(emmeans_cat_mar)
+
+
+```
+
+
+```{r}
+emmeans_res_ter <- rbind(emmeans_cont_ter,emmeans_cat_ter)
+names(emmeans_res_ter)[-1] <- paste(names(emmeans_res_ter)[-1],".x", sep = "")
+
+emmeans_res_mar <- rbind(emmeans_cont_mar,emmeans_cat_mar)
+names(emmeans_res_mar)[-1] <- paste(names(emmeans_res_mar)[-1],".y", sep = "")
+
+merged_df <- cbind(emmeans_res_ter, emmeans_res_mar[,-1])
+
+```
+
+
+```{r}
+
+table_lagover <- merged_df %>%
+    gt() %>%
+    tab_spanner(
+        label = "Terrestrial",
+        columns = c("Estimate.x", "CI.x", "P-value.x")
+    ) %>%
+    tab_spanner(
+        label = "Marine",
+        columns = c("Estimate.y", "CI.y", "P-value.y")
+    ) %>%
+    cols_label(
+        Estimate.x = "Estimate",
+        CI.x = "CI",
+        `P-value.x` = "P-value",
+        Estimate.y = "Estimate",
+        CI.y = "CI",
+        `P-value.y` = "P-value"
+    ) %>%
+    fmt_number(
+        columns = c(Estimate.x,Estimate.y),
+        decimals = 5
+    )
+
+table_lagover
+
+gt::gtsave(table_lagover,
+           filename = here("Tables/lagovershot_glmmtmb.html"))
+```
+
+#### overall effect
+```{r}
+
+merged_df2 <- cbind(test_ter,test_mar[,-1])
+names(merged_df2) <- make.unique(names(merged_df2))
+
+table_overall <- merged_df2 %>%
+    gt() %>%
+    tab_spanner(
+        label = "Terrestrial",
+        columns = c("Estimate", "SE", "CI", "p.value")
+    ) %>%
+    tab_spanner(
+        label = "Marine",
+        columns =  c("Estimate.1", "SE.1", "CI.1", "p.value.1")
+    ) %>%
+    cols_label(
+        Estimate.1 = "Estimate",
+        SE.1 = "SE",
+        CI.1 = "CI",
+        p.value = "P-value",
+        p.value.1 = "P-value",
+    ) 
+
+table_overall
+
+gt::gtsave(table_lagover,
+           filename = here("Tables/overall_glmmtmb.html"))
+```
+
+### Make legend
+```{r}
+
+# Create the scatter plot with quadrants and diagonal splits
+lg <- ggplot() +
+    # Define Quadrant I (x > 0, y > 0)
+    geom_polygon(data = data.frame(x = c(0, Inf, Inf), y = c(0, Inf, 0)),
+                 aes(x, y), fill="#228d8d99") +  # x > y
+    geom_polygon(data = data.frame(x = c(0, 0, Inf), y = c(0, Inf, Inf)),
+                 aes(x, y), fill="#440d5499") +  # x < y
+    
+    # Define Quadrant II (x < 0, y > 0)
+    geom_rect(aes(xmin=-Inf, xmax=0, ymin=0, ymax=Inf), fill="#fde72599") +
+    
+    # Define Quadrant III (x < 0, y < 0) - Split by x > y and x < y
+    geom_polygon(data = data.frame(x = c(-Inf, 0, -Inf), y = c(-Inf, 0, 0)),
+                 aes(x, y), fill="#228d8d99") +  # x > y
+    geom_polygon(data = data.frame(x = c(0, 0, -Inf), y = c(-Inf, 0, -Inf)),
+                 aes(x, y), fill="#440d5499") +  # x < y
+    
+    # Define Quadrant IV (x > 0, y < 0)
+    geom_rect(aes(xmin=0, xmax=Inf, ymin=-Inf, ymax=0), fill="#fde72599") +
+    
+    # Add axis lines
+    geom_hline(yintercept=0, color="black") +
+    geom_vline(xintercept=0, color="black") +
+    geom_abline(slope = 1, intercept = 0, color="black", linetype = "dashed") +
+    
+    # change axis
+    scale_x_continuous(breaks = 0)+
+    scale_y_continuous(breaks = 0)+
+    
+    labs(x = "Modeled\nrange shift", y = "Documented\nrange shift")+
+    theme_classic(base_size = 8)+
+    theme(
+        # axis.text=element_blank(),
+        axis.text.y = element_text(hjust = -5),
+        axis.text.x = element_text(vjust = 2),
+        axis.ticks=element_blank(),
+        aspect.ratio=1,
+        axis.line = element_line(arrow = arrow(
+            angle = 30,
+            length = unit(0.05, "inches"),
+            ends = "last", 
+            type = "closed")))
+# lg
+```
+
+
+### Plot significant results
+#### Get terrestrial
+```{r }
+Eco2go = "Ter"
+
+# choose to set limits to the y-axis. 
+# options are: 
+# 1) "obs"; for the range of observed mismatch values, or 
+# 2) "preds", for the range of predicted mismatch values
+my_limits <- c("obs","preds")
+# choose if want to draw points (add observation points to plot or not)
+# use TRUE or FALSE (here using TRUE for observations and FALSE for predictions)
+draw_points_option <- c(TRUE,FALSE)
+
+plots_ter <- list()
+
+for(i in 1:length(my_limits)){
+    
+    limits2choose <- my_limits[i]
+    draw_points <- draw_points_option[i]
+    
+    #################################
+    # get significant variables
+    vars_res <- summary(mm_lag_over_ter)
+    vars_res <- data.frame(vars_res$coefficients$cond)
+    vars_res <- vars_res |>
+        filter(Pr...z.. <= .05) |>
+        rownames_to_column('variable') 
+    
+    vars_res <- sapply(all_vars, function(x) any(grepl(x, vars_res$variable)))
+    vars_res <- names(vars_res[which(vars_res)])
+    vars_res_names <- all_vars_names[which(all_vars %in% vars_res)]
+    vars_res_names_plot <- cont_vars_names_with_units[which(all_vars %in% vars_res)]
+    
+    # get the limits of predictions
+    if(limits2choose == "preds"){
+        plot_lims_y <- lapply(vars_res, function(x){
+            ggeffects::ggeffect(
+                mm_lag_over_ter, 
+                terms = c(x,"lag_overshoot"))}
+        )
+        plot_lims_y <- rbindlist(plot_lims_y, fill = TRUE)
+        plot_lims_y <- c(0,max(plot_lims_y$predicted) + 1)
+    }
+    if(limits2choose == "obs"){
+        plot_lims_y <- mod_data|>
+            filter(Eco==Eco2go) |>
+            pull("mismatch") |>
+            max()
+        plot_lims_y <- c(0,plot_lims_y)
+    }
+    
+    plots_ter[[i]] <- lapply(1:length(vars_res), function(x){
+        
+        var2go <- vars_res[x]
+        var2go_name <- vars_res_names[x]
+        var2go_name_plot <- vars_res_names_plot[x]
+        
+        subdata <- mod_data|>
+            filter(Eco==Eco2go) |>
+            select(var2go,"mismatch","lag_overshoot",obs_ID)
+        
+        # is the variable categorical or continuous?
+        if(var2go %in% cont_vars){
+            
+            preds <- ggeffects::ggeffect(
+                mm_lag_over_ter, 
+                terms = c(var2go,"lag_overshoot"))
+            
+            # unscale x
+            params_x <- bioshifts |>
+                filter(obs_ID %in% mod_data$obs_ID) |>
+                select(all_vars_data$all_vars_original[which(all_vars_data$all_vars==var2go)]) |>
+                pull() 
+            
+            # apply same transformation as in mod_data
+            cont_vars_trans_2go <- cont_vars_trans[which(cont_vars==var2go)]
+            
+            if(!is.na(cont_vars_trans_2go)){ 
+                params_x <- match.fun(cont_vars_trans_2go)(params_x)
+            }
+            
+            # Get attributes used by scale()
+            params_x <- scale(params_x)
+            center <- attr(params_x, "scaled:center")
+            scale_factor <- attr(params_x, "scaled:scale")
+            
+            # unscale
+            preds$x <- preds$x * scale_factor + center
+            subdata[,var2go] <- subdata[,var2go] * scale_factor + center
+            
+            # remove transformation
+            if(!is.na(cont_vars_trans_2go)){
+                if(cont_vars_trans_2go=="log"){
+                    preds$x <- exp(preds$x)
+                    subdata[,var2go] <- exp(subdata[,var2go])
+                }
+                if(cont_vars_trans_2go=="log1p"){
+                    preds$x <- exp(preds$x)-1
+                    subdata[,var2go] <- exp(subdata[,var2go])-1
+                }
+            }
+            
+            sig_tmp <- data.frame(mm_lag_over_ter_eff[[var2go_name]])
+            
+            preds$sig <- ifelse(same_sign(sig_tmp$asymp.LCL, sig_tmp$asymp.UCL),
+                                0,1)
+            
+            my_plot <- ggplot(preds, aes(x = x, y = predicted))
+            
+            # add observation points
+            if(draw_points){
+                my_plot <- my_plot + 
+                    geom_point(data = subdata, aes_string(x = var2go, y = "mismatch", color = "lag_overshoot"), alpha = .1) 
+            }
+            
+            if(var2go=="Boyce"){
+                breaks_plot <- round(seq(0, 1, length.out = 5),1)
+            }
+            
+            my_plot <- my_plot + 
+                # set limits to the entire range of predictions
+                coord_cartesian(ylim = plot_lims_y)+
+                geom_line(aes(color = group, linetype = as.factor(sig)), size = 1.5) +
+                geom_ribbon(aes(ymin=conf.low, ymax=conf.high, fill = group), alpha = .3) +
+                theme_classic(base_size = 10)+
+                scale_color_viridis_d(direction = -1)+
+                scale_fill_viridis_d(direction = -1)+
+                labs(x = var2go_name_plot, 
+                     y  = "Mismatch",
+                     fill = NULL, 
+                     color = NULL,
+                     linetype = NULL)+
+                guides(linetype = "none")+
+                theme(aspect.ratio=1)
+            
+            if(var2go=="Boyce"){
+                
+                breaks_plot <- seq(min(preds$x), 1, length.out = 4)
+                
+                my_plot <- my_plot + 
+                    scale_x_continuous(breaks = breaks_plot,
+                                       labels = round(breaks_plot,1),
+                                       limits = c(min(breaks_plot),max(breaks_plot)))
+                
+                
+            }
+            
+        } else {
+            
+            preds <- ggeffects::ggemmeans(
+                mm_lag_over_ter, 
+                terms = c(var2go,"lag_overshoot"))
+            
+            cat_vars_cont_pairs_res <- mm_lag_over_ter_cont_pairs[[var2go_name]]
+            cat_vars_cont_pairs_res <- data.frame(cat_vars_cont_pairs_res)
+            
+            cat_vars_cont_pairs_res <- cat_vars_cont_pairs_res |>
+                dplyr::filter(p.value <= 0.05)
+            
+            cat_vars_cont_pairs_res$from <- sapply(
+                as.character(cat_vars_cont_pairs_res$contrast), 
+                function(x){
+                    strsplit(x," - ")[[1]][1]
+                })
+            cat_vars_cont_pairs_res$to <- sapply(
+                as.character(cat_vars_cont_pairs_res$contrast), 
+                function(x){
+                    tmp <- strsplit(x," - ")[[1]][2]
+                })
+            
+            cat_vars_cont_pairs_res$from <- gsub("(","",cat_vars_cont_pairs_res$from, 
+                                                 fixed = TRUE)
+            cat_vars_cont_pairs_res$from <- gsub(")","",cat_vars_cont_pairs_res$from, 
+                                                 fixed = TRUE)
+            cat_vars_cont_pairs_res$to <- gsub("(","",cat_vars_cont_pairs_res$to, 
+                                               fixed = TRUE)
+            cat_vars_cont_pairs_res$to <- gsub(")","",cat_vars_cont_pairs_res$to, 
+                                               fixed = TRUE)
+            
+            y.bar <- sapply(cat_vars_cont_pairs_res$lag_overshoot, function(x){
+                preds |>
+                    group_by(group) |>
+                    # summarise(val=max(conf.high)) |>
+                    summarise(val=max(predicted)) |>
+                    dplyr::filter(group==x) |>
+                    dplyr::select(val) |>
+                    pull()
+            })
+            y.bar.sum <- ave(seq_along(cat_vars_cont_pairs_res$lag_overshoot), cat_vars_cont_pairs_res$lag_overshoot, FUN = seq_along)
+            # y.bar <- y.bar + (y.bar.sum - 1) * 1.5
+            y.bar <- y.bar + y.bar.sum * 1.5
+            
+            t.test.df <- data.frame(
+                p.value = as.vector(cat_vars_cont_pairs_res$p.value),
+                right.tip = cat_vars_cont_pairs_res$to,
+                left.tip = cat_vars_cont_pairs_res$from,
+                group = cat_vars_cont_pairs_res$lag_overshoot,
+                y.bar = y.bar
+            )
+            
+            t.test.df$label_y = as.character(stars.pval(t.test.df$p.value))
+            
+            
+            my_plot <- ggplot(as.data.frame(preds), aes(x = x, y = predicted)) 
+            
+            if(draw_points){
+                my_plot <- my_plot + 
+                    geom_jitter(data = subdata, 
+                                aes_string(x = var2go, y = "mismatch", color = "lag_overshoot"), 
+                                alpha = .05, width = .1) 
+            }
+            # set limits to the entire range of predictions
+            my_plot <- my_plot + 
+                coord_cartesian(ylim = plot_lims_y)+
+                geom_errorbar(
+                    aes(ymin=conf.low,ymax=conf.high, color = group), 
+                    width=0, lwd=1, 
+                    position = position_dodge(.5)) +
+                geom_point(size=3, shape = 21, 
+                           aes(fill = group), color = 'black',
+                           position = position_dodge2(.5)) +
+                theme_classic(base_size = 10)+
+                scale_color_viridis_d(direction = -1)+
+                scale_fill_viridis_d(direction = -1)+
+                labs(x = var2go_name, 
+                     y  = "Mismatch",
+                     fill = NULL, 
+                     color = NULL)+
+                theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))+
+                geom_text_pairwise(data = t.test.df,
+                                   aes(xmin = left.tip,
+                                       xmax = right.tip,
+                                       y = (y.bar),
+                                       label = label_y),
+                                   na.rm = TRUE,
+                                   size = 5, vjust = 0.3)+
+                # expand_limits(y = (max(t.test.df$y.bar)+1)) +
+                facet_wrap(.~group)
+            
+        }
+        
+        return(my_plot)
+    })
+    # plots_ter[[1]]
+}
+
+```
+
+```{r fig.height=8,fig.width=8}
+
+model_plots_ter <- list()
+for(i in 1:length(my_limits)){
+    
+    plots_go <- plots_ter[[i]][1:5]
+    plots_go[[6]] <- ggarrange(
+        lg + theme(plot.margin = margin(10, 0, 0, 20)),
+        get_legend(plots_ter[[i]][[1]]),
+        align = "h",
+        ncol = 2)
+    
+    model_plots_ter[[i]] <- ggarrange(
+        ggarrange(plotlist = plots_go, 
+                  labels = c(LETTERS[1:5],"Legend"),
+                  font.label = list(size = 10),
+                  align = "h",
+                  legend = "none"),
+        ggarrange(plotlist = plots_ter[[i]][6:7],
+                  labels = LETTERS[6:7],
+                  font.label = list(size = 10),
+                  align = "hv",
+                  # common.legend = TRUE,
+                  legend="none"),
+        heights = c(5,3.5), nrow = 2)
+    model_plots_ter[[i]]
+}
+
+model_plots_ter
+
+```
+
+
+```{r fig.height=8,fig.width=8}
+# 8*(5/(5+4)) + 8*(4/(5+4))
+# 
+# (8*(5/(5+4)) / 2) + 8*(4/(5+4))
+
+file_names <- c(
+    here("Figures/EffectPlots_lagovershoot_Ter_pairwise_all_obs"),
+    here("Figures/EffectPlots_lagovershoot_Ter_pairwise_all")
+)
+
+for(i in 1:length(my_limits)){
+    
+    ggsave(plot = model_plots_ter[[i]], 
+           filename = paste0(file_names[i],".png"), 
+           device = "png",
+           dpi = 320,
+           bg = "white",
+           width = 8, height = 8, 
+           units = "in")
+    
+    ggsave(plot = model_plots_ter[[i]], 
+           filename = paste0(file_names[i],".pdf"), 
+           device = "pdf",
+           bg = "white",
+           width = 8, height = 8, 
+           units = "in")
+    
+}
+
+```
+
+#### Get marine
+```{r }
+
+Eco2go = "Mar"
+
+# choose to set limits to the y-axis. 
+# options are: 
+# 1) "obs"; for the range of observed mismatch values, or 
+# 2) "preds", for the range of predicted mismatch values
+my_limits <- c("obs","preds")
+# choose if want to draw points (add observation points to plot or not)
+# use TRUE or FALSE (here using TRUE for observations and FALSE for predictions)
+draw_points_option <- c(TRUE,FALSE)
+
+plots_mar <- list()
+
+for(i in 1:length(my_limits)){
+    
+    limits2choose <- my_limits[i]
+    draw_points <- draw_points_option[i]
+    
+    #################################
+    # get significant variables
+    vars_res <- summary(mm_lag_over_mar)
+    vars_res <- data.frame(vars_res$coefficients$cond)
+    vars_res <- vars_res |>
+        filter(Pr...z.. <= .05) |>
+        rownames_to_column('variable') 
+    
+    vars_res <- sapply(all_vars, function(x) any(grepl(x, vars_res$variable)))
+    vars_res <- names(vars_res[which(vars_res)])
+    vars_res_names <- all_vars_names[which(all_vars %in% vars_res)]
+    vars_res_names_plot <- cont_vars_names_with_units[which(all_vars %in% vars_res)]
+    
+    # get the limits of predictions
+    if(limits2choose == "preds"){
+        plot_lims_y <- lapply(vars_res, function(x){
+            ggeffects::ggeffect(
+                mm_lag_over_mar, 
+                terms = c(x,"lag_overshoot"))}
+        )
+        plot_lims_y <- rbindlist(plot_lims_y, fill = TRUE)
+        plot_lims_y <- c(0,max(plot_lims_y$predicted) + 1)
+    }
+    if(limits2choose == "obs"){
+        plot_lims_y <- mod_data|>
+            filter(Eco==Eco2go) |>
+            pull("mismatch") |>
+            max()
+        plot_lims_y <- c(0,plot_lims_y)
+    }
+    
+    plots_mar[[i]] <- lapply(1:length(vars_res), function(x){
+        
+        var2go <- vars_res[x]
+        var2go_name <- vars_res_names[x]
+        var2go_name_plot <- vars_res_names_plot[x]
+        
+        subdata <- mod_data|>
+            filter(Eco==Eco2go) |>
+            select(var2go,"mismatch","lag_overshoot",obs_ID)
+        
+        # is the variable categorical or continuous?
+        if(var2go %in% cont_vars){
+            
+            preds <- ggeffects::ggeffect(
+                mm_lag_over_mar, 
+                terms = c(var2go,"lag_overshoot"))
+            
+            # unscale x
+            params_x <- bioshifts |>
+                filter(obs_ID %in% mod_data$obs_ID) |>
+                select(all_vars_data$all_vars_original[which(all_vars_data$all_vars==var2go)]) |>
+                pull() 
+            
+            # apply same transformation as in mod_data
+            cont_vars_trans_2go <- cont_vars_trans[which(cont_vars==var2go)]
+            
+            if(!is.na(cont_vars_trans_2go)){ 
+                params_x <- match.fun(cont_vars_trans_2go)(params_x)
+            }
+            
+            # Get attributes used by scale()
+            params_x <- scale(params_x)
+            center <- attr(params_x, "scaled:center")
+            scale_factor <- attr(params_x, "scaled:scale")
+            
+            # unscale
+            preds$x <- preds$x * scale_factor + center
+            subdata[,var2go] <- subdata[,var2go] * scale_factor + center
+            
+            # remove transformation
+            if(!is.na(cont_vars_trans_2go)){
+                if(cont_vars_trans_2go=="log"){
+                    preds$x <- exp(preds$x)
+                    subdata[,var2go] <- exp(subdata[,var2go])
+                }
+                if(cont_vars_trans_2go=="log1p"){
+                    preds$x <- exp(preds$x)-1
+                    subdata[,var2go] <- exp(subdata[,var2go])-1
+                }
+            }
+            
+            sig_tmp <- data.frame(mm_lag_over_mar_eff[[var2go_name]])
+            
+            preds$sig <- ifelse(same_sign(sig_tmp$asymp.LCL, sig_tmp$asymp.UCL),
+                                0,1)
+            
+            my_plot <- ggplot(preds, aes(x = x, y = predicted))
+            
+            # add observation points
+            if(draw_points){
+                my_plot <- my_plot + 
+                    geom_point(data = subdata, aes_string(x = var2go, y = "mismatch", color = "lag_overshoot"), alpha = .1) 
+            }
+            
+            if(var2go=="Boyce"){
+                breaks_plot <- round(seq(0, 1, length.out = 5),1)
+            }
+            
+            my_plot <- my_plot + 
+                # set limits to the entire range of predictions
+                coord_cartesian(ylim = plot_lims_y)+
+                geom_line(aes(color = group, linetype = as.factor(sig)), size = 1.5) +
+                geom_ribbon(aes(ymin=conf.low, ymax=conf.high, fill = group), alpha = .3) +
+                theme_classic(base_size = 10)+
+                scale_color_viridis_d(direction = -1)+
+                scale_fill_viridis_d(direction = -1)+
+                labs(x = var2go_name_plot, 
+                     y  = "Mismatch",
+                     fill = NULL, 
+                     color = NULL,
+                     linetype = NULL)+
+                guides(linetype = "none")+
+                theme(aspect.ratio=1)
+            
+            if(var2go=="Boyce"){
+                
+                breaks_plot <- seq(min(preds$x), 1, length.out = 4)
+                
+                my_plot <- my_plot + 
+                    scale_x_continuous(breaks = breaks_plot,
+                                       labels = round(breaks_plot,1),
+                                       limits = c(min(breaks_plot),max(breaks_plot)))
+                
+                
+            }
+            
+        } else {
+            
+            preds <- ggeffects::ggemmeans(
+                mm_lag_over_mar, 
+                terms = c(var2go,"lag_overshoot"))
+            
+            cat_vars_cont_pairs_res <- mm_lag_over_mar_cont_pairs[[var2go_name]]
+            cat_vars_cont_pairs_res <- data.frame(cat_vars_cont_pairs_res)
+            
+            cat_vars_cont_pairs_res <- cat_vars_cont_pairs_res |>
+                dplyr::filter(p.value <= 0.05)
+            
+            cat_vars_cont_pairs_res$from <- sapply(
+                as.character(cat_vars_cont_pairs_res$contrast), 
+                function(x){
+                    strsplit(x," - ")[[1]][1]
+                })
+            cat_vars_cont_pairs_res$to <- sapply(
+                as.character(cat_vars_cont_pairs_res$contrast), 
+                function(x){
+                    tmp <- strsplit(x," - ")[[1]][2]
+                })
+            
+            cat_vars_cont_pairs_res$from <- gsub("(","",cat_vars_cont_pairs_res$from, 
+                                                 fixed = TRUE)
+            cat_vars_cont_pairs_res$from <- gsub(")","",cat_vars_cont_pairs_res$from, 
+                                                 fixed = TRUE)
+            cat_vars_cont_pairs_res$to <- gsub("(","",cat_vars_cont_pairs_res$to, 
+                                               fixed = TRUE)
+            cat_vars_cont_pairs_res$to <- gsub(")","",cat_vars_cont_pairs_res$to, 
+                                               fixed = TRUE)
+            
+            y.bar <- sapply(cat_vars_cont_pairs_res$lag_overshoot, function(x){
+                preds |>
+                    group_by(group) |>
+                    # summarise(val=max(conf.high)) |>
+                    summarise(val=max(predicted)) |>
+                    dplyr::filter(group==x) |>
+                    dplyr::select(val) |>
+                    pull()
+            })
+            y.bar.sum <- ave(seq_along(cat_vars_cont_pairs_res$lag_overshoot), cat_vars_cont_pairs_res$lag_overshoot, FUN = seq_along)
+            # y.bar <- y.bar + (y.bar.sum - 1) * 1.5
+            y.bar <- y.bar + y.bar.sum * 1.5
+            
+            t.test.df <- data.frame(
+                p.value = as.vector(cat_vars_cont_pairs_res$p.value),
+                right.tip = cat_vars_cont_pairs_res$to,
+                left.tip = cat_vars_cont_pairs_res$from,
+                group = cat_vars_cont_pairs_res$lag_overshoot,
+                y.bar = y.bar
+            )
+            
+            t.test.df$label_y = as.character(stars.pval(t.test.df$p.value))
+            
+            
+            my_plot <- ggplot(as.data.frame(preds), aes(x = x, y = predicted)) 
+            
+            if(draw_points){
+                my_plot <- my_plot + 
+                    geom_jitter(data = subdata, 
+                                aes_string(x = var2go, y = "mismatch", color = "lag_overshoot"), 
+                                alpha = .05, width = .1) 
+            }
+            # set limits to the entire range of predictions
+            my_plot <- my_plot + 
+                coord_cartesian(ylim = plot_lims_y)+
+                geom_errorbar(
+                    aes(ymin=conf.low,ymax=conf.high, color = group), 
+                    width=0, lwd=1, 
+                    position = position_dodge(.5)) +
+                geom_point(size=3, shape = 21, 
+                           aes(fill = group), color = 'black',
+                           position = position_dodge2(.5)) +
+                theme_classic(base_size = 10)+
+                scale_color_viridis_d(direction = -1)+
+                scale_fill_viridis_d(direction = -1)+
+                labs(x = var2go_name, 
+                     y  = "Mismatch",
+                     fill = NULL, 
+                     color = NULL)+
+                theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))+
+                geom_text_pairwise(data = t.test.df,
+                                   aes(xmin = left.tip,
+                                       xmax = right.tip,
+                                       y = (y.bar),
+                                       label = label_y),
+                                   na.rm = TRUE,
+                                   size = 5, vjust = 0.3)+
+                # expand_limits(y = (max(t.test.df$y.bar)+1)) +
+                facet_wrap(.~group)
+            
+        }
+        
+        return(my_plot)
+    })
+    # plots_mar[[1]]
+}
+
+```
+
+
+```{r fig.height=5.77,fig.width=8}
+
+model_plots_mar <- list()
+for(i in 1:length(my_limits)){
+    
+    plots_go <- plots_mar[[i]][1:2]
+    plots_go[[3]] <- ggarrange(
+        lg + theme(plot.margin = margin(10, 0, 0, 20)),
+        get_legend(plots_mar[[i]][[1]]),
+        align = "h",
+        ncol = 2)
+    
+    model_plots_mar[[i]] <- ggarrange(
+        ggarrange(plotlist = plots_go, 
+                  labels = c(LETTERS[1:2],"Legend"),
+                  font.label = list(size = 10),
+                  align = "h",
+                  legend = "none",
+                  nrow = 1),
+        ggarrange(plotlist = plots_mar[[i]][3:4],
+                  labels = LETTERS[3:4],
+                  font.label = list(size = 10),
+                  align = "hv",
+                  legend="none"),
+        heights = c(2.5,3.5), nrow = 2)
+    model_plots_mar[[i]]
+}
+model_plots_mar
+
+```
+
+
+```{r fig.height=5.77,fig.width=8}
+
+file_names <- c(
+    here("Figures/EffectPlots_lagovershoot_Mar_pairwise_all_obs"),
+    here("Figures/EffectPlots_lagovershoot_Mar_pairwise_all")
+)
+
+for(i in 1:length(my_limits)){
+    
+    ggsave(plot = model_plots_mar[[i]], 
+           filename = paste0(file_names[i],".png"), 
+           device = "png",
+           dpi = 320,
+           bg = "white",
+           width = 8, height = 5.77, 
+           units = "in")
+    
+    ggsave(plot = model_plots_mar[[i]], 
+           filename = paste0(file_names[i],".pdf"), 
+           device = "pdf",
+           bg = "white",
+           width = 8, height = 5.77, 
+           units = "in")
+    
+}
+
+
+```
+
+
+## Mismatch between documented and modeled shifts
+
+### Terrestrial
+
+#### Fit model
+```{r fig.width=8, fig.height=8}
+
+y <- strsplit(mm_formula_ter," ")[[1]][1]
+
+var_to_go <- strsplit(paste(mm_formula_ter, "+", RE_nest),"~|[+]|[/]|[|]")[[1]]
+var_to_go <- gsub(" |[(]|[)]","",var_to_go)
+var_to_go <- var_to_go[-which(var_to_go=="1")]
+subdata_ter <- mod_data |>
+    filter(Eco=="Ter") |> 
+    select(var_to_go,lag_overshoot) |>
+    na.omit()
+
+# fit model
+mm_ter <- glmmTMB(as.formula(paste(mm_formula_ter, "+", RE_nest)),
+                  family = Gamma(link = "log"),
+                  data = subdata_ter)
+
+# tab_model(mm_ter, transform = NULL, string.est = "Estimate")
+
+# R-squared
+r.squaredGLMM(mm_ter)
+```
+
+
+#### Get emmeans for categorical variables
+```{r fig.width=8, fig.height=8}
+# get emmeans for categorical variables
+cat_vars_names <- gsub("_"," ",cat_vars)
+
+mm_ter_emm <- lapply(cat_vars, function(x){
+    if(any(grepl(x,var_to_go))){
+        emmeans(object = mm_ter, 
+                specs = x,
+                type = "response")
+    }
+})
+names(mm_ter_emm) <- cat_vars_names
+
+test <- sapply(mm_ter_emm,is.null)
+if(any(test)){
+    mm_ter_emm <- mm_ter_emm[-which(test)]
+}
+mm_ter_emm
+
+mm_ter_cont <- lapply(mm_ter_emm, 
+                      contrast, 
+                      method = "eff",
+                      type = "response")
+names(mm_ter_cont) <- names(mm_ter_cont)
+mm_ter_cont
+
+mm_ter_cont_pairs <- lapply(mm_ter_emm, 
+                            contrast, 
+                            method = "pairwise",
+                            type = "response",
+                            adjust = "none")
+names(mm_ter_cont_pairs) <- names(mm_ter_cont)
+mm_ter_cont_pairs
+
+```
+
+
+
+
+### Marine
+#### Fit model
+```{r fig.width=8, fig.height=8}
+y <- strsplit(mm_formula_mar," ")[[1]][1]
+
+var_to_go <- strsplit(paste(mm_formula_mar, "+", RE_nest),"~|[+]|[/]|[|]")[[1]]
+var_to_go <- gsub(" |[(]|[)]","",var_to_go)
+var_to_go <- var_to_go[-which(var_to_go=="1")]
+
+subdata_mar <- mod_data |>
+    filter(Eco=="Mar") |> 
+    select(var_to_go) |>
+    na.omit()
+
+# fit model
+mm_mar <- glmmTMB(as.formula(paste(mm_formula_mar, "+", RE_nest)),
+                  family = Gamma(link = "log"),
+                  data = subdata_mar)
+
+# tab_model(mm_mar, transform = NULL, string.est = "Estimate")
+
+# R-squared
+r.squaredGLMM(mm_mar)
+```
+
+#### Get emmeans for categorical variables
+```{r fig.width=8, fig.height=8}
+cat_vars_names <- gsub("_"," ",cat_vars)
+
+mm_mar_emm <- lapply(cat_vars, function(x){
+    if(any(grepl(x,var_to_go))){
+        emmeans(object = mm_mar, 
+                specs = x,
+                type = "response")
+    }
+})
+names(mm_mar_emm) <- cat_vars_names
+
+test <- sapply(mm_mar_emm,is.null)
+if(any(test)){
+    mm_mar_emm <- mm_mar_emm[-which(test)]
+}
+mm_mar_emm
+
+mm_mar_cont <- lapply(mm_mar_emm, 
+                      contrast, 
+                      method = "eff",
+                      type = "response")
+names(mm_mar_cont) <- names(mm_mar_cont)
+mm_mar_cont
+
+mm_mar_cont_pairs <- lapply(mm_mar_emm, 
+                            contrast, 
+                            method = "pairwise",
+                            type = "response",
+                            adjust = "none")
+names(mm_mar_cont_pairs) <- names(mm_mar_cont)
+mm_mar_cont_pairs
+
+```
+
+
+### Combined model output
+
+```{r}
+tab_model(mm_ter, mm_mar, 
+          transform = NULL, string.est = "Estimate", string.p = "P-value",
+          dv.labels = c("Terrestrial","Marine"),  
+          show.icc = FALSE, 
+          show.r2 = FALSE,
+          show.ngroups = FALSE,
+          show.re.var = FALSE,
+          show.obs = FALSE)
+```
+
+### Plot significant results
+#### Get terrestrial
+```{r }
+
+# get significant variables
+vars_res <- summary(mm_ter)
+vars_res <- data.frame(vars_res$coefficients$cond)
+vars_res <- vars_res |>
+    filter(Pr...z.. <= .05) |>
+    rownames_to_column('variable') 
+
+
+vars_res <- sapply(all_vars, function(x) any(grepl(x, vars_res$variable)))
+vars_res <- names(vars_res[which(vars_res)])
+vars_res_names <- all_vars_names[which(all_vars %in% vars_res)]
+
+plots_ter <- lapply(1:length(vars_res), function(x){
+    
+    var2go <- vars_res[x]
+    var2go_name <- vars_res_names[x]
+    
+    # is the variable categorical or continuous?
+    if(var2go %in% cont_vars){
+        
+        preds <- ggeffects::ggeffect(
+            mm_ter, 
+            terms = c(var2go))
+        
+        # unscale x
+        params_x <- bioshifts |>
+            select(all_vars_original[x]) |>
+            pull()
+        
+        if(!is.na(cont_vars_trans[x])){
+            params_x <- match.fun(cont_vars_trans[x])(params_x)
+        }
+        
+        sd_x <- sd(params_x,na.rm = TRUE)
+        mean_x <- mean(params_x,na.rm = TRUE)
+        
+        preds$x <- preds$x * sd_x + mean_x
+        
+        if(!is.na(cont_vars_trans[x])){
+            if(cont_vars_trans[x]=="log"){
+                preds$x <- exp(preds$x)
+            }
+            if(cont_vars_trans[x]=="log1p"){
+                preds$x <- exp(preds$x)-1
+            }
+        }
+        
+        my_plot <- ggplot(preds, aes(x = x, y = predicted))+
+            geom_line(size = 1.5) +
+            geom_ribbon(aes(ymin=conf.low, ymax=conf.high), alpha = .3) +
+            theme_classic(base_size = 10)+
+            scale_color_viridis_d()+
+            scale_fill_viridis_d()+
+            labs(x = var2go_name, 
+                 y  = "Mismatch",
+                 fill = NULL, 
+                 color = NULL)+
+            theme(aspect.ratio=1)
+        
+    } else {
+        
+        preds <- ggeffects::ggemmeans(
+            mm_ter, 
+            terms = c(var2go))
+        
+        cat_vars_cont_pairs_res <- mm_ter_cont_pairs[[var2go_name]]
+        cat_vars_cont_pairs_res <- data.frame(cat_vars_cont_pairs_res)
+        
+        cat_vars_cont_pairs_res <- cat_vars_cont_pairs_res |>
+            dplyr::filter(p.value <= 0.05)
+        
+        cat_vars_cont_pairs_res$from <- sapply(
+            as.character(cat_vars_cont_pairs_res$contrast), 
+            function(x){
+                strsplit(x," / ")[[1]][1]
+            })
+        cat_vars_cont_pairs_res$to <- sapply(
+            as.character(cat_vars_cont_pairs_res$contrast), 
+            function(x){
+                tmp <- strsplit(x," / ")[[1]][2]
+            })
+        
+        cat_vars_cont_pairs_res$from <- gsub("(","",cat_vars_cont_pairs_res$from, 
+                                             fixed = TRUE)
+        cat_vars_cont_pairs_res$from <- gsub(")","",cat_vars_cont_pairs_res$from, 
+                                             fixed = TRUE)
+        cat_vars_cont_pairs_res$to <- gsub("(","",cat_vars_cont_pairs_res$to, 
+                                           fixed = TRUE)
+        cat_vars_cont_pairs_res$to <- gsub(")","",cat_vars_cont_pairs_res$to, 
+                                           fixed = TRUE)
+        
+        t.test.df <- data.frame(
+            p.value = as.vector(cat_vars_cont_pairs_res$p.value),
+            right.tip = cat_vars_cont_pairs_res$to,
+            left.tip = cat_vars_cont_pairs_res$from,
+            y.bar = max(preds$conf.high) + seq(1,nrow(cat_vars_cont_pairs_res))
+        )
+        
+        t.test.df$label_y = as.character(stars.pval(t.test.df$p.value))
+        
+        
+        my_plot <- ggplot(as.data.frame(preds), aes(x = x, y = predicted)) +
+            geom_errorbar(
+                aes(ymin=conf.low,ymax=conf.high), 
+                width=0, lwd=1, 
+                position = position_dodge(.5)) +
+            geom_point(size=3, shape = 21, 
+                       color = 'black',
+                       fill = "white",
+                       position = position_dodge2(.5)) +
+            theme_classic(base_size = 10)+
+            labs(x = var2go_name, 
+                 y  = "Mismatch")+
+            theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))+
+            geom_text_pairwise(data = t.test.df,
+                               aes(xmin = left.tip,
+                                   xmax = right.tip,
+                                   y = (y.bar),
+                                   label = label_y),
+                               na.rm = TRUE,
+                               size = 5, vjust = 0.1)+
+            expand_limits(y = (max(t.test.df$y.bar)+1))
+        
+    }
+    
+    return(my_plot)
+})
+# plots_ter
+```
+
+```{r fig.height=8,fig.width=4}
+model_plots_ter <- ggarrange(
+    ggarrange(plotlist = plots_ter[1:4], 
+              labels = LETTERS[1:4],
+              font.label = list(size = 10),
+              align = "hv",
+              legend = "none"),
+    ggarrange(plotlist = plots_ter[5],
+              labels = LETTERS[5],
+              font.label = list(size = 10),
+              align = "hv",
+              common.legend = TRUE,
+              legend="bottom"),
+    heights = c(5,4), nrow = 2)
+model_plots_ter
+
+# 8*(5/(5+4)) + 8*(4/(5+4))
+# 
+# (8*(5/(5+4)) / 2) + 8*(4/(5+4))
+
+ggsave(plot = model_plots_ter, 
+       filename = here("Figures/EffectPlots_mismatch_Ter_pairwise_all.svg"), 
+       device = "svg", 
+       dpi = 300,
+       width = 8, height = 8, 
+       units = "in")
+
+
+```
+
+#### Get marine
+```{r }
+
+# get significant variables
+vars_res <- summary(mm_mar)
+vars_res <- data.frame(vars_res$coefficients$cond)
+vars_res <- vars_res |>
+    filter(Pr...z.. <= .05) |>
+    rownames_to_column('variable') 
+
+
+vars_res <- sapply(all_vars, function(x) any(grepl(x, vars_res$variable)))
+vars_res <- names(vars_res[which(vars_res)])
+vars_res_names <- all_vars_names[which(all_vars %in% vars_res)]
+
+plots_mar <- lapply(1:length(vars_res), function(x){
+    
+    var2go <- vars_res[x]
+    var2go_name <- vars_res_names[x]
+    
+    # is the variable categorical or continuous?
+    if(var2go %in% cont_vars){
+        
+        preds <- ggeffects::ggeffect(
+            mm_mar, 
+            terms = c(var2go))
+        
+        # unscale x
+        params_x <- bioshifts |>
+            select(all_vars_original[x]) |>
+            pull()
+        
+        if(!is.na(cont_vars_trans[x])){
+            params_x <- match.fun(cont_vars_trans[x])(params_x)
+        }
+        
+        sd_x <- sd(params_x,na.rm = TRUE)
+        mean_x <- mean(params_x,na.rm = TRUE)
+        
+        preds$x <- preds$x * sd_x + mean_x
+        
+        if(!is.na(cont_vars_trans[x])){
+            if(cont_vars_trans[x]=="log"){
+                preds$x <- exp(preds$x)
+            }
+            if(cont_vars_trans[x]=="log1p"){
+                preds$x <- exp(preds$x)-1
+            }
+        }
+        
+        my_plot <- ggplot(preds, aes(x = x, y = predicted))+
+            geom_line(size = 1.5) +
+            geom_ribbon(aes(ymin=conf.low, ymax=conf.high), alpha = .3) +
+            theme_classic(base_size = 10)+
+            scale_color_viridis_d()+
+            scale_fill_viridis_d()+
+            labs(x = var2go_name, 
+                 y  = "Mismatch",
+                 fill = NULL, 
+                 color = NULL)+
+            theme(aspect.ratio=1)
+        
+    } else {
+        
+        preds <- ggeffects::ggemmeans(
+            mm_mar, 
+            terms = c(var2go))
+        
+        cat_vars_cont_pairs_res <- mm_mar_cont_pairs[[var2go_name]]
+        cat_vars_cont_pairs_res <- data.frame(cat_vars_cont_pairs_res)
+        
+        cat_vars_cont_pairs_res <- cat_vars_cont_pairs_res |>
+            dplyr::filter(p.value <= 0.05)
+        
+        cat_vars_cont_pairs_res$from <- sapply(
+            as.character(cat_vars_cont_pairs_res$contrast), 
+            function(x){
+                strsplit(x," / ")[[1]][1]
+            })
+        cat_vars_cont_pairs_res$to <- sapply(
+            as.character(cat_vars_cont_pairs_res$contrast), 
+            function(x){
+                tmp <- strsplit(x," / ")[[1]][2]
+            })
+        
+        cat_vars_cont_pairs_res$from <- gsub("(","",cat_vars_cont_pairs_res$from, 
+                                             fixed = TRUE)
+        cat_vars_cont_pairs_res$from <- gsub(")","",cat_vars_cont_pairs_res$from, 
+                                             fixed = TRUE)
+        cat_vars_cont_pairs_res$to <- gsub("(","",cat_vars_cont_pairs_res$to, 
+                                           fixed = TRUE)
+        cat_vars_cont_pairs_res$to <- gsub(")","",cat_vars_cont_pairs_res$to, 
+                                           fixed = TRUE)
+        
+        t.test.df <- data.frame(
+            p.value = as.vector(cat_vars_cont_pairs_res$p.value),
+            right.tip = cat_vars_cont_pairs_res$to,
+            left.tip = cat_vars_cont_pairs_res$from,
+            y.bar = max(preds$conf.high) + seq(1,nrow(cat_vars_cont_pairs_res))
+        )
+        
+        t.test.df$label_y = as.character(stars.pval(t.test.df$p.value))
+        
+        
+        my_plot <- ggplot(as.data.frame(preds), aes(x = x, y = predicted)) +
+            geom_errorbar(
+                aes(ymin=conf.low,ymax=conf.high), 
+                width=0, lwd=1, 
+                position = position_dodge(.5)) +
+            geom_point(size=3, shape = 21, 
+                       color = 'black',
+                       fill = "white",
+                       position = position_dodge2(.5)) +
+            theme_classic(base_size = 10)+
+            labs(x = var2go_name, 
+                 y  = "Mismatch")+
+            theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))+
+            geom_text_pairwise(data = t.test.df,
+                               aes(xmin = left.tip,
+                                   xmax = right.tip,
+                                   y = (y.bar),
+                                   label = label_y),
+                               na.rm = TRUE,
+                               size = 5, vjust = 0.1)+
+            expand_limits(y = (max(t.test.df$y.bar)+1)) 
+        
+    }
+    
+    return(my_plot)
+})
+# plots_mar
+```
+
+
+
+
+```{r fig.height=8,fig.width=4}
+model_plots_mar <- ggarrange(
+    ggarrange(plotlist = plots_mar[1:3], 
+              labels = LETTERS[1:2],
+              font.label = list(size = 10),
+              align = "hv",
+              legend = "none"),
+    ggarrange(plotlist = plots_mar[4],
+              labels = LETTERS[4],
+              font.label = list(size = 10),
+              align = "hv",
+              common.legend = TRUE,
+              legend="bottom"),
+    heights = c(5,4), nrow = 2)
+model_plots_mar
+
+ggsave(plot = model_plots_mar, 
+       filename = here("Figures/EffectPlots_mismatch_Mar_pairwise_all.png"), 
+       device = "png",
+       dpi = 300,
+       width = 8, height = 5.77, 
+       units = "in")
+
+```
+
+
+## Test if elevation shifts explain the mismatch
+```{r}
+# 1) How many cases are there of reported both latitude and elevation shifts for the same species
+subdata_ter <- mod_data |> 
+    filter(Eco=="Ter") |>
+    select(ID, sp_name_std)
+
+bioshifts_full <- read.csv(here(Bioshifts_dir,Bioshifts_DB_v3))
+
+bioshifts_type <- bioshifts_full |>
+    mutate(sp_name_std = sp_name_checked) |>
+    select(ID, Type, Param, sp_name_std, Rate,  LatCentDeg) |>
+    group_by(ID, Type, Param,  LatCentDeg, sp_name_std) |>
+    summarise(Rate = mean(Rate)) |>
+    spread(Type, Rate) |>
+    na.omit()
+
+bioshifts_type <- bioshifts_type[which(bioshifts_type$sp_name_std %in% subdata_ter$sp_name_std),]
+
+```
+
+### Model
+```{r}
+# ------------------------
+# fit a model including elevation shift velocity
+# we expect this could help explain the mismatches
+mm_lagover_formula_ter_ele <- "mismatch ~ lag_overshoot + Boyce + Study_duration + Interannual_var + Lat_extent + Connectivity + Sampling_method + Locomotion_mode + ELE + (1 | Param/class/ID)"
+
+mm_lagover_formula_ter <- "mismatch ~ lag_overshoot + Boyce + Study_duration + Interannual_var + Lat_extent + Connectivity + Sampling_method + Locomotion_mode + (1 | Param/class/ID)"
+
+
+y <- strsplit(mm_lagover_formula_ter_ele," ")[[1]][1]
+
+var_to_go <- strsplit(mm_lagover_formula_ter_ele,"~|[+]|[/]|[|]|[*]")[[1]]
+var_to_go <- gsub(" |[(]|[)]","",var_to_go)
+var_to_go <- var_to_go[-which(var_to_go=="1")]
+var_to_go <- unique(var_to_go)
+
+# add documented velocities to the modeling dataset
+bioshifts_type$ELE <- abs(bioshifts_type$ELE)
+subdata_ter <- mod_data |>
+    filter(Eco=="Ter") |>
+    left_join(bioshifts_type[,c("ID", "Param", "sp_name_std","ELE")], 
+              by = c("ID", "Param", "sp_name_std"))|>
+    select(var_to_go,sp_name_std) |>
+    na.omit()
+
+# N studies 
+length(unique(subdata_ter$ID)) # 10
+# N species
+length(unique(subdata_ter$sp_name_std)) # 299
+# total dataset size
+nrow(subdata_ter) # 512
+
+mm_lag_over_ter <- glmmTMB(as.formula(mm_lagover_formula_ter),
+                           family = Gamma(link = "log"),
+                           data = subdata_ter)
+
+mm_lag_over_ter_vel <- glmmTMB(as.formula(mm_lagover_formula_ter_ele),
+                               family = Gamma(link = "log"),
+                               data = subdata_ter)
+
+# R-squared of the model without velEle
+performance::r2(mm_lag_over_ter)
+
+# R-squared of the model with velEle
+performance::r2(mm_lag_over_ter_vel)
+
+comp_mod <- anova(mm_lag_over_ter,mm_lag_over_ter_vel)
+comp_mod
+
+tab_model(mm_lag_over_ter, mm_lag_over_ter_vel, 
+          transform = NULL, string.est = "Estimate", string.p = "P-value",
+          dv.labels = c("Latitude","Latitude + Elevation"),  
+          show.icc = FALSE, 
+          show.r2 = FALSE,
+          show.ngroups = FALSE,
+          show.re.var = FALSE,
+          show.obs = FALSE)
+
+```
+
+### Plot
+```{r fig.width=4, fig.height=4}
+
+pred_ELE <- ggeffects::ggeffect(
+    mm_lag_over_ter_vel, 
+    terms = c("ELE"))
+
+# unscale vars
+params_xy <- bioshifts |>
+    select(ShiftRate, bvel_lat) |>
+    summarise(ShiftRate_mean = mean(ShiftRate,na.rm = TRUE),
+              ShiftRate_sd = sd(ShiftRate,na.rm = TRUE))
+
+
+# make plot terrestrial
+pred_ELE$predicted <- pred_ELE$predicted * params_xy$ShiftRate_sd + params_xy$ShiftRate_mean
+pred_ELE$conf.low <-pred_ELE$conf.low * params_xy$ShiftRate_sd + params_xy$ShiftRate_mean
+pred_ELE$conf.high <-pred_ELE$conf.high * params_xy$ShiftRate_sd + params_xy$ShiftRate_mean
+
+subdata_ter_plot <- subdata_ter
+subdata_ter_plot$mismatch <- subdata_ter$mismatch * params_xy$ShiftRate_sd + params_xy$ShiftRate_mean
+
+pred_ELE_plot <-
+    ggplot(pred_ELE, aes(x = x, y = predicted))+
+    geom_point(data = subdata_ter_plot, 
+               aes(x = ELE, y = mismatch), alpha = .1) +
+    geom_line(size = 1.5) +
+    geom_ribbon(aes(ymin=conf.low, ymax=conf.high), alpha = .3) +
+    theme_classic(base_size = 10)+
+    labs(x = "Elevational range shift (km/yr)", 
+         y = "Mismatch",
+         fill = NULL, 
+         color = NULL)+
+    theme(aspect.ratio=1)
+
+pred_ELE_plot 
+
+ggsave(plot = pred_ELE_plot, 
+       filename = here("Figures/EffectPlots_mismatch_Elevation.png"), 
+       device = "png", 
+       dpi = 300,
+       width = 4, height = 4, 
+       units = "in")
+
+```
+
+## Test if latitude explains the mismatch
+
+### Add latitude to the dataset
+```{r}
+mod_data_lat <- merge(mod_data,
+                      bioshifts_full %>%
+                          mutate(LatCentDeg = abs(LatCentDeg)) %>%
+                          select(ID, LatCentDeg) %>%
+                          unique(),
+                      by = "ID")
+```
+
+### Correlations
+```{r}
+
+cor(mod_data_lat |>
+        filter(Eco=="Ter") |>
+        select(LatCentDeg, ShiftRate_raw, ShiftMod_raw))
+
+cor(mod_data_lat |>
+        filter(Eco=="Mar") |>
+        select(LatCentDeg, ShiftRate_raw, ShiftMod_raw))
+
+```
+
+### Models
+```{r}
+y <- "mismatch"
+
+mm_lagover_formula_lat <- "mismatch ~ Boyce*lag_overshoot + Study_duration*lag_overshoot + Interannual_var*lag_overshoot + Lat_extent*lag_overshoot + Connectivity*lag_overshoot + Sampling_method*lag_overshoot + Locomotion_mode*lag_overshoot + LatCentDeg + (1 | Param/class/ID)"
+
+var_to_go <- strsplit(mm_lagover_formula_lat,"~|[+]|[/]|[|]|[*]")[[1]]
+var_to_go <- gsub(" |[(]|[)]","",var_to_go)
+var_to_go <- var_to_go[-which(var_to_go=="1")]
+var_to_go <- unique(var_to_go)
+
+subdata_ter <- mod_data_lat |>
+    filter(Eco=="Ter") |> 
+    select(var_to_go) |>
+    na.omit()
+
+mm_lag_over_ter_lat <- glmmTMB(as.formula(mm_lagover_formula_lat),
+                               family = Gamma(link = "log"),
+                               data = subdata_ter)
+
+summary(mm_lag_over_ter_lat)
+
+subdata_mar <- mod_data_lat |>
+    filter(Eco=="Mar") |> 
+    select(var_to_go) |>
+    na.omit()
+
+mm_lag_over_mar_lat <- glmmTMB(as.formula(mm_lagover_formula_lat),
+                               family = Gamma(link = "log"),
+                               data = subdata_mar)
+
+summary(mm_lag_over_mar_lat)
+
+```
+
+# Map study areas
+```{r }
+
+mundi <- rnaturalearth::ne_coastline(scale = 110, returnclass = "sf")
+mundi <- crop(vect(mundi), ext(c(-180,180,-60,90)))
+
+# get raster bioshifts shp files study areas
+get_raster_bioshifts = "YES"
+if(get_raster_bioshifts=="YES"){
+    my_ext = terra::ext(mundi)
+    my_crs = crs(mundi)
+    rast_bioshifts_studies <- terra::rast(my_ext, crs = my_crs, res = 5)
+    values(rast_bioshifts_studies) <- 0
+    
+    rast_bioshifts_species <- rast_bioshifts_studies
+    
+    fgdb <- geopackage(
+        here(Bioshifts_dir,"ShapefilesBioShiftsv3_studyareas.gpkg"), 
+        connect = TRUE)
+    
+    fgdb <- gpkg_tables(fgdb, "ShapefilesBioShiftsv3_studyareas", collect = TRUE)
+    fgdb <- fgdb$ShapefilesBioShiftsv3_studyareas
+    
+    fc_list <- unique(mod_data$ID)
+    
+    for(i in 1:length(fc_list)){ cat("\r",i,"from",length(fc_list))
+        tmp = fgdb |> filter(Name == fc_list[i])
+        tmp = terra::cells(rast_bioshifts_studies,tmp)
+        tmp_cell = tmp[,2]
+        tmp_vals = rast_bioshifts_studies[tmp_cell][,1]
+        rast_bioshifts_studies[tmp_cell] = tmp_vals+1
+        
+        tmp_vals = rast_bioshifts_species[tmp_cell][,1]
+        n_sps <- mod_data |> 
+            filter(ID == fc_list[i]) |> 
+            summarise(N = length(unique(sp_name_std))) |>
+            pull(N)
+        rast_bioshifts_species[tmp_cell] = tmp_vals+n_sps
+    }
+    names(rast_bioshifts_studies) <- "SA"
+    rast_bioshifts_studies[rast_bioshifts_studies==0] <- NA
+    
+    names(rast_bioshifts_species) <- "sps"
+    rast_bioshifts_species[rast_bioshifts_species==0] <- NA
+    
+    rast_bioshifts_studies <- c(rast_bioshifts_studies,
+                                rast_bioshifts_species)
+    
+    writeRaster(rast_bioshifts_studies, here::here("Data/raster_bioshifts_SA_SDMs.tif"), overwrite = TRUE)
+    
+} else {
+    rast_bioshifts_studies <- terra::rast(here::here("Data/raster_bioshifts_SA_SDMs.tif"))
+    rast_bioshifts_studies <- crop(rast_bioshifts_studies, ext(mundi))
+}
+
+mundi_eq <- project(mundi, "+proj=moll")
+rast_bioshifts_studies <- project(rast_bioshifts_studies, "+proj=moll")
+rast_bioshifts_studies <- rast_bioshifts_studies
+
+bio_sp_fig_breaks <- round(exp(seq(
+    log(as.numeric(global(rast_bioshifts_studies$sps,min,na.rm=TRUE))),
+    log(as.numeric(global(rast_bioshifts_studies$sps,max,na.rm=TRUE))),
+    length.out = 5)),0)
+
+bio_sp_fig <- ggplot(data=mundi_eq) +
+    stat_summary_hex(
+        data=as.data.frame(rast_bioshifts_studies$sps, xy = TRUE),
+        aes(x = x, y = y, z = sps),
+        color = "white",
+        fun = function(x) mean(x,na.rm = TRUE),
+        bins = c(80,80),
+        alpha = .5) +
+    geom_spatvector() +
+    scale_fill_viridis_c(
+        name = "Number of species",
+        alpha=.7,
+        na.value = "white",
+        trans="log",
+        labels=bio_sp_fig_breaks,
+        breaks=bio_sp_fig_breaks,
+        limits = range(bio_sp_fig_breaks)
+    )+
+    theme_void()+
+    guides(fill = guide_colorbar(title.position = "top",
+                                 position = "bottom",
+                                 theme = theme(
+                                     legend.key.width  = unit(20, "lines"),
+                                     legend.key.height = unit(.8, "lines"),
+                                     legend.title = element_text(hjust = 0.5))))
+
+bio_SA_fig_breaks <- round(exp(seq(
+    log(as.numeric(global(rast_bioshifts_studies$SA,min,na.rm=TRUE))),
+    log(as.numeric(global(rast_bioshifts_studies$SA,max,na.rm=TRUE))),
+    length.out = 5)),0)
+
+bio_SA_fig <-
+    ggplot(data=mundi_eq) +
+    stat_summary_hex(
+        data=as.data.frame(rast_bioshifts_studies$SA, xy = TRUE),
+        aes(x = x, y = y, z = SA),
+        color = "white",
+        fun = function(x) mean(x,na.rm = TRUE),
+        bins = c(80,80),
+        alpha = .5) +
+    geom_spatvector() +
+    scale_fill_viridis_c(
+        name = "Number of study areas",
+        alpha=.7,
+        na.value = "white",
+        trans="log",
+        labels=bio_SA_fig_breaks,
+        breaks=bio_SA_fig_breaks,
+        limits = range(bio_SA_fig_breaks)
+    )+
+    theme_void()+
+    guides(fill = guide_colorbar(title.position = "top",
+                                 position = "bottom",
+                                 theme = theme(
+                                     legend.key.width  = unit(20, "lines"),
+                                     legend.key.height = unit(.8, "lines"),
+                                     legend.title = element_text(hjust = 0.5)))) 
+
+
+```
+
+
+```{r fig.height=8,fig.width=8}
+
+my_map <- ggarrange(bio_SA_fig,
+                    bio_sp_fig, 
+                    nrow = 2,
+                    labels = "AUTO")
+my_map
+
+ggsave(plot = my_map,
+       filename = here("Figures/Map_studies.png"), 
+       device = "png",
+       width = 8, height = 8, 
+       units = "in", bg = "white")
+
+```
+
+
+
+
+
+***
+
+
+
+

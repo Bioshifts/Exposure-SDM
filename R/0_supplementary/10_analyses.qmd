@@ -1,0 +1,259 @@
+---
+title: "Supplementary analyses: Compare SDM workflows"
+author: "Bioshifts"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    toc-float: true
+    number-sections: true
+    code-fold: true
+    code-download: true
+    code-summary: "Code"
+---
+
+```{r warning=FALSE, message=FALSE}
+
+rm(list=ls())
+gc()
+
+library(dplyr)
+library(tidyverse)
+library(tidyr)
+library(ggplot2)
+library(knitr)
+library(pbapply)
+library(data.table)
+library(here)
+library(emmeans)
+
+```
+
+```{r source, warning=FALSE, message=FALSE}
+
+computer = "personal"
+source(here("R/settings.R"))
+source(here("R/my_functions.R"))
+source(here("R/velocity_functions.R"))
+
+# amount of data to use
+data_amount <- "all"
+
+```
+
+
+```{r}
+
+supp_data <- read.csv(here("Data/Output/Bioshifts_merge_Exposure_all_recal.csv"))
+ori_data <- read.csv(here("Data/Output/Bioshifts_merge_Exposure_all.csv"))
+
+# subset oridata
+ori_data <- ori_data %>%
+    filter(new_ID %in% supp_data$new_ID)
+
+nrow(supp_data)
+nrow(ori_data)
+
+supp_data %>%
+    summarise(N = length(unique(sp_name_std)))
+ori_data %>%
+    summarise(N = length(unique(sp_name_std)))
+
+supp_data %>%
+    group_by(Eco) %>%
+    summarise(N = length(unique(sp_name_std)))
+ori_data %>%
+    group_by(Eco) %>%
+    summarise(N = length(unique(sp_name_std)))
+
+pos <- match(supp_data$new_ID, ori_data$new_ID)
+keep <- !is.na(pos)
+
+supp_data <- supp_data[keep, ]
+ori_data  <- ori_data[pos[keep], ]
+
+all.equal(supp_data$new_ID, ori_data$new_ID)
+
+```
+
+# Initial test
+
+Before testing whereas SDMs workflows deliver different results, we re-ran the SDMs for the same subset of species used in the alternative workflow, but applying the original workflow. This additional analysis was conducted to assess whether any discrepancies observed under the alternative workflow could arise from stochastic components of the modeling process (e.g., random sampling of pseudo-absences), rather than from differences in modeling choices per se. Results were highly consistent between runs, indicating that the observed differences are unlikely to be driven solely by randomization of pseudo-occurrences.
+
+```{r}
+
+data_i <- data.frame(Eco = ori_data$Eco,
+                     Param = ori_data$Param,
+                     shift_lat_ori = ori_data$bvel_lat,
+                     shift_lat_supp = supp_data$bvel_lat)
+
+ggplot(data_i, 
+       aes(x = shift_lat_supp, y = shift_lat_ori)) +
+    geom_point()+
+    geom_abline(slope = 1, intercept = 0) +
+    facet_wrap(Eco~.,scales = "free") +
+    labs(x = "Recalculated", y = "Original") +
+    theme_classic()
+```
+
+
+Further, we compare results obtained with the original SDM workflow with those obtained with the alternative one.
+
+```{r}
+
+supp_data <- read.csv(here("Data/Output/Bioshifts_merge_Exposure_all_supp.csv"))
+ori_data <- read.csv(here("Data/Output/Bioshifts_merge_Exposure_all.csv"))
+
+# subset oridata
+ori_data <- ori_data %>%
+    filter(new_ID %in% supp_data$new_ID)
+
+nrow(supp_data)
+nrow(ori_data)
+
+supp_data %>%
+    summarise(N = length(unique(sp_name_std)))
+ori_data %>%
+    summarise(N = length(unique(sp_name_std)))
+
+supp_data %>%
+    group_by(Eco) %>%
+    summarise(N = length(unique(sp_name_std)))
+ori_data %>%
+    group_by(Eco) %>%
+    summarise(N = length(unique(sp_name_std)))
+
+pos <- match(supp_data$new_ID, ori_data$new_ID)
+keep <- !is.na(pos)
+
+supp_data <- supp_data[keep, ]
+ori_data  <- ori_data[pos[keep], ]
+
+all.equal(supp_data$new_ID, ori_data$new_ID)
+
+```
+
+# Less mismatch?
+
+Does the alternative workflow leads to less mismatch between documented and modeled shifts?
+
+**Answer:** No. Mismatch between documented and modeled range shifts did not differ between the original and alternative workflows. Consequently, the alternative workflow does not exhibit superior predictive performance.
+
+```{r}
+data_i <- data.frame(Eco = ori_data$Eco,
+                     Param = ori_data$Param,
+                     mismatch_ori = ori_data$mismatch,
+                     mismatch_supp = supp_data$mismatch,
+                     Hemisphere = supp_data$Hemisphere)
+
+data_long <- data_i %>%
+    dplyr::select(mismatch_ori,
+                  mismatch_supp,
+                  Eco) %>%
+    pivot_longer(
+        cols = starts_with("mismatch_"),
+        names_to = "workflow",
+        values_to = "mismatch") %>%
+    mutate(workflow = recode(workflow,
+                             mismatch_ori = "Original",
+                             mismatch_supp = "Alternative"))
+
+ggplot(data_long, 
+       aes(x = workflow, y = abs(mismatch))) +
+    geom_boxplot()+
+    facet_wrap(Eco~., scales = "free")+
+    labs(x = "Workflow", y = "Absolute Mismatch") +
+    theme_classic()
+
+# t-test
+# Marine
+t.test(abs(mismatch) ~ workflow, 
+       data = data_long %>% dplyr::filter(Eco == "Mar"))
+# Terrestrial
+t.test(abs(mismatch) ~ workflow, 
+       data = data_long %>% dplyr::filter(Eco == "Ter"))
+
+```
+
+
+
+# Better performance?
+
+Does the alternative workflow lead to better model performance relative to the original workflow?
+
+**Summary:** No. Model performance was generally higher under the original workflow. TSS values were higher for terrestrial but not marine SDMs, whereas Boyce index values were higher for marine but not terrestrial SDMs.
+
+```{r}
+data_i <- data.frame(data_i,
+                     TSS_ori = abs(ori_data$calibration),
+                     TSS_supp = abs(supp_data$calibration),
+                     Boyce_ori = abs(ori_data$Boyce),
+                     Boyce_supp = abs(supp_data$Boyce))
+
+```
+
+## TSS
+```{r}
+
+data_long <- data_i %>%
+    dplyr::select(TSS_ori,
+                  TSS_supp,
+                  Eco) %>%
+    pivot_longer(
+        cols = starts_with("TSS_"),
+        names_to = "workflow",
+        values_to = "TSS") %>%
+    mutate(workflow = recode(workflow,
+                             TSS_ori = "Original",
+                             TSS_supp = "Alternative"))
+
+ggplot(data_long, 
+       aes(x = workflow, y = TSS)) +
+    geom_boxplot()+
+    facet_wrap(Eco~., scales = "free") +
+    labs(x = "Workflow", y = "TSS") +
+    theme_classic()
+
+# t-test
+# Marine
+t.test(TSS ~ workflow, 
+       data = data_long %>% dplyr::filter(Eco == "Mar"))
+# Terrestrial
+t.test(TSS ~ workflow, 
+       data = data_long %>% dplyr::filter(Eco == "Ter"))
+
+
+```
+
+## Boyce
+```{r}
+
+data_long <- data_i %>%
+    dplyr::select(Boyce_ori,
+                  Boyce_supp,
+                  Eco) %>%
+    pivot_longer(
+        cols = starts_with("Boyce_"),
+        names_to = "workflow",
+        values_to = "Boyce") %>%
+    mutate(workflow = recode(workflow,
+                             Boyce_ori = "Original",
+                             Boyce_supp = "Alternative"))
+
+ggplot(data_long, 
+       aes(x = workflow, y = Boyce)) +
+    geom_boxplot()+
+    facet_wrap(Eco~., scales = "free") +
+    labs(x = "Workflow", y = "Boyce") +
+    theme_classic()
+
+# t-test
+# Marine
+t.test(Boyce ~ workflow, 
+       data = data_long %>% dplyr::filter(Eco == "Mar"))
+# Terrestrial
+t.test(Boyce ~ workflow, 
+       data = data_long %>% dplyr::filter(Eco == "Ter"))
+
+```
+
