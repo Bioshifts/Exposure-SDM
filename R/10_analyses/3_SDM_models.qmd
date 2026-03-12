@@ -95,7 +95,7 @@ options(na.action = "na.fail")
 
 # select vars based on shift mode
 
-bioshifts <- read.csv(here("Data/Output/Bioshifts_merge_Exposure_all.csv"))
+bioshifts <- read.csv(here("Data/Output/Bioshifts_merge_Exposure_all_new.csv"))
 
 if(shiftmodtype == "95"){
     bioshifts <- bioshifts |>
@@ -806,6 +806,8 @@ subdata_ter <- mod_data |>
 sm_ter <- glmmTMB(as.formula(sm_formula_raw),
                   data = subdata_ter)
 
+r.squaredGLMM(sm_ter)
+
 # summary(sm_ter)
 
 # tab_model(sm_ter)
@@ -852,6 +854,8 @@ subdata_mar <- mod_data |>
 
 sm_mar <- glmmTMB(as.formula(sm_formula_raw),
                   data = subdata_mar)
+
+r.squaredGLMM(sm_mar)
 
 # tab_model(sm_mar)
 # 
@@ -1162,6 +1166,8 @@ subdata_ter <- mod_data |>
 sm_dir_ter <- glmmTMB(as.formula(sm_formula_dir),
                       data = subdata_ter)
 
+r.squaredGLMM(sm_dir_ter)
+
 # tab_model(sm_dir_ter)
 
 # plot(effects::allEffects(sm_dir_ter), main = "Terrestrial")
@@ -1232,6 +1238,8 @@ subdata_mar <- mod_data |>
 
 sm_dir_mar <- glmmTMB(as.formula(sm_formula_dir),
                       data = subdata_mar)
+
+r.squaredGLMM(sm_dir_mar)
 
 # tab_model(sm_dir_mar)
 
@@ -1752,15 +1760,7 @@ subdata_mar <- mod_data |>
 
 mm_lag_over_mar <- glmmTMB(as.formula(mm_lagover_formula_mar),
                            family = Gamma(link = "log"),
-                           data = subdata_mar,
-                           # control = glmmTMBControl(
-                           #     optimizer = optim,
-                           #     optArgs = list(
-                           #         method = "BFGS",
-                           #         rel.tol = 1e-10,   # Reduce relative tolerance
-                           #         maxit = 10000      # Increase max iterations
-                           #     ))
-)
+                           data = subdata_mar)
 
 # tab_model(mm_lag_over_mar, transform = NULL, string.est = "Estimate")
 
